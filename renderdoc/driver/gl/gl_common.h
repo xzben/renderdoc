@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -303,6 +303,8 @@ struct GLPlatform
   virtual bool IsOutputWindowVisible(GLWindowingData context) = 0;
   virtual GLWindowingData MakeOutputWindow(WindowingData window, bool depth,
                                            GLWindowingData share_context) = 0;
+
+  virtual bool CanFreshBindOnDeletion() { return true; }
 
   // for pushing and popping a child context. The default implementation just does
   // MakeContextCurrent but platforms can override this if they need more complex state handling
@@ -621,15 +623,16 @@ struct ShaderBindpointMapping;
 void EvaluateVertexAttributeBinds(GLuint curProg, const ShaderReflection *refl, bool spirv,
                                   rdcarray<int32_t> &vertexAttrBindings);
 
-void GetCurrentBinding(GLuint curProg, ShaderReflection *refl, const ShaderResource &resource,
+void GetCurrentBinding(GLuint curProg, const ShaderReflection *refl, const ShaderResource &resource,
                        uint32_t &slot, bool &used);
-void GetCurrentBinding(GLuint curProg, ShaderReflection *refl, const ConstantBlock &cblock,
+void GetCurrentBinding(GLuint curProg, const ShaderReflection *refl, const ConstantBlock &cblock,
                        uint32_t &slot, bool &used);
 
 // calls glBlitFramebuffer but ensures no state can interfere like scissor or color mask
 // pops state for only a single drawbuffer!
 void SafeBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0,
                          GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
+void SafeClearFramebuffer(GLbitfield clearMask, GLfloat rgba[4], GLfloat depth, GLint stencil);
 
 enum UniformType
 {
@@ -728,6 +731,7 @@ extern bool IsGLES;
   /* super-set.                                              */  \
   EXT_TO_CHECK(32, 31, ARB_texture_multisample_no_array)         \
   EXT_TO_CHECK(32, 32, ARB_texture_multisample)                  \
+  EXT_TO_CHECK(32, 99, ARB_depth_clamp)                          \
   EXT_TO_CHECK(33, 30, ARB_explicit_attrib_location)             \
   EXT_TO_CHECK(33, 30, ARB_sampler_objects)                      \
   EXT_TO_CHECK(33, 30, ARB_texture_swizzle)                      \
@@ -736,6 +740,7 @@ extern bool IsGLES;
   EXT_TO_CHECK(33, 30, ARB_shader_bit_encoding)                  \
   EXT_TO_CHECK(40, 32, ARB_draw_buffers_blend)                   \
   EXT_TO_CHECK(40, 31, ARB_draw_indirect)                        \
+  EXT_TO_CHECK(40, 32, ARB_texture_gather)                       \
   EXT_TO_CHECK(40, 32, ARB_gpu_shader5)                          \
   EXT_TO_CHECK(40, 32, ARB_sample_shading)                       \
   EXT_TO_CHECK(40, 99, ARB_shader_subroutine)                    \
@@ -758,6 +763,7 @@ extern bool IsGLES;
   EXT_TO_CHECK(43, 31, ARB_compute_shader)                       \
   EXT_TO_CHECK(43, 32, ARB_copy_image)                           \
   EXT_TO_CHECK(43, 30, ARB_ES3_compatibility)                    \
+  EXT_TO_CHECK(45, 31, ARB_ES3_1_compatibility)                  \
   EXT_TO_CHECK(43, 30, ARB_invalidate_subdata)                   \
   EXT_TO_CHECK(43, 99, ARB_internalformat_query2)                \
   EXT_TO_CHECK(43, 31, ARB_program_interface_query)              \
@@ -788,8 +794,11 @@ extern bool IsGLES;
   EXT_TO_CHECK(99, 99, EXT_texture_sRGB_decode)                  \
   EXT_TO_CHECK(99, 99, INTEL_performance_query)                  \
   EXT_TO_CHECK(99, 99, EXT_texture_buffer)                       \
+  EXT_TO_CHECK(99, 99, KHR_shader_subgroup)                      \
   /* OpenGL ES extensions */                                     \
   EXT_TO_CHECK(99, 32, EXT_color_buffer_float)                   \
+  EXT_TO_CHECK(99, 99, EXT_color_buffer_half_float)              \
+  EXT_TO_CHECK(99, 99, EXT_render_snorm)                         \
   EXT_TO_CHECK(99, 32, EXT_primitive_bounding_box)               \
   EXT_TO_CHECK(99, 32, OES_primitive_bounding_box)               \
   EXT_TO_CHECK(99, 32, OES_texture_border_color)                 \
@@ -820,6 +829,7 @@ extern bool IsGLES;
   EXT_COMP_CHECK(ARB_base_instance, EXT_base_instance)                                      \
   EXT_COMP_CHECK(ARB_copy_image, EXT_copy_image)                                            \
   EXT_COMP_CHECK(ARB_copy_image, OES_copy_image)                                            \
+  EXT_COMP_CHECK(ARB_depth_clamp, EXT_depth_clamp)                                          \
   EXT_COMP_CHECK(ARB_draw_buffers_blend, EXT_draw_buffers_indexed)                          \
   EXT_COMP_CHECK(ARB_draw_buffers_blend, OES_draw_buffers_indexed)                          \
   EXT_COMP_CHECK(ARB_geometry_shader4, EXT_geometry_shader)                                 \
@@ -914,8 +924,8 @@ template <typename SerialiserType>
 void SerialiseProgramUniforms(SerialiserType &ser, CaptureState state,
                               const PerStageReflections &stages, GLuint prog,
                               std::map<GLint, GLint> *locTranslate);
-bool CopyProgramAttribBindings(GLuint progsrc, GLuint progdst, ShaderReflection *refl);
-bool CopyProgramFragDataBindings(GLuint progsrc, GLuint progdst, ShaderReflection *refl);
+bool CopyProgramAttribBindings(GLuint progsrc, GLuint progdst, const ShaderReflection *refl);
+bool CopyProgramFragDataBindings(GLuint progsrc, GLuint progdst, const ShaderReflection *refl);
 template <typename SerialiserType>
 bool SerialiseProgramBindings(SerialiserType &ser, CaptureState state,
                               const PerStageReflections &stages, GLuint prog);
@@ -2240,6 +2250,8 @@ enum class GLChunk : uint32_t
   glMapBufferRangeEXT,
   glFlushMappedBufferRangeEXT,
   glClipControlEXT,
+
+  SetCommandAnnotation,
 
   Max,
 };

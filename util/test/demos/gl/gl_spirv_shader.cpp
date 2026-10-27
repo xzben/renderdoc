@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -79,9 +79,9 @@ void main()
       return;
 
     if(!SpvCompilationSupported())
-      Avail = InternalSpvCompiler() ? "Internal SPIR-V compiler did not initialise"
-                                    : "Couldn't find 'glslc' or 'glslangValidator' in PATH - "
-                                      "required for SPIR-V compilation";
+      Avail =
+          "Couldn't find 'glslc' or 'glslangValidator' in PATH - "
+          "required for SPIR-V compilation";
   }
 
   int main()
@@ -160,9 +160,9 @@ void main()
       GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
 
       std::vector<uint32_t> vsSPIRV = CompileShaderToSpv(
-          vertex, SPIRVTarget::opengl, ShaderLang::glsl, ShaderStage::vert, "main");
+          demoName, vertex, SPIRVTarget::opengl, ShaderLang::glsl, ShaderStage::vert, "main");
       std::vector<uint32_t> fsSPIRV = CompileShaderToSpv(
-          pixel, SPIRVTarget::opengl, ShaderLang::glsl, ShaderStage::frag, "main");
+          demoName, pixel, SPIRVTarget::opengl, ShaderLang::glsl, ShaderStage::frag, "main");
 
       glShaderBinary(1, &vs, GL_SHADER_BINARY_FORMAT_SPIR_V, vsSPIRV.data(),
                      (GLsizei)vsSPIRV.size() * 4);

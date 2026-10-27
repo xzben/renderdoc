@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021-2024 Baldur Karlsson
+ * Copyright (c) 2021-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -111,7 +111,8 @@ enum class ConstantsRecord : uint32_t
   CSTRING = 9,
   EVAL_BINOP = 10,
   EVAL_CAST = 11,
-  EVAL_GEP = 20,
+  EVAL_GEP = 12,
+  EVAL_INBOUNDS_GEP = 20,
   DATA = 22,
 };
 

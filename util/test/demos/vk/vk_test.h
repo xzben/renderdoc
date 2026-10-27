@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -41,10 +41,11 @@ struct AllocatedBuffer
   VmaAllocator allocator = NULL;
   VkBuffer buffer = VK_NULL_HANDLE;
   VmaAllocation alloc = {};
+  VkDeviceAddress address = 0;
 
   AllocatedBuffer() {}
   AllocatedBuffer(VulkanGraphicsTest *test, const VkBufferCreateInfo &bufInfo,
-                  const VmaAllocationCreateInfo &allocInfo);
+                  const VmaAllocationCreateInfo &allocInfo, uint32_t alignment = 1);
 
   void free();
 
@@ -91,18 +92,16 @@ struct AllocatedImage
   void free();
 };
 
-#define CHECK_VKR(cmd)                                                               \
-  do                                                                                 \
-  {                                                                                  \
-    VkResult _vkr = cmd;                                                             \
-    if(_vkr != VK_SUCCESS)                                                           \
-    {                                                                                \
-      fprintf(stdout, "%s:%d Vulkan Error: %s executing:\n%s\n", __FILE__, __LINE__, \
-              vkh::result_str(_vkr), #cmd);                                          \
-      fflush(stdout);                                                                \
-      DEBUG_BREAK();                                                                 \
-      exit(1);                                                                       \
-    }                                                                                \
+#define CHECK_VKR(cmd)                                                          \
+  do                                                                            \
+  {                                                                             \
+    VkResult _vkr = cmd;                                                        \
+    if(_vkr != VK_SUCCESS)                                                      \
+    {                                                                           \
+      TEST_ERROR("%s:%d Vulkan Error: %s executing:\n%s\n", __FILE__, __LINE__, \
+                 vkh::result_str(_vkr), #cmd);                                  \
+      exit(1);                                                                  \
+    }                                                                           \
   } while(0);
 
 struct VulkanGraphicsTest;
@@ -182,8 +181,9 @@ private:
   std::vector<VkImage> imgs;
   std::vector<VkImageView> imgviews;
   uint32_t semIdx = 0;
-  VkSemaphore renderStartSemaphore[4] = {};
-  VkSemaphore renderEndSemaphore[4] = {};
+  std::vector<VkSemaphore> renderStartSemaphore;
+  std::vector<VkSemaphore> renderEndSemaphore;
+  std::vector<VkFence> imageFences;
   std::vector<VkFramebuffer> fbs;
 
   GraphicsWindow *m_Win;
@@ -193,6 +193,13 @@ private:
 struct VulkanGraphicsTest : public GraphicsTest
 {
   static const TestAPI API = TestAPI::Vulkan;
+
+  enum CompileOptionFlags
+  {
+    None = 0,
+    SeparateDebug = 1 << 0,
+    RelativeDebugName = 1 << 1,
+  };
 
   VulkanGraphicsTest();
 
@@ -217,10 +224,12 @@ struct VulkanGraphicsTest : public GraphicsTest
   void SubmitAndPresent(const std::vector<VkCommandBuffer> &cmds);
   void Present();
 
+  VkPipelineShaderStageCreateInfo LoadShaderModule(const std::string &filename, ShaderStage stage,
+                                                   const char *entry_point = "main");
   VkPipelineShaderStageCreateInfo CompileShaderModule(
       const std::string &source_text, ShaderLang lang, ShaderStage stage,
       const char *entry_point = "main", const std::map<std::string, std::string> &macros = {},
-      SPIRVTarget target = SPIRVTarget::vulkan);
+      SPIRVTarget target = SPIRVTarget::vulkan, uint32_t compileOptions = CompileOptionFlags::None);
   VkCommandBuffer GetCommandBuffer(VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                    VulkanWindow *window = NULL);
 
@@ -331,6 +340,7 @@ struct VulkanGraphicsTest : public GraphicsTest
 
   // VMA
   bool vmaDedicated = false;
+  bool vmaBDA = false;
   VmaAllocator allocator = VK_NULL_HANDLE;
 
 private:

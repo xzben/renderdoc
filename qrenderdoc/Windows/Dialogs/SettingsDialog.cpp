@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,6 +31,7 @@
 #include <QToolButton>
 #include "Code/Interface/QRDInterface.h"
 #include "Code/QRDUtils.h"
+#include "Code/pyrenderdoc/PythonContext.h"
 #include "Styles/StyleData.h"
 #include "Widgets/OrderedListEditor.h"
 #include "Widgets/ReplayOptionsSelector.h"
@@ -305,6 +306,13 @@ SettingsDialog::SettingsDialog(ICaptureContext &ctx, QWidget *parent)
   ui->EventBrowser_AddFake->setChecked(m_Ctx.Config().EventBrowser_AddFake);
   ui->EventBrowser_ApplyColors->setChecked(m_Ctx.Config().EventBrowser_ApplyColors);
   ui->EventBrowser_ColorEventRow->setChecked(m_Ctx.Config().EventBrowser_ColorEventRow);
+
+  ui->Python_DebugEnabled->setChecked(m_Ctx.Config().Python_DebugEnabled);
+  ui->Python_LaunchVSCode->setChecked(m_Ctx.Config().Python_LaunchVSCode);
+  ui->Python_PromptReloadUnchanged->setChecked(m_Ctx.Config().Python_PromptReloadUnchanged);
+
+  ui->Python_DebugPyDir->setText(m_Ctx.Config().Python_DebugPyDir);
+  ui->Python_VSCodePath->setText(m_Ctx.Config().Python_VSCodePath);
 
   ui->Comments_ShowOnLoad->setChecked(m_Ctx.Config().Comments_ShowOnLoad);
 
@@ -618,7 +626,15 @@ void SettingsDialog::on_chooseSearchPaths_clicked()
   listEditor.setWindowTitle(tr("Shader debug info search paths"));
   listEditor.setWindowFlags(listEditor.windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
-  OrderedListEditor list(tr("Search Path"), ItemButton::BrowseFolder);
+  OrderedListEditor::CustomProp customProp = {
+      tr("Recursive"),
+      tr("Recursively search through all subdirectories"
+         "under this path to find matching debug files"),
+      true,
+  };
+
+  OrderedListEditor list(tr("Search Path"),
+                         OrderedItemExtras::BrowseFolder | OrderedItemExtras::Delete, customProp);
 
   QVBoxLayout layout;
   QDialogButtonBox okCancel;
@@ -630,21 +646,37 @@ void SettingsDialog::on_chooseSearchPaths_clicked()
   QObject::connect(&okCancel, &QDialogButtonBox::rejected, &listEditor, &QDialog::reject);
 
   listEditor.setLayout(&layout);
+  listEditor.resize(750, 500);
 
   const SDObject *getPaths = RENDERDOC_GetConfigSetting("DXBC.Debug.SearchDirPaths");
 
   QStringList items;
+  QList<bool> recursive;
 
   for(const SDObject *c : *getPaths)
+  {
     items << c->data.str;
+    recursive << true;
+  }
 
-  list.setItems(items);
+  const SDObject *getLimitedPaths =
+      RENDERDOC_GetConfigSetting("Replay.Shader.LimitedSearchDirPaths");
+
+  for(const SDObject *c : *getLimitedPaths)
+  {
+    int idx = items.indexOf(c->data.str);
+    if(idx >= 0)
+      recursive[idx] = false;
+  }
+
+  list.setItemsAndProp(items, recursive);
 
   int res = RDDialog::show(&listEditor);
 
   if(res)
   {
     items = list.getItems();
+    recursive = list.getItemProps();
 
     SDObject *setPaths = RENDERDOC_SetConfigSetting("DXBC.Debug.SearchDirPaths");
 
@@ -654,7 +686,39 @@ void SettingsDialog::on_chooseSearchPaths_clicked()
     for(int i = 0; i < items.size(); i++)
       setPaths->AddAndOwnChild(makeSDString("$el"_lit, items[i]));
 
+    SDObject *setLimitedPaths = RENDERDOC_SetConfigSetting("Replay.Shader.LimitedSearchDirPaths");
+
+    QStringList limited;
+
+    for(int i = 0; i < recursive.count() && i < items.count(); i++)
+      if(recursive[i] == false)
+        limited << items[i];
+
+    setLimitedPaths->DeleteChildren();
+    setLimitedPaths->ReserveChildren(limited.size());
+
+    for(int i = 0; i < limited.size(); i++)
+      setLimitedPaths->AddAndOwnChild(makeSDString("$el"_lit, limited[i]));
+
     RENDERDOC_SaveConfigSettings();
+
+    if(m_Ctx.IsCaptureLoaded() && !m_Ctx.Replay().CurrentRemote().IsConnected())
+    {
+      QMessageBox::StandardButton ask = RDDialog::question(
+          this, tr("Shader Search Paths Saved"),
+          tr("The Shader Search Paths changes will automatically be applied the next time any "
+             "capture is opened.<br><br>"
+             "Would you like to reload all shader debug information in the current capture?"),
+          QMessageBox::Yes | QMessageBox::No);
+
+      if(ask == QMessageBox::Yes)
+      {
+        m_Ctx.Replay().AsyncInvoke([this](IReplayController *r) {
+          r->ReloadShaderDebugInformation();
+          GUIInvoke::call(m_Ctx.GetMainWindow()->Widget(), [this]() { m_Ctx.RefreshStatus(); });
+        });
+      }
+    }
   }
 }
 
@@ -665,7 +729,7 @@ void SettingsDialog::on_chooseIgnores_clicked()
   listEditor.setWindowTitle(tr("Ignored DLLs for callstack symbol resolution"));
   listEditor.setWindowFlags(listEditor.windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
-  OrderedListEditor list(tr("Ignored DLL"), ItemButton::Delete);
+  OrderedListEditor list(tr("Ignored DLL"), OrderedItemExtras::Delete);
 
   list.setAllowAddition(false);
 
@@ -737,6 +801,122 @@ void SettingsDialog::on_browseRGPPath_clicked()
   m_Ctx.Config().Save();
 }
 
+void SettingsDialog::on_Python_StubPaths_clicked()
+{
+  QDialog listEditor;
+
+  listEditor.setWindowTitle(tr("Extra python stubs generation directories"));
+  listEditor.setWindowFlags(listEditor.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+  OrderedListEditor list(tr("Stubs Directory"),
+                         OrderedItemExtras::BrowseFolder | OrderedItemExtras::Delete);
+
+  QVBoxLayout layout;
+  QDialogButtonBox okCancel;
+  okCancel.setStandardButtons(QDialogButtonBox::Cancel | QDialogButtonBox::Ok);
+  layout.addWidget(&list);
+  layout.addWidget(&okCancel);
+
+  QObject::connect(&okCancel, &QDialogButtonBox::accepted, &listEditor, &QDialog::accept);
+  QObject::connect(&okCancel, &QDialogButtonBox::rejected, &listEditor, &QDialog::reject);
+
+  listEditor.setLayout(&layout);
+
+  QStringList items;
+  for(const rdcstr &dir : m_Ctx.Config().Python_StubDirs)
+  {
+    items.append(dir);
+  }
+
+  list.setItems(items);
+
+  int res = RDDialog::show(&listEditor);
+
+  if(res)
+  {
+    items = list.getItems();
+
+    rdcarray<rdcstr> newDirs;
+    newDirs.resize(items.size());
+    for(int i = 0; i < items.size(); i++)
+    {
+      newDirs[i] = items[i];
+    }
+
+    if(newDirs.size() > m_Ctx.Config().Python_StubDirs.size())
+      PythonContext::GenerateStubs(newDirs);
+
+    m_Ctx.Config().Python_StubDirs = newDirs;
+
+    m_Ctx.Config().Save();
+  }
+}
+
+void SettingsDialog::on_Python_DebugPyDirBrowse_clicked()
+{
+  QString dir = RDDialog::getExistingDirectory(this, tr("Choose location of debugpy module"),
+                                               m_Ctx.Config().Python_DebugPyDir);
+
+  if(!dir.isEmpty() && QDir(dir).exists() && QDir(dir).exists(lit("__init__.py")))
+  {
+    m_Ctx.Config().Python_DebugPyDir = dir;
+    ui->Python_DebugPyDir->setText(dir);
+  }
+
+  m_Ctx.Config().Save();
+}
+
+void SettingsDialog::on_Python_DebugPyDir_textEdited(const QString &dir)
+{
+  if((QDir(dir).exists() && QDir(dir).exists(lit("__init__.py"))) || dir.isEmpty())
+    m_Ctx.Config().Python_DebugPyDir = dir;
+
+  m_Ctx.Config().Save();
+}
+
+void SettingsDialog::on_Python_VSCodePathBrowse_clicked()
+{
+  QString dir = RDDialog::getExecutableFileName(this, tr("Choose location of code executable"),
+                                                m_Ctx.Config().Python_VSCodePath, lit("code"));
+
+  if(!dir.isEmpty() && QFileInfo(dir).isExecutable())
+  {
+    m_Ctx.Config().Python_VSCodePath = dir;
+    ui->Python_VSCodePath->setText(dir);
+  }
+
+  m_Ctx.Config().Save();
+}
+
+void SettingsDialog::on_Python_VSCodePath_textEdited(const QString &path)
+{
+  if(QFileInfo(path).isExecutable() || path.isEmpty())
+    m_Ctx.Config().Python_DebugPyDir = path;
+
+  m_Ctx.Config().Save();
+}
+
+void SettingsDialog::on_Python_DebugEnabled_toggled(bool checked)
+{
+  m_Ctx.Config().Python_DebugEnabled = ui->Python_DebugEnabled->isChecked();
+
+  m_Ctx.Config().Save();
+}
+
+void SettingsDialog::on_Python_LaunchVSCode_toggled(bool checked)
+{
+  m_Ctx.Config().Python_LaunchVSCode = ui->Python_LaunchVSCode->isChecked();
+
+  m_Ctx.Config().Save();
+}
+
+void SettingsDialog::on_Python_PromptReloadUnchanged_toggled(bool checked)
+{
+  m_Ctx.Config().Python_PromptReloadUnchanged = ui->Python_PromptReloadUnchanged->isChecked();
+
+  m_Ctx.Config().Save();
+}
+
 // texture viewer
 void SettingsDialog::on_TextureViewer_PerTexSettings_toggled(bool checked)
 {
@@ -761,7 +941,8 @@ void SettingsDialog::on_TextureViewer_ChooseShaderDirectories_clicked()
   listEditor.setWindowTitle(tr("Custom shaders search directories"));
   listEditor.setWindowFlags(listEditor.windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
-  OrderedListEditor list(tr("Shaders Directory"), ItemButton::BrowseFolder);
+  OrderedListEditor list(tr("Shaders Directory"),
+                         OrderedItemExtras::BrowseFolder | OrderedItemExtras::Delete);
 
   QVBoxLayout layout;
   QDialogButtonBox okCancel;
@@ -796,6 +977,8 @@ void SettingsDialog::on_TextureViewer_ChooseShaderDirectories_clicked()
     }
 
     m_Ctx.Config().TextureViewer_ShaderDirs = newDirs;
+
+    m_Ctx.Config().Save();
   }
 }
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -147,6 +147,7 @@ public:
   DebugOverlay GetTextureOverlay() override;
   void SetTextureOverlay(DebugOverlay overlay) override;
 
+  TextureDisplay GetTextureDisplay() override { return m_TexDisplay; }
   bool IsZoomAutoFit() override;
   float GetZoomLevel() override;
   void SetZoomLevel(bool autofit, float zoom) override;
@@ -155,6 +156,7 @@ public:
   void SetHistogramRange(float blackpoint, float whitepoint) override;
 
   uint32_t GetChannelVisibilityBits() override;
+  rdcfixedarray<bool, 4> GetChannelVisibility() override;
   void SetChannelVisibility(bool red, bool green, bool blue, bool alpha) override;
 
   // ICaptureViewer
@@ -255,6 +257,8 @@ private:
   void HighlightUsage();
 
   void SelectPreview(ResourcePreview *prev);
+
+  void ShowPixelHistory(bool failedDebug);
 
   void SetupTextureTabs();
   void RemoveTextureTabs(int firstIndex);

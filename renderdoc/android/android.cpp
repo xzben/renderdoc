@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1099,7 +1099,9 @@ struct AndroidController : public IDeviceProtocolHandler
 
     {
       SCOPED_LOCK(lock);
-      ret = devices[GetDeviceID(URL)].name;
+      auto it = devices.find(GetDeviceID(URL));
+      if(it != devices.end())
+        ret = it->second.name;
     }
 
     return ret;
@@ -1125,7 +1127,16 @@ struct AndroidController : public IDeviceProtocolHandler
     Invoke([this, &result, URL]() {
       rdcstr deviceID = GetDeviceID(URL);
 
-      Device &dev = devices[deviceID];
+      auto it = devices.find(deviceID);
+      if(it == devices.end())
+      {
+        SET_ERROR_RESULT(result, ResultCode::InternalError,
+                         "Android device %s is not a valid device ID, can't launch server",
+                         Android::GetFriendlyName(deviceID).c_str());
+        return;
+      }
+
+      Device &dev = it->second;
 
       if(!dev.active)
       {
@@ -1209,6 +1220,17 @@ struct AndroidController : public IDeviceProtocolHandler
       for(Android::ABI abi : abis)
         Android::adbExecCommand(deviceID, "shell am force-stop " + GetRenderDocPackageForABI(abi));
 
+      // Attempt to prevent the user needing to click through on permissions
+      rdcstr auto_grant_permissions =
+          Android::adbExecCommand(deviceID, "shell getprop debug.renderdoc.autograntpermissions")
+              .strStdout.trimmed();
+      if(apiVersion >= 30 && atoi(auto_grant_permissions.c_str()) == 1)
+      {
+        for(Android::ABI abi : abis)
+          Android::adbExecCommand(deviceID, "shell pm grant " + GetRenderDocPackageForABI(abi) +
+                                                " android.permission.MANAGE_EXTERNAL_STORAGE");
+      }
+
       Android::adbForwardPorts(dev.portbase, deviceID, 0, 0, false);
       Android::ResetCaptureSettings(deviceID);
 
@@ -1254,7 +1276,9 @@ struct AndroidController : public IDeviceProtocolHandler
 
     {
       SCOPED_LOCK(lock);
-      portbase = devices[deviceID].portbase;
+      auto it = devices.find(deviceID);
+      if(it != devices.end())
+        portbase = it->second.portbase;
     }
 
     if(portbase == 0)
@@ -1275,7 +1299,13 @@ struct AndroidController : public IDeviceProtocolHandler
 
     {
       SCOPED_LOCK(lock);
-      portbase = devices[deviceID].portbase;
+      auto it = devices.find(deviceID);
+      if(it == devices.end())
+      {
+        SAFE_DELETE(sock);
+        return NULL;
+      }
+      portbase = it->second.portbase;
     }
 
     return new AndroidRemoteServer(sock, deviceID, portbase);
@@ -1429,10 +1459,13 @@ ExecuteResult AndroidRemoteServer::ExecuteAndInject(const rdcstr &packageAndActi
       {
         info =
             "Do you have a strange device that requires extra setup?\n"
-            "E.g. Xiaomi requires a developer account and \"USB debugging (Security Settings)\"\n";
+            "E.g. Xiaomi requires a developer account and \"USB debugging (Security Settings)\"";
 
         RDCERR("Couldn't verify that debug settings are set:\n%s\n%s", inString.c_str(),
                info.c_str());
+
+        result = RDResult(ResultCode::AndroidLayerConfFailed);
+        result.message = info;
 
         hookWithJDWP = true;
 
@@ -1571,16 +1604,22 @@ ExecuteResult AndroidRemoteServer::ExecuteAndInject(const rdcstr &packageAndActi
       {
         RDCERR("Failed to inject using JDWP");
         ident = 0;
-        result = RDResult(ResultCode::JDWPFailure);
-        result.message = StringFormat::Fmt(
-            "Failed to inject using JDWP when launching '%s' with activity '%s' and intent args "
-            "'%s'",
-            packageName.c_str(), activityName.c_str(), intentArgs.c_str());
+
+        // If layer configuration failed first, then report that to the user as it is usually easier
+        // to fix
+        if(result.code != ResultCode::AndroidLayerConfFailed)
+        {
+          result = RDResult(ResultCode::JDWPFailure);
+          result.message = StringFormat::Fmt(
+              "Failed to inject using JDWP when launching '%s' with activity '%s' and intent args "
+              "'%s'",
+              packageName.c_str(), activityName.c_str(), intentArgs.c_str());
+        }
         return;
       }
     }
 
-    result = RDResult(ResultCode::InjectionFailed, "Timeout was reached waiting for app to start");
+    result = RDResult(ResultCode::InjectionFailed, "Timeout was reached waiting for app to start.");
 
     uint32_t elapsed = 0, timeout = 1000 * RDCMAX(5U, Android_MaxConnectTimeout());
     while(elapsed < timeout)

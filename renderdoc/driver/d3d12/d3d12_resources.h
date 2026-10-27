@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -29,6 +29,14 @@
 #include "d3d12_device.h"
 #include "d3d12_manager.h"
 
+namespace Threading
+{
+namespace JobSystem
+{
+struct Job;
+};
+};
+
 rdcpair<uint32_t, uint32_t> FindMatchingRootParameter(const D3D12RootSignature &sig,
                                                       D3D12_SHADER_VISIBILITY visibility,
                                                       D3D12_DESCRIPTOR_RANGE_TYPE rangeType,
@@ -47,9 +55,11 @@ D3D12_UNORDERED_ACCESS_VIEW_DESC MakeUAVDesc(const D3D12_RESOURCE_DESC &desc);
 class TrackedResource12
 {
 public:
-  TrackedResource12()
+  TrackedResource12(ResourceId id)
   {
-    m_ID = ResourceIDGen::GetNewUniqueID();
+    if(id == ResourceId())
+      id = ResourceIDGen::GetNewUniqueID();
+    m_ID = id;
     m_pRecord = NULL;
   }
   ResourceId GetResourceID() { return m_ID; }
@@ -74,8 +84,8 @@ protected:
   WrappedID3D12Device *m_pDevice;
   int32_t m_Resident = 1;
 
-  WrappedDeviceChild12(NestedType *real, WrappedID3D12Device *device)
-      : RefCounter12(real), m_pDevice(device)
+  WrappedDeviceChild12(ResourceId id, NestedType *real, WrappedID3D12Device *device)
+      : RefCounter12(real), TrackedResource12(id), m_pDevice(device)
   {
     m_pDevice->SoftRef();
 
@@ -86,15 +96,15 @@ protected:
         RDCERR("Error adding wrapper for type %s", ToStr(__uuidof(NestedType)).c_str());
     }
 
-    m_pDevice->GetResourceManager()->AddCurrentResource(GetResourceID(), this);
+    m_pDevice->GetResourceManager()->AddResource(GetResourceID(), this);
   }
 
   void Shutdown()
   {
     if(m_pReal)
-      m_pDevice->GetResourceManager()->RemoveWrapper(m_pReal);
+      m_pDevice->GetResourceManager()->RemoveWrapper(this, m_pReal);
 
-    m_pDevice->GetResourceManager()->ReleaseCurrentResource(GetResourceID());
+    m_pDevice->GetResourceManager()->ReleaseResource(GetResourceID());
     m_pDevice->ReleaseResource((NestedType *)this);
     SAFE_RELEASE(m_pReal);
     m_pDevice = NULL;
@@ -348,8 +358,9 @@ public:
     TypeEnum = Resource_CommandAllocator,
   };
 
-  WrappedID3D12CommandAllocator(ID3D12CommandAllocator *real, WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+  WrappedID3D12CommandAllocator(ResourceId id, ID3D12CommandAllocator *real,
+                                WrappedID3D12Device *device)
+      : WrappedDeviceChild12(id, real, device)
   {
   }
   virtual ~WrappedID3D12CommandAllocator() { Shutdown(); }
@@ -380,9 +391,10 @@ public:
     TypeEnum = Resource_CommandSignature,
   };
 
-  WrappedID3D12CommandSignature(ID3D12CommandSignature *real, WrappedID3D12Device *device,
+  WrappedID3D12CommandSignature(ResourceId id, ID3D12CommandSignature *real,
+                                WrappedID3D12Device *device,
                                 const D3D12_COMMAND_SIGNATURE_DESC &Descriptor)
-      : WrappedDeviceChild12(real, device)
+      : WrappedDeviceChild12(id, real, device)
   {
     sig.ByteStride = Descriptor.ByteStride;
     sig.arguments.assign(Descriptor.pArgumentDescs, Descriptor.NumArgumentDescs);
@@ -458,7 +470,15 @@ public:
 
 struct D3D12Descriptor;
 
-class WrappedID3D12DescriptorHeap : public WrappedDeviceChild12<ID3D12DescriptorHeap>
+MIDL_INTERFACE("52528c37-bfd9-4bbb-99ff-fdb7188619ce")
+IRenderDocDescriptorNamer : public IUnknown
+{
+public:
+  virtual HRESULT STDMETHODCALLTYPE SetName(UINT DescriptorIndex, LPCSTR Name) = 0;
+};
+
+class WrappedID3D12DescriptorHeap : public WrappedDeviceChild12<ID3D12DescriptorHeap>,
+                                    public IRenderDocDescriptorNamer
 {
   D3D12_CPU_DESCRIPTOR_HANDLE realCPUBase;
   D3D12_GPU_DESCRIPTOR_HANDLE realGPUBase;
@@ -476,6 +496,9 @@ class WrappedID3D12DescriptorHeap : public WrappedDeviceChild12<ID3D12Descriptor
   // (which applications then queried and passed to the GPU) which is used for GPU-unwrapping handles
   uint64_t m_OriginalWrappedGPUBase;
 
+  Threading::CriticalSection namesLock;
+  rdcarray<rdcstr> names;
+
 public:
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D12DescriptorHeap);
 
@@ -484,9 +507,36 @@ public:
     TypeEnum = Resource_DescriptorHeap,
   };
 
-  WrappedID3D12DescriptorHeap(ID3D12DescriptorHeap *real, WrappedID3D12Device *device,
+  WrappedID3D12DescriptorHeap(ResourceId id, ID3D12DescriptorHeap *real, WrappedID3D12Device *device,
                               const D3D12_DESCRIPTOR_HEAP_DESC &desc, UINT UnpatchedNumDescriptors);
   virtual ~WrappedID3D12DescriptorHeap();
+
+  ULONG STDMETHODCALLTYPE AddRef() { return WrappedDeviceChild12::AddRef(); }
+  ULONG STDMETHODCALLTYPE Release() { return WrappedDeviceChild12::Release(); }
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject)
+  {
+    if(riid == __uuidof(IRenderDocDescriptorNamer))
+    {
+      *ppvObject = (IRenderDocDescriptorNamer *)this;
+      // allocate names array now
+      GetNames();
+      AddRef();
+      return S_OK;
+    }
+    return WrappedDeviceChild12::QueryInterface(riid, ppvObject);
+  }
+
+  bool HasNames()
+  {
+    SCOPED_LOCK(namesLock);
+    return !names.empty();
+  }
+  rdcarray<rdcstr> &GetNames()
+  {
+    SCOPED_LOCK(namesLock);
+    names.resize(numDescriptors);
+    return names;
+  }
 
   D3D12Descriptor *GetDescriptors() { return descriptors; }
   UINT GetNumDescriptors() { return numDescriptors; }
@@ -534,6 +584,23 @@ public:
   }
 
   uint32_t GetUnwrappedIncrement() const { return increment; }
+
+  //////////////////////////////
+  // implement IRenderDocDescriptorNamer
+
+  virtual HRESULT STDMETHODCALLTYPE SetName(UINT DescriptorIndex, LPCSTR Name)
+  {
+    if(DescriptorIndex >= numDescriptors)
+      return E_INVALIDARG;
+
+    SCOPED_LOCK(namesLock);
+    if(!Name || !Name[0])
+      names[DescriptorIndex].clear();
+    else
+      names[DescriptorIndex] = Name;
+
+    return S_OK;
+  }
 };
 
 class WrappedID3D12Fence : public WrappedDeviceChild12<ID3D12Fence, ID3D12Fence1>
@@ -546,8 +613,8 @@ public:
     TypeEnum = Resource_Fence,
   };
 
-  WrappedID3D12Fence(ID3D12Fence *real, WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+  WrappedID3D12Fence(ResourceId id, ID3D12Fence *real, WrappedID3D12Device *device)
+      : WrappedDeviceChild12(id, real, device)
   {
   }
   virtual ~WrappedID3D12Fence() { Shutdown(); }
@@ -589,9 +656,9 @@ public:
     TypeEnum = Resource_ProtectedResourceSession,
   };
 
-  WrappedID3D12ProtectedResourceSession(ID3D12ProtectedResourceSession *real,
+  WrappedID3D12ProtectedResourceSession(ResourceId id, ID3D12ProtectedResourceSession *real,
                                         WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+      : WrappedDeviceChild12(id, real, device)
   {
   }
   virtual ~WrappedID3D12ProtectedResourceSession() { Shutdown(); }
@@ -651,8 +718,12 @@ public:
   }
 };
 
-class WrappedID3D12Heap : public WrappedDeviceChild12<ID3D12Heap, ID3D12Heap1>
+class WrappedID3D12Heap : public WrappedDeviceChild12<ID3D12Heap, ID3D12Heap1>,
+                          public ID3D12PageableTools
 {
+  ID3D12PageableTools *m_Pageable = NULL;
+
+  ID3D12Resource *m_WholeMem = NULL;
 public:
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D12Heap);
 
@@ -661,11 +732,21 @@ public:
     TypeEnum = Resource_Heap,
   };
 
-  WrappedID3D12Heap(ID3D12Heap *real, WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+  ID3D12Resource *GetUnwrappedWholeMemBuffer() { return m_WholeMem; }
+
+  WrappedID3D12Heap(ResourceId id, ID3D12Heap *real, WrappedID3D12Device *device);
+  virtual ~WrappedID3D12Heap()
   {
+    SAFE_RELEASE(m_WholeMem);
+    SAFE_RELEASE(m_Pageable);
+    Shutdown();
   }
-  virtual ~WrappedID3D12Heap() { Shutdown(); }
+  ULONG STDMETHODCALLTYPE AddRef() { return WrappedDeviceChild12::AddRef(); }
+  ULONG STDMETHODCALLTYPE Release() { return WrappedDeviceChild12::Release(); }
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject)
+  {
+    return WrappedDeviceChild12::QueryInterface(riid, ppvObject);
+  }
   //////////////////////////////
   // implement ID3D12Heap
   virtual D3D12_HEAP_DESC STDMETHODCALLTYPE GetDesc() { return m_pReal->GetDesc(); }
@@ -691,7 +772,7 @@ public:
     if(riid == __uuidof(ID3D12ProtectedResourceSession))
     {
       *ppProtectedSession = new WrappedID3D12ProtectedResourceSession(
-          (ID3D12ProtectedResourceSession *)iface, m_pDevice);
+          ResourceId(), (ID3D12ProtectedResourceSession *)iface, m_pDevice);
     }
     else
     {
@@ -701,12 +782,27 @@ public:
 
     return S_OK;
   }
+  //////////////////////////////
+  // implement ID3D12PageableTools
+  virtual HRESULT STDMETHODCALLTYPE GetAllocation(_Inout_ D3D12_GPU_VIRTUAL_ADDRESS_RANGE *pAllocation)
+  {
+    if(!m_Pageable)
+      m_pReal->QueryInterface(__uuidof(ID3D12PageableTools), (void **)&m_Pageable);
+
+    if(m_Pageable)
+      return m_Pageable->GetAllocation(pAllocation);
+
+    return E_NOINTERFACE;
+  }
 };
 
-class WrappedID3D12PipelineState : public WrappedDeviceChild12<ID3D12PipelineState>
+class WrappedID3D12PipelineState
+    : public WrappedDeviceChild12<ID3D12PipelineState, ID3D12PipelineState1>
 {
 public:
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D12PipelineState);
+
+  Threading::JobSystem::Job *deferredJob = NULL;
 
   D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC *graphics = NULL;
   D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC *compute = NULL;
@@ -754,12 +850,12 @@ public:
     DXBCKey(const D3D12_SHADER_BYTECODE &byteCode)
     {
       byteLen = (uint32_t)byteCode.BytecodeLength;
-      DXBC::DXBCContainer::GetHash(hash, byteCode.pShaderBytecode, byteCode.BytecodeLength);
+      DXBC::DXBCContainer::GetHash(hash, false, byteCode.pShaderBytecode, byteCode.BytecodeLength);
     }
 
     // assume that byte length + hash is enough to uniquely identify a shader bytecode
     uint32_t byteLen;
-    uint32_t hash[4];
+    rdcfixedarray<uint32_t, 4> hash;
 
     bool operator<(const DXBCKey &o) const
     {
@@ -773,11 +869,7 @@ public:
       return false;
     }
 
-    bool operator==(const DXBCKey &o) const
-    {
-      return byteLen == o.byteLen && hash[0] == o.hash[0] && hash[1] == o.hash[1] &&
-             hash[2] == o.hash[2] && hash[3] == o.hash[3];
-    }
+    bool operator==(const DXBCKey &o) const { return byteLen == o.byteLen && hash == o.hash; }
   };
 
   class ShaderEntry : public WrappedDeviceChild12<ID3D12DeviceChild>
@@ -790,14 +882,12 @@ public:
       m_InternalResources = internalResources;
     }
 
-    ShaderEntry(const D3D12_SHADER_BYTECODE &byteCode, WrappedID3D12Device *device)
-        : WrappedDeviceChild12(NULL, device), m_Key(byteCode)
+    ShaderEntry(ResourceId id, const D3D12_SHADER_BYTECODE &byteCode, WrappedID3D12Device *device)
+        : WrappedDeviceChild12(id, NULL, device), m_Key(byteCode)
     {
       m_Bytecode.assign((const byte *)byteCode.pShaderBytecode, byteCode.BytecodeLength);
       m_DXBCFile = NULL;
       m_Details = new ShaderReflection;
-
-      device->GetResourceManager()->AddLiveResource(GetResourceID(), this);
 
       if(!m_InternalResources)
       {
@@ -826,13 +916,14 @@ public:
     ShaderEntry(const ShaderEntry &e) = delete;
     ShaderEntry &operator=(const ShaderEntry &e) = delete;
 
-    static ShaderEntry *AddShader(const D3D12_SHADER_BYTECODE &byteCode, WrappedID3D12Device *device)
+    static ShaderEntry *AddShader(ResourceId id, const D3D12_SHADER_BYTECODE &byteCode,
+                                  WrappedID3D12Device *device)
     {
       DXBCKey key(byteCode);
       ShaderEntry *shader = m_Shaders[key];
 
       if(shader == NULL)
-        shader = m_Shaders[key] = new ShaderEntry(byteCode, device);
+        shader = m_Shaders[key] = new ShaderEntry(id, byteCode, device);
 
       return shader;
     }
@@ -854,7 +945,9 @@ public:
       return false;
     }
 
-    static void GetReflections(rdcarray<ShaderReflection *> &refls)
+    static void ReloadShaderDebugInformation();
+
+    static void GetReflections(rdcarray<const ShaderReflection *> &refls)
     {
       refls.clear();
       for(auto it = m_Shaders.begin(); it != m_Shaders.end(); ++it)
@@ -894,21 +987,29 @@ public:
     D3D12_SHADER_BYTECODE GetDesc()
     {
       D3D12_SHADER_BYTECODE ret;
-      ret.BytecodeLength = m_Bytecode.size();
-      ret.pShaderBytecode = (const void *)&m_Bytecode[0];
+
+      // once we've processed into the DXBC file, it owns the blob
+      const bytebuf &bytecode =
+          m_Bytecode.empty() && m_DXBCFile ? m_DXBCFile->GetShaderBlob() : m_Bytecode;
+
+      ret.BytecodeLength = bytecode.size();
+      ret.pShaderBytecode = (const void *)&bytecode[0];
+
       return ret;
     }
 
-    DXBC::DXBCContainer *GetDXBC()
+    const DXBC::DXBCContainer *GetDXBC() { return GetWriteableDXBC(); }
+    DXBC::DXBCContainer *GetWriteableDXBC()
     {
       if(m_DXBCFile == NULL && !m_Bytecode.empty())
       {
-        m_DXBCFile = new DXBC::DXBCContainer(m_Bytecode, rdcstr(), GraphicsAPI::D3D12,
-                                             m_ShaderExtSlot, m_ShaderExtSpace);
+        m_DXBCFile = new DXBC::DXBCContainer(std::move(m_Bytecode));
+        m_DXBCFile->SetShaderExts(GraphicsAPI::D3D12, m_ShaderExtSlot, m_ShaderExtSpace);
+        m_Bytecode.clear();
       }
       return m_DXBCFile;
     }
-    ShaderReflection &GetDetails()
+    const ShaderReflection &GetDetails()
     {
       if(!m_Built && GetDXBC() != NULL)
         BuildReflection();
@@ -917,9 +1018,8 @@ public:
     }
 
   private:
-    void TryReplaceOriginalByteCode();
-
     void BuildReflection();
+    void Reload();
 
     DXBCKey m_Key;
 
@@ -946,8 +1046,8 @@ public:
   ShaderEntry *AS() { return graphics ? (ShaderEntry *)graphics->AS.pShaderBytecode : NULL; }
   ShaderEntry *MS() { return graphics ? (ShaderEntry *)graphics->MS.pShaderBytecode : NULL; }
   ShaderEntry *CS() { return compute ? (ShaderEntry *)compute->CS.pShaderBytecode : NULL; }
-  WrappedID3D12PipelineState(ID3D12PipelineState *real, WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+  WrappedID3D12PipelineState(ResourceId id, ID3D12PipelineState *real, WrappedID3D12Device *device)
+      : WrappedDeviceChild12(id, real, device)
   {
     if(IsReplayMode(m_pDevice->GetState()))
       m_pDevice->GetPipelineList().push_back(this);
@@ -985,6 +1085,8 @@ public:
     }
   }
 
+  void SetNewReal(ID3D12PipelineState *real) { m_pReal = real; }
+
   void ProcessDescriptorAccess();
 
   //////////////////////////////
@@ -993,6 +1095,25 @@ public:
   virtual HRESULT STDMETHODCALLTYPE GetCachedBlob(ID3DBlob **ppBlob)
   {
     return m_pReal->GetCachedBlob(ppBlob);
+  }
+
+  //////////////////////////////
+  // implement ID3D12PipelineState1
+
+  virtual HRESULT STDMETHODCALLTYPE GetRootSignature(REFIID riid, _COM_Outptr_ void **ppvRootSignature)
+  {
+    ID3D12PipelineState1 *real1 = NULL;
+    m_pReal->QueryInterface(__uuidof(ID3D12PipelineState1), (void **)&real1);
+
+    if(ppvRootSignature)
+      *ppvRootSignature = NULL;
+    if(!real1)
+      return E_NOINTERFACE;
+
+    SAFE_RELEASE(real1);
+
+    // unclear if this is supposed to be supported?
+    return E_INVALIDARG;
   }
 };
 
@@ -1024,11 +1145,12 @@ typedef WrappedID3D12PipelineState::ShaderEntry WrappedID3D12Shader;
 struct D3D12ShaderExportDatabase : public RefCounter12<IUnknown>
 {
 public:
-  D3D12ShaderExportDatabase(ResourceId id, D3D12RaytracingResourceAndUtilHandler *rayManager,
-                            ID3D12StateObjectProperties *obj);
+  D3D12ShaderExportDatabase(ResourceId id, D3D12RTManager *rayManager);
   ~D3D12ShaderExportDatabase();
 
-  ResourceId GetResourceId() { return objectOriginalId; }
+  void SetObjectProperties(ID3D12StateObjectProperties *obj) { m_StateObjectProps = obj; }
+
+  ResourceId GetResourceId() { return objectId; }
 
   void GrowFrom(D3D12ShaderExportDatabase *existing) { InheritAllCollectionExports(existing); }
   void PopulateDatabase(size_t NumSubobjects, const D3D12_STATE_SUBOBJECT *subobjects);
@@ -1065,14 +1187,14 @@ public:
 private:
   // the state object that originally created this export database. Some of our shader identifiers
   // may come from other databases, but when uploading the unwrap buffer we store information such
-  // that if we want to unwrap an identifier that comes from this id we look up into unwrappedOwnExports
-  // below. This is the original ID since this is used to look up identifiers that came from the application
-  ResourceId objectOriginalId;
+  // that if we want to unwrap an identifier that comes from this id we look up into
+  // unwrappedOwnExports below.
+  ResourceId objectId;
 
   rdcarray<D3D12ShaderExportDatabase *> parents;
 
   ID3D12StateObjectProperties *m_StateObjectProps = NULL;
-  D3D12RaytracingResourceAndUtilHandler *m_RayManager = NULL;
+  D3D12RTManager *m_RayManager = NULL;
 
   struct ExportLookup
   {
@@ -1146,28 +1268,45 @@ private:
 };
 
 class WrappedID3D12StateObject : public WrappedDeviceChild12<ID3D12StateObject>,
-                                 public ID3D12StateObjectProperties
+                                 public ID3D12StateObjectProperties2
 {
   ID3D12StateObjectProperties *properties;
+  ID3D12StateObjectProperties1 *properties1;
+  ID3D12StateObjectProperties2 *properties2;
 
 public:
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D12StateObject);
 
   D3D12ShaderExportDatabase *exports = NULL;
 
+  Threading::JobSystem::Job *deferredJob = NULL;
+
   enum
   {
     TypeEnum = Resource_StateObject,
   };
 
-  WrappedID3D12StateObject(ID3D12StateObject *real, WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+  WrappedID3D12StateObject(ResourceId id, ID3D12StateObject *real, bool deferredHandle,
+                           WrappedID3D12Device *device)
+      : WrappedDeviceChild12(id, real, device)
   {
-    real->QueryInterface(__uuidof(ID3D12StateObjectProperties), (void **)&properties);
+    if(!deferredHandle)
+      SetNewReal(real);
   }
+
+  void SetNewReal(ID3D12StateObject *real)
+  {
+    m_pReal = real;
+    real->QueryInterface(__uuidof(ID3D12StateObjectProperties), (void **)&properties);
+    real->QueryInterface(__uuidof(ID3D12StateObjectProperties1), (void **)&properties1);
+    real->QueryInterface(__uuidof(ID3D12StateObjectProperties2), (void **)&properties2);
+  }
+
   virtual ~WrappedID3D12StateObject()
   {
     SAFE_RELEASE(properties);
+    SAFE_RELEASE(properties1);
+    SAFE_RELEASE(properties2);
     SAFE_RELEASE(exports);
     Shutdown();
   }
@@ -1181,6 +1320,37 @@ public:
       *ppvObject = (ID3D12StateObjectProperties *)this;
       AddRef();
       return S_OK;
+    }
+    else if(riid == __uuidof(ID3D12StateObjectProperties1))
+    {
+      if(properties1)
+      {
+        *ppvObject = (ID3D12StateObjectProperties1 *)this;
+        AddRef();
+        return S_OK;
+      }
+      else
+      {
+        return E_NOINTERFACE;
+      }
+    }
+    else if(riid == __uuidof(ID3D12StateObjectProperties2))
+    {
+      if(properties2)
+      {
+        *ppvObject = (ID3D12StateObjectProperties2 *)this;
+        AddRef();
+        return S_OK;
+      }
+      else
+      {
+        return E_NOINTERFACE;
+      }
+    }
+    if(riid == __uuidof(ID3D12WorkGraphProperties))
+    {
+      // work graphs are not currently supported
+      return E_NOINTERFACE;
     }
     return WrappedDeviceChild12::QueryInterface(riid, ppvObject);
   }
@@ -1210,10 +1380,67 @@ public:
     m_pDevice->SetPipelineStackSize(this, PipelineStackSizeInBytes);
     properties->SetPipelineStackSize(PipelineStackSizeInBytes);
   }
+
+  //////////////////////////////
+  // implement ID3D12StateObjectProperties1
+
+#if defined(_MSC_VER) || !defined(_WIN32)
+  virtual D3D12_PROGRAM_IDENTIFIER STDMETHODCALLTYPE GetProgramIdentifier(LPCWSTR pProgramName)
+#else
+  virtual D3D12_PROGRAM_IDENTIFIER *STDMETHODCALLTYPE
+  GetProgramIdentifier(D3D12_PROGRAM_IDENTIFIER *RetVal, LPCWSTR pProgramName)
+#endif
+  {
+    if(properties1)
+      return properties1->GetProgramIdentifier(pProgramName);
+    return {};
+  }
+
+  //////////////////////////////
+  // implement ID3D12StateObjectProperties2
+
+  virtual HRESULT STDMETHODCALLTYPE GetGlobalRootSignatureForProgram(
+      LPCWSTR pProgramName, REFIID riid, _COM_Outptr_ void **ppvRootSignature)
+  {
+    if(ppvRootSignature)
+      *ppvRootSignature = NULL;
+    if(!properties2)
+      return E_NOINTERFACE;
+    // unclear if this is supposed to be supported?
+    return E_INVALIDARG;
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE GetGlobalRootSignatureForShader(
+      LPCWSTR pExportName, REFIID riid, _COM_Outptr_ void **ppvRootSignature)
+  {
+    if(ppvRootSignature)
+      *ppvRootSignature = NULL;
+    if(!properties2)
+      return E_NOINTERFACE;
+    // unclear if this is supposed to be supported?
+    return E_INVALIDARG;
+  }
 };
 
 class WrappedID3D12QueryHeap : public WrappedDeviceChild12<ID3D12QueryHeap>
 {
+  D3D12_QUERY_HEAP_TYPE m_Type = D3D12_QUERY_HEAP_TYPE_OCCLUSION;
+
+  static const D3D12_QUERY_TYPE InvalidQueryType = (D3D12_QUERY_TYPE)~0U;
+
+  // during capture, this stores which queries have ever been issued. Any queries that have been
+  // issued can be resolved at initial contents time so we have their results for data resolves.
+  //
+  // during replay this stores which queries are issued in the capture itself, so we know which ones
+  // can use a 'real' resolve and which ones must be faked with a buffer query
+  //
+  // in both cases it's initialised as all ~0U and is set to the query type each time
+  rdcarray<D3D12_QUERY_TYPE> m_Valid;
+
+  // on replay only, this is the 'initial contents' which is owned here instead of in the usual
+  // place since we can't apply this just once
+  ID3D12Resource *m_SavedResults = NULL;
+
 public:
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D12QueryHeap);
 
@@ -1222,24 +1449,45 @@ public:
     TypeEnum = Resource_QueryHeap,
   };
 
-  WrappedID3D12QueryHeap(ID3D12QueryHeap *real, WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+  WrappedID3D12QueryHeap(ResourceId id, ID3D12QueryHeap *real, const D3D12_QUERY_HEAP_DESC &desc,
+                         WrappedID3D12Device *device)
+      : WrappedDeviceChild12(id, real, device)
   {
+    m_Valid.fill(desc.Count, InvalidQueryType);
+    m_Type = desc.Type;
   }
-  virtual ~WrappedID3D12QueryHeap() { Shutdown(); }
+  virtual ~WrappedID3D12QueryHeap()
+  {
+    SAFE_RELEASE(m_SavedResults);
+    Shutdown();
+  }
+
+  void SetQueryValid(UINT idx, D3D12_QUERY_TYPE type) { m_Valid[idx] = type; }
+
+  UINT64 GetResolveDataSize() const;
+  UINT64 GetResolveBufferSize() const;
+  void SaveValidQueries(ID3D12GraphicsCommandList *unwrappedList, ID3D12Resource *unwrappedDestBuf);
+
+  void SetResultBuffer(ID3D12Resource *buf) { m_SavedResults = buf; }
+  void ResolveValidQueryData(ID3D12GraphicsCommandList *list, D3D12_QUERY_TYPE Type, UINT StartIndex,
+                             UINT NumQueries, ID3D12Resource *destBuf, UINT64 destOffs);
 };
 
 class D3D12AccelerationStructure;
 
 class WrappedID3D12Resource
-    : public WrappedDeviceChild12<ID3D12Resource, ID3D12Resource1, ID3D12Resource2>
+    : public WrappedDeviceChild12<ID3D12Resource, ID3D12Resource1, ID3D12Resource2>,
+      public ID3D12PageableTools
 {
+  ID3D12PageableTools *m_Pageable = NULL;
+
   static GPUAddressRangeTracker m_Addresses;
 
   WriteSerialiser &GetThreadSerialiser();
   size_t DeleteOverlappingAccStructsInRangeAtOffset(D3D12BufferOffset bufferOffset);
 
   WrappedID3D12Heap *m_Heap = NULL;
+  uint64_t m_HeapOffset = 0;
 
   Threading::CriticalSection m_accStructResourcesCS;
   rdcflatmap<D3D12BufferOffset, D3D12AccelerationStructure *> m_accelerationStructMap;
@@ -1258,6 +1506,7 @@ public:
   }
 
   WrappedID3D12Heap *GetHeap() { return m_Heap; }
+  uint64_t GetHeapOffset() { return m_HeapOffset; }
 
   ID3D12Pageable *UnwrappedResidencyPageable()
   {
@@ -1273,7 +1522,8 @@ public:
     return this->GetResourceID();
   }
 
-  bool CreateAccStruct(D3D12BufferOffset bufferOffset, UINT64 byteSize,
+  bool CreateAccStruct(ResourceId id, D3D12BufferOffset bufferOffset,
+                       D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE type, UINT64 byteSize,
                        D3D12AccelerationStructure **accStruct);
 
   bool GetAccStructIfExist(D3D12BufferOffset bufferOffset,
@@ -1300,6 +1550,12 @@ public:
   {
     m_Addresses.GetResIDFromAddrAllowOutOfBounds(addr, id, offs);
   }
+  static void GetResIDBoundForAddr(D3D12_GPU_VIRTUAL_ADDRESS addr, ResourceId &lower,
+                                   D3D12_GPU_VIRTUAL_ADDRESS &lowerVA, ResourceId &upper,
+                                   D3D12_GPU_VIRTUAL_ADDRESS &upperVA)
+  {
+    m_Addresses.GetResIDBoundForAddr(addr, lower, lowerVA, upper, upperVA);
+  }
 
   UINT64 GetOriginalVA() const { return m_OrigAddress; }
 
@@ -1319,15 +1575,16 @@ public:
     TypeEnum = Resource_Resource,
   };
 
-  WrappedID3D12Resource(ID3D12Resource *real, ID3D12Heap *heap, UINT64 HeapOffset,
+  WrappedID3D12Resource(ResourceId id, ID3D12Resource *real, ID3D12Heap *heap, UINT64 HeapOffset,
                         WrappedID3D12Device *device, UINT64 origAddress = 0)
-      : WrappedDeviceChild12(real, device)
+      : WrappedDeviceChild12(id, real, device)
   {
     m_OrigAddress = origAddress;
     if(IsReplayMode(device->GetState()))
       device->AddReplayResource(GetResourceID(), this);
 
     m_Heap = (WrappedID3D12Heap *)heap;
+    m_HeapOffset = HeapOffset;
     SAFE_ADDREF(m_Heap);
 
     // assuming only valid for buffers
@@ -1372,6 +1629,8 @@ public:
     return 0;
   }
 
+  ULONG STDMETHODCALLTYPE AddRef() { return WrappedDeviceChild12::AddRef(); }
+  ULONG STDMETHODCALLTYPE Release() { return WrappedDeviceChild12::Release(); }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject)
   {
     if(riid == __uuidof(ID3D12ManualWriteTrackingResource))
@@ -1384,7 +1643,17 @@ public:
   //////////////////////////////
   // implement ID3D12Resource
 
-  virtual D3D12_RESOURCE_DESC STDMETHODCALLTYPE GetDesc() { return m_pReal->GetDesc(); }
+  virtual D3D12_RESOURCE_DESC STDMETHODCALLTYPE GetDesc()
+  {
+    D3D12_RESOURCE_DESC ret = m_pReal->GetDesc();
+    // normalise alignment - sometimes D3D12 returns an alignment that is invalid to use
+    if(ret.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
+       ret.Alignment != D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)
+      ret.Alignment = 0;
+    if(ret.Flags & D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT)
+      ret.Alignment = 0;
+    return ret;
+  }
   virtual D3D12_GPU_VIRTUAL_ADDRESS STDMETHODCALLTYPE GetGPUVirtualAddress()
   {
     return m_pReal->GetGPUVirtualAddress();
@@ -1433,7 +1702,7 @@ public:
     if(riid == __uuidof(ID3D12ProtectedResourceSession))
     {
       *ppProtectedSession = new WrappedID3D12ProtectedResourceSession(
-          (ID3D12ProtectedResourceSession *)iface, m_pDevice);
+          ResourceId(), (ID3D12ProtectedResourceSession *)iface, m_pDevice);
     }
     else
     {
@@ -1459,9 +1728,22 @@ public:
     SAFE_RELEASE(real2);
     return ret;
   }
+  //////////////////////////////
+  // implement ID3D12PageableTools
+  virtual HRESULT STDMETHODCALLTYPE GetAllocation(_Inout_ D3D12_GPU_VIRTUAL_ADDRESS_RANGE *pAllocation)
+  {
+    if(!m_Pageable)
+      m_pReal->QueryInterface(__uuidof(ID3D12PageableTools), (void **)&m_Pageable);
+
+    if(m_Pageable)
+      return m_Pageable->GetAllocation(pAllocation);
+
+    return E_NOINTERFACE;
+  }
 };
 
-class WrappedID3D12RootSignature : public WrappedDeviceChild12<ID3D12RootSignature>
+class WrappedID3D12RootSignature
+    : public WrappedDeviceChild12<ID3D12RootSignature, ID3D12RootSignature1>
 {
 public:
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D12RootSignature);
@@ -1474,11 +1756,36 @@ public:
     TypeEnum = Resource_RootSignature,
   };
 
-  WrappedID3D12RootSignature(ID3D12RootSignature *real, WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+  WrappedID3D12RootSignature(ResourceId id, ID3D12RootSignature *real, WrappedID3D12Device *device)
+      : WrappedDeviceChild12(id, real, device)
   {
   }
   virtual ~WrappedID3D12RootSignature() { Shutdown(); }
+
+  //////////////////////////////
+  // implement ID3D12RootSignature1
+
+  virtual SIZE_T STDMETHODCALLTYPE GetSerializedSize()
+  {
+    ID3D12RootSignature1 *real1 = NULL;
+    m_pReal->QueryInterface(__uuidof(ID3D12RootSignature1), (void **)&real1);
+
+    if(!real1)
+      return 0;
+
+    return real1->GetSerializedSize();
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE GetSerializedData(void *pData, SIZE_T Size)
+  {
+    ID3D12RootSignature1 *real1 = NULL;
+    m_pReal->QueryInterface(__uuidof(ID3D12RootSignature1), (void **)&real1);
+
+    if(!real1)
+      return E_NOINTERFACE;
+
+    return real1->GetSerializedData(pData, Size);
+  }
 };
 
 class WrappedID3D12PipelineLibrary : public WrappedDeviceChild12<ID3D12PipelineLibrary1>
@@ -1491,7 +1798,10 @@ public:
     TypeEnum = Resource_PipelineLibrary,
   };
 
-  WrappedID3D12PipelineLibrary(WrappedID3D12Device *device) : WrappedDeviceChild12(NULL, device) {}
+  WrappedID3D12PipelineLibrary(ResourceId id, WrappedID3D12Device *device)
+      : WrappedDeviceChild12(id, NULL, device)
+  {
+  }
   virtual ~WrappedID3D12PipelineLibrary() { Shutdown(); }
   virtual HRESULT STDMETHODCALLTYPE StorePipeline(_In_opt_ LPCWSTR pName,
                                                   _In_ ID3D12PipelineState *pPipeline)
@@ -1559,8 +1869,9 @@ public:
     TypeEnum = Resource_ShaderCacheSession,
   };
 
-  WrappedID3D12ShaderCacheSession(ID3D12ShaderCacheSession *real, WrappedID3D12Device *device)
-      : WrappedDeviceChild12(real, device)
+  WrappedID3D12ShaderCacheSession(ResourceId id, ID3D12ShaderCacheSession *real,
+                                  WrappedID3D12Device *device)
+      : WrappedDeviceChild12(id, real, device)
   {
   }
   virtual ~WrappedID3D12ShaderCacheSession() { Shutdown(); }
@@ -1591,14 +1902,17 @@ public:
   }
 };
 
+struct ASBuildData;
+
 // class to represent acceleration structure i.e. BLAS/TLAS
 class D3D12AccelerationStructure : public WrappedDeviceChild12<ID3D12DeviceChild>
 {
 public:
   ALLOCATE_WITH_WRAPPED_POOL(D3D12AccelerationStructure);
 
-  D3D12AccelerationStructure(WrappedID3D12Device *wrappedDevice, WrappedID3D12Resource *bufferRes,
-                             D3D12BufferOffset bufferOffset, UINT64 byteSize);
+  D3D12AccelerationStructure(ResourceId id, WrappedID3D12Device *wrappedDevice,
+                             WrappedID3D12Resource *bufferRes, D3D12BufferOffset bufferOffset,
+                             D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE type, UINT64 byteSize);
 
   ~D3D12AccelerationStructure();
 
@@ -1608,10 +1922,18 @@ public:
   {
     return m_asbWrappedResource->GetGPUVirtualAddress() + m_asbWrappedResourceBufferOffset;
   }
+  D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE Type() const { return type; }
+
+  ASBuildData *buildData = NULL;
+
+  // only valid on replay - for auditing
+  bool seenReplayBuild = false;
+  rdcarray<D3D12AccelerationStructure *> children;
 
 private:
   WrappedID3D12Resource *m_asbWrappedResource;
   D3D12BufferOffset m_asbWrappedResourceBufferOffset;
+  D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE type;
   UINT64 byteSize;
 };
 
@@ -1702,6 +2024,7 @@ D3D12_UNWRAP_EXTENDED(ID3D12Resource, ID3D12Resource1);
 D3D12_UNWRAP_EXTENDED(ID3D12Resource, ID3D12Resource2);
 D3D12_UNWRAP_EXTENDED(ID3D12ProtectedResourceSession, ID3D12ProtectedResourceSession1);
 
+D3D12ResourceType TryIdentifyTypeByPtr(ID3D12Object *ptr);
 D3D12ResourceType IdentifyTypeByPtr(ID3D12Object *ptr);
 
 #define WRAPPING_DEBUG 0

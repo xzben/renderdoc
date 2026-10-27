@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -147,15 +147,19 @@ void updateDescriptorSets(VkDevice device, const std::vector<VkWriteDescriptorSe
 void cmdPipelineBarrier(VkCommandBuffer cmd, std::initializer_list<VkImageMemoryBarrier> img,
                         std::initializer_list<VkBufferMemoryBarrier> buf = {},
                         std::initializer_list<VkMemoryBarrier> mem = {},
-                        VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                        VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT |
+                                                            VK_PIPELINE_STAGE_HOST_BIT,
+                        VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT |
+                                                            VK_PIPELINE_STAGE_HOST_BIT,
                         VkDependencyFlags dependencyFlags = 0);
 
 void cmdPipelineBarrier(VkCommandBuffer cmd, const std::vector<VkImageMemoryBarrier> &img,
                         const std::vector<VkBufferMemoryBarrier> &buf = {},
                         const std::vector<VkMemoryBarrier> &mem = {},
-                        VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                        VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT |
+                                                            VK_PIPELINE_STAGE_HOST_BIT,
+                        VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT |
+                                                            VK_PIPELINE_STAGE_HOST_BIT,
                         VkDependencyFlags dependencyFlags = 0);
 
 struct ClearColorValue;
@@ -178,6 +182,21 @@ void cmdBindDescriptorSets(VkCommandBuffer cmd, VkPipelineBindPoint pipelineBind
 void cmdPushDescriptorSets(VkCommandBuffer cmd, VkPipelineBindPoint pipelineBindPoint,
                            VkPipelineLayout layout, uint32_t set,
                            std::vector<VkWriteDescriptorSet> writes);
+
+template <typename T>
+void cmdPushConstants(VkCommandBuffer cmd, VkPipelineLayout layout, VkShaderStageFlags stages,
+                      const T &val)
+{
+  vkCmdPushConstants(cmd, layout, stages, 0, sizeof(T), &val);
+}
+
+template <typename T>
+void cmdPushConstants(VkCommandBuffer cmd, VkPipelineLayout layout, const T &val)
+{
+  cmdPushConstants(cmd, layout, VK_SHADER_STAGE_ALL, val);
+}
+
+void cmdSetViewport(VkCommandBuffer cmd, VkViewport viewport);
 
 struct ApplicationInfo : public VkApplicationInfo
 {
@@ -296,7 +315,7 @@ struct DeviceQueueCreateInfo : public VkDeviceQueueCreateInfo
 struct DeviceCreateInfo : public VkDeviceCreateInfo
 {
   DeviceCreateInfo(const std::vector<VkDeviceQueueCreateInfo> &queues,
-                   const std::vector<const char *> &layers, const std::vector<const char *> &exts,
+                   const std::vector<const char *> &exts,
                    const VkPhysicalDeviceFeatures *features = NULL)
   {
     sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -304,17 +323,16 @@ struct DeviceCreateInfo : public VkDeviceCreateInfo
     flags = 0;
     queueCreateInfoCount = uint32_t(queues.size());
     pQueueCreateInfos = queues.data();
-    enabledLayerCount = uint32_t(layers.size());
-    ppEnabledLayerNames = layers.data();
+    enabledLayerCount = 0;
+    ppEnabledLayerNames = NULL;
     enabledExtensionCount = uint32_t(exts.size());
     ppEnabledExtensionNames = exts.data();
     pEnabledFeatures = features;
   }
 
   DeviceCreateInfo(const std::vector<VkDeviceQueueCreateInfo> &queues,
-                   const std::vector<const char *> &layers, const std::vector<const char *> &exts,
-                   const VkPhysicalDeviceFeatures &features)
-      : DeviceCreateInfo(queues, layers, exts, &features)
+                   const std::vector<const char *> &exts, const VkPhysicalDeviceFeatures &features)
+      : DeviceCreateInfo(queues, exts, &features)
   {
   }
 
@@ -471,6 +489,19 @@ struct BufferMemoryBarrier : public VkBufferMemoryBarrier
     this->buffer = buffer;
     this->offset = offset;
     this->size = size;
+  }
+};
+
+#undef MemoryBarrier
+
+struct MemoryBarrier : public VkMemoryBarrier
+{
+  MemoryBarrier(VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask)
+  {
+    sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    pNext = NULL;
+    this->srcAccessMask = srcAccessMask;
+    this->dstAccessMask = dstAccessMask;
   }
 };
 
@@ -922,6 +953,19 @@ struct DescriptorImageInfo : public VkDescriptorImageInfo
   }
 };
 
+struct WriteDescriptorSetInlineUniformBlockEXT : public VkWriteDescriptorSetInlineUniformBlockEXT
+{
+  WriteDescriptorSetInlineUniformBlockEXT(void *data, uint32_t size)
+  {
+    sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK_EXT;
+    pNext = NULL;
+    this->pData = data;
+    this->dataSize = size;
+  }
+
+  operator const VkWriteDescriptorSetInlineUniformBlockEXT *() const { return this; }
+};
+
 struct WriteDescriptorSet : public VkWriteDescriptorSet
 {
   WriteDescriptorSet(VkDescriptorSet dstSet, uint32_t dstBinding, uint32_t dstArrayElement,
@@ -1202,6 +1246,13 @@ struct ClearValue
     clear.color.float32[2] = b;
     clear.color.float32[3] = a;
   }
+  ClearValue(uint32_t r, uint32_t g, uint32_t b, uint32_t a)
+  {
+    clear.color.uint32[0] = r;
+    clear.color.uint32[1] = g;
+    clear.color.uint32[2] = b;
+    clear.color.uint32[3] = a;
+  }
 
   ClearValue(float d, uint32_t s)
   {
@@ -1212,7 +1263,7 @@ struct ClearValue
   VkClearValue clear;
 
   operator const VkClearValue *() const { return (VkClearValue *)this; }
-  operator const VkClearValue &() const { return (VkClearValue &)*this; }
+  operator const VkClearValue &() const { return clear; }
 };
 
 struct Viewport : public VkViewport
@@ -1263,7 +1314,7 @@ struct ComputePipelineCreateInfo : public VkComputePipelineCreateInfo
   {
     sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pNext = NULL;
-    this->flags = 0;
+    this->flags = flags;
     this->stage = stage;
     this->layout = layout;
     this->basePipelineHandle = basePipelineHandle;

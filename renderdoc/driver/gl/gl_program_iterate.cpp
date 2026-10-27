@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1190,7 +1190,7 @@ template void SerialiseProgramUniforms(WriteSerialiser &ser, CaptureState state,
                                        const PerStageReflections &stages, GLuint prog,
                                        std::map<GLint, GLint> *locTranslate);
 
-bool CopyProgramAttribBindings(GLuint progsrc, GLuint progdst, ShaderReflection *refl)
+bool CopyProgramAttribBindings(GLuint progsrc, GLuint progdst, const ShaderReflection *refl)
 {
   // don't try to copy bindings for SPIR-V shaders. The queries by name may fail, and the bindings
   // are immutable anyway
@@ -1204,15 +1204,19 @@ bool CopyProgramAttribBindings(GLuint progsrc, GLuint progdst, ShaderReflection 
     if(sig.systemValue != ShaderBuiltin::Undefined)
       continue;
 
-    GLint idx = GL.glGetAttribLocation(progsrc, sig.varName.c_str());
+    rdcstr name = sig.varName;
+    if(name.endsWith(":col0"))
+      name.resize(name.size() - 5);
+
+    GLint idx = GL.glGetAttribLocation(progsrc, name.c_str());
     if(idx >= 0)
-      GL.glBindAttribLocation(progdst, (GLuint)idx, sig.varName.c_str());
+      GL.glBindAttribLocation(progdst, (GLuint)idx, name.c_str());
   }
 
   return !refl->inputSignature.empty();
 }
 
-bool CopyProgramFragDataBindings(GLuint progsrc, GLuint progdst, ShaderReflection *refl)
+bool CopyProgramFragDataBindings(GLuint progsrc, GLuint progdst, const ShaderReflection *refl)
 {
   // don't try to copy bindings for SPIR-V shaders. The queries by name may fail, and the bindings
   // are immutable anyway

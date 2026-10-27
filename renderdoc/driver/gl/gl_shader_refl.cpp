@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -188,27 +188,40 @@ GLuint MakeSeparableShaderProgram(WrappedOpenGL &drv, GLenum type, const rdcarra
   const char *blockIdentifiers[2] = {"in gl_PerVertex", "out gl_PerVertex"};
   rdcstr blocks[2] = {"", ""};
 
+  // if any source uses gl_CullDistance, add that to our attempted redeclaration
+  rdcstr cullDeclare;
+  for(const rdcstr &src : sources)
+  {
+    if(src.contains("gl_CullDistance"))
+    {
+      cullDeclare = "float gl_CullDistance[];";
+      break;
+    }
+  }
+
   if(type == eGL_VERTEX_SHADER)
   {
     blocks[1] =
-        "out gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; };\n";
+        "out gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; " +
+        cullDeclare + " };\n";
   }
   else if(type == eGL_TESS_CONTROL_SHADER)
   {
     blocks[0] =
-        "in gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; } "
-        "gl_in[];\n";
+        "in gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; " +
+        cullDeclare + " } gl_in[];\n";
     blocks[1] =
-        "out gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; } "
-        "gl_out[];\n";
+        "out gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; " +
+        cullDeclare + " } gl_out[];\n";
   }
   else
   {
     blocks[0] =
-        "in gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; } "
-        "gl_in[];\n";
+        "in gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; " +
+        cullDeclare + " } gl_in[];\n";
     blocks[1] =
-        "out gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; };\n";
+        "out gl_PerVertex { vec4 gl_Position; float gl_PointSize; float gl_ClipDistance[]; " +
+        cullDeclare + " };\n";
   }
 
   const char **strings = new const char *[sources.size()];
@@ -279,6 +292,13 @@ GLuint MakeSeparableShaderProgram(WrappedOpenGL &drv, GLenum type, const rdcarra
                                   EShMsgOnlyPreprocessor, &outstr, incl);
           src.assign(outstr.c_str(), outstr.size());
         }
+
+        int idx = src.find("\nout float gl_CullDistance");
+        if(idx > 0)
+          src.insert(idx + 1, "//");
+        idx = src.find("\nout float gl_ClipDistance");
+        if(idx > 0)
+          src.insert(idx + 1, "//");
 
         if(!success)
         {
@@ -800,7 +820,7 @@ void ReconstructVarTree(GLenum query, GLuint sepProg, GLuint varIdx, GLint numPa
   int32_t c = values[1] - 1;
 
   // trim off trailing [0] if it's an array
-  if(var.name[c - 3] == '[' && var.name[c - 2] == '0' && var.name[c - 1] == ']')
+  if(var.name.size() > 3 && var.name[c - 3] == '[' && var.name[c - 2] == '0' && var.name[c - 1] == ']')
     var.name.resize(c - 3);
   else
     var.type.elements = 1;
@@ -1232,6 +1252,10 @@ void MakeShaderReflection(GLenum shadType, GLuint sepProg, ShaderReflection &ref
   refl.encoding = ShaderEncoding::GLSL;
   refl.debugInfo.compiler = KnownShaderTool::Unknown;
   refl.debugInfo.encoding = ShaderEncoding::GLSL;
+  refl.debugInfo.debuggable = false;
+  refl.debugInfo.debugStatus =
+      "Shader debugging not supported for legacy GLSL shaders.\n"
+      "Only modern GLSL compatible with SPIR-V compilation can be debugged.";
 
   if(shadType == eGL_COMPUTE_SHADER)
   {
@@ -1362,6 +1386,12 @@ void MakeShaderReflection(GLenum shadType, GLuint sepProg, ShaderReflection &ref
     {
       res.textureType = TextureType::TextureCubeArray;
       res.variableType.name = "samplerCubeArray";
+      res.variableType.baseType = VarType::Float;
+    }
+    else if(values[0] == eGL_SAMPLER_CUBE_MAP_ARRAY_SHADOW)
+    {
+      res.textureType = TextureType::TextureCubeArray;
+      res.variableType.name = "samplerCubeArrayShadow";
       res.variableType.baseType = VarType::Float;
     }
     else if(values[0] == eGL_SAMPLER_2D_MULTISAMPLE)
@@ -1985,23 +2015,45 @@ void MakeShaderReflection(GLenum shadType, GLuint sepProg, ShaderReflection &ref
   {
     for(int i = 0; i < numUBOs; i++)
     {
-      if(!ubos[i].empty())
+      int idx = i;
+      int arrOffs = uboNames[i].indexOf('[');
+      // For arrayed UBOs:
+      // - uboNames will have the array index baked into its name
+      // - ubos will have just the member type of the base array
+      // - use the array basename (from uboNames) to find the matching type in ubos
+      if(ubos[i].empty() && arrOffs > 0)
+      {
+        rdcstr basename = uboNames[i];
+        basename.erase(arrOffs, basename.size());
+
+        for(int j = 0; j < numUBOs; ++j)
+        {
+          if(!ubos[j].empty())
+          {
+            if(ubos[j][0].name == basename)
+            {
+              idx = j;
+              break;
+            }
+          }
+        }
+      }
+      if(!ubos[idx].empty())
       {
         ConstantBlock cblock;
         cblock.name = uboNames[i];
         cblock.bufferBacked = true;
+        cblock.variables = ubos[idx];
 
         GLenum bufSize = eGL_BUFFER_DATA_SIZE;
         GL.glGetProgramResourceiv(sepProg, eGL_UNIFORM_BLOCK, i, 1, &bufSize, 1, NULL,
                                   (GLint *)&cblock.byteSize);
 
-        sort(ubos[i]);
+        sort(cblock.variables);
 
         // can't make perfect guesses of struct alignment but assume std140 for ubos
-        for(ShaderConstant &member : ubos[i])
+        for(ShaderConstant &member : cblock.variables)
           FixupStructOffsetsAndSize(true, member);
-
-        std::swap(cblock.variables, ubos[i]);
 
         refl.constantBlocks.push_back(cblock);
       }
@@ -2415,14 +2467,6 @@ void EvaluateVertexAttributeBinds(GLuint curProg, const ShaderReflection *refl, 
   if(!refl)
     return;
 
-  if(spirv)
-  {
-    for(size_t i = 0; i < refl->inputSignature.size(); i++)
-      if(refl->inputSignature[i].systemValue == ShaderBuiltin::Undefined)
-
-        return;
-  }
-
   for(int32_t i = 0; i < refl->inputSignature.count(); i++)
   {
     // skip system inputs, as some drivers will return a location for them
@@ -2455,7 +2499,7 @@ void EvaluateVertexAttributeBinds(GLuint curProg, const ShaderReflection *refl, 
   }
 }
 
-void GetCurrentBinding(GLuint curProg, ShaderReflection *refl, const ShaderResource &resource,
+void GetCurrentBinding(GLuint curProg, const ShaderReflection *refl, const ShaderResource &resource,
                        uint32_t &slot, bool &used)
 {
   // in case of bugs, we readback into this array instead of a single int
@@ -2487,11 +2531,25 @@ void GetCurrentBinding(GLuint curProg, ShaderReflection *refl, const ShaderResou
 
   if(refl->encoding == ShaderEncoding::OpenGLSPIRV)
   {
-    if(resource.isTexture && resource.fixedBindNumber != ~0U)
+    slot = 0;
+    if(resource.isTexture)
     {
-      GL.glGetUniformiv(curProg, resource.fixedBindNumber, dummyReadback);
-      slot = dummyReadback[0];
-      used = true;
+      if(resource.fixedBindNumber == ~0U)
+      {
+        slot = 0;
+      }
+      // the fixedBindSetOrSpace is set to 1 if a location is provided (whether or not there's a fixed binding)
+      else if(resource.fixedBindSetOrSpace == 0)
+      {
+        slot = resource.fixedBindNumber;
+        used = true;
+      }
+      else
+      {
+        GL.glGetUniformiv(curProg, resource.fixedBindNumber, dummyReadback);
+        slot = dummyReadback[0];
+        used = true;
+      }
     }
   }
   else if(resource.isReadOnly)
@@ -2664,13 +2722,15 @@ void GetCurrentBinding(GLuint curProg, ShaderReflection *refl, const ShaderResou
 #endif
 }
 
-void GetCurrentBinding(GLuint curProg, ShaderReflection *refl, const ConstantBlock &cblock,
+void GetCurrentBinding(GLuint curProg, const ShaderReflection *refl, const ConstantBlock &cblock,
                        uint32_t &slot, bool &used)
 {
   if(refl->encoding == ShaderEncoding::OpenGLSPIRV)
   {
     // It's fuzzy on whether UBOs can be remapped with glUniformBlockBinding so for now we hope that
     // anyone using UBOs and SPIR-V will at least specify immutable bindings in the SPIR-V.
+    slot = cblock.fixedBindNumber;
+    used = true;
     return;
   }
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -89,8 +89,9 @@ private:
   PipelineStateViewer &m_Common;
   ComputeDebugSelector *m_ComputeDebugSelector;
 
-  void setShaderState(const D3D11Pipe::Shader &stage, RDLabel *shader, RDTreeWidget *tex,
-                      RDTreeWidget *samp, RDTreeWidget *cbuffer, RDTreeWidget *classes);
+  void setShaderState(const D3D11Pipe::Shader &stage, RDLabel *shader, RDLabel *shaderDebug,
+                      RDTreeWidget *tex, RDTreeWidget *samp, RDTreeWidget *cbuffer,
+                      RDTreeWidget *classes);
 
   void addResourceRow(const D3D11ViewTag &view, const ShaderResource *shaderBind, bool usedSlot,
                       RDTreeWidget *resources);
@@ -99,12 +100,12 @@ private:
   void addCBufferRow(const Descriptor &b, uint32_t reg, const ConstantBlock *shaderBind,
                      bool usedSlot, RDTreeWidget *cbuffers);
 
-  void clearShaderState(RDLabel *shader, RDTreeWidget *tex, RDTreeWidget *samp,
-                        RDTreeWidget *cbuffer, RDTreeWidget *classes);
+  void clearShaderState(RDLabel *shader, RDLabel *shaderDebug, RDTreeWidget *tex,
+                        RDTreeWidget *samp, RDTreeWidget *cbuffer, RDTreeWidget *classes);
   void setState();
   void clearState();
 
-  QVariantList exportViewHTML(const Descriptor &view, uint32_t reg, ShaderReflection *refl,
+  QVariantList exportViewHTML(const Descriptor &view, uint32_t reg, const ShaderReflection *refl,
                               const QString &extraParams);
   void exportHTML(QXmlStreamWriter &xml, const D3D11Pipe::InputAssembly &ia);
   void exportHTML(QXmlStreamWriter &xml, const D3D11Pipe::Shader &sh);

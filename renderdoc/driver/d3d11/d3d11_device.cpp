@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -25,6 +25,7 @@
 
 #include "d3d11_device.h"
 #include "core/core.h"
+#include "core/settings.h"
 #include "driver/dxgi/dxgi_wrapped.h"
 #include "jpeg-compressor/jpge.h"
 #include "maths/formatpacking.h"
@@ -37,6 +38,8 @@
 #include "d3d11_replay.h"
 #include "d3d11_resources.h"
 #include "d3d11_shader_cache.h"
+
+RDOC_EXTERN_CONFIG(bool, Replay_Debug_PrintChunkTimings);
 
 WRAPPED_POOL_INST(WrappedID3D11Device);
 
@@ -149,11 +152,13 @@ WrappedID3D11Device::WrappedID3D11Device(ID3D11Device *realDevice, D3D11InitPara
         {
           DXGI_ADAPTER_DESC desc = {};
           pDXGIAdapter->GetDesc(&desc);
+          LARGE_INTEGER version = {};
+          pDXGIAdapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &version);
 
           m_InitParams.AdapterDesc = desc;
 
           GPUVendor vendor = GPUVendorFromPCIVendor(desc.VendorId);
-          rdcstr descString = GetDriverVersion(desc);
+          rdcstr descString = GetDriverVersion(desc, version);
 
           RDCLOG("New D3D11 device created: %s / %s", ToStr(vendor).c_str(), descString.c_str());
 
@@ -1030,7 +1035,8 @@ bool WrappedID3D11Device::ProcessChunk(ReadSerialiser &ser, D3D11Chunk context)
       if(IsReplayingAndReading())
       {
         m_pImmediateContext->AddRef();
-        m_ResourceManager->AddLiveResource(ImmediateContext, m_pImmediateContext);
+        m_pImmediateContext->SetReplayResourceID(ImmediateContext);
+        m_ResourceManager->AddResource(ImmediateContext, m_pImmediateContext);
 
         ResourceId descId = m_pImmediateContext->GetDescriptorsID();
         AddResource(descId, ResourceType::DescriptorStore, "");
@@ -1224,6 +1230,7 @@ bool WrappedID3D11Device::ProcessChunk(ReadSerialiser &ser, D3D11Chunk context)
     case D3D11Chunk::PostExecuteCommandList:
     case D3D11Chunk::PostFinishCommandListSet:
     case D3D11Chunk::SwapDeviceContextState:
+    case D3D11Chunk::SetCommandAnnotation:
     case D3D11Chunk::SwapchainPresent: return m_pImmediateContext->ProcessChunk(ser, context);
 
     // no explicit default so that we have compiler warnings if a chunk isn't explicitly handled.
@@ -1458,6 +1465,8 @@ RDResult WrappedID3D11Device::ReadLogInitialisation(RDCFile *rdc, bool storeStru
 
       if(!IsStructuredExporting(m_State))
       {
+        GetReplay()->CreateResources();
+
         rdcarray<DebugMessage> savedDebugMessages;
 
         // save any debug messages we built up
@@ -1501,7 +1510,7 @@ RDResult WrappedID3D11Device::ReadLogInitialisation(RDCFile *rdc, bool storeStru
     for(const BufferDescription &b : counterBuffers)
     {
       ID3D11UnorderedAccessView *uav = GetDebugManager()->GetCounterBufferUAV(b.resourceId);
-      ResourceId uavId = GetResourceManager()->GetOriginalID(GetIDForDeviceChild(uav));
+      ResourceId uavId = GetIDForDeviceChild(uav);
 
       ResourceDescription &uavDesc = GetReplay()->GetResourceDesc(uavId);
       ResourceDescription &bufDesc = GetReplay()->GetResourceDesc(b.resourceId);
@@ -1519,19 +1528,28 @@ RDResult WrappedID3D11Device::ReadLogInitialisation(RDCFile *rdc, bool storeStru
     }
   }
 
+  const bool develMode =
 #if ENABLED(RDOC_DEVEL)
-  for(auto it = chunkInfos.begin(); it != chunkInfos.end(); ++it)
-  {
-    double dcount = double(it->second.count);
-
-    RDCDEBUG(
-        "% 5d chunks - Time: %9.3fms total/%9.3fms avg - Size: %8.3fMB total/%7.3fMB avg - %s (%u)",
-        it->second.count, it->second.total, it->second.total / dcount,
-        double(it->second.totalsize) / (1024.0 * 1024.0),
-        double(it->second.totalsize) / (dcount * 1024.0 * 1024.0),
-        GetChunkName((uint32_t)it->first).c_str(), uint32_t(it->first));
-  }
+      true;
+#else
+      false;
 #endif
+
+  if(Replay_Debug_PrintChunkTimings() || develMode)
+  {
+    for(auto it = chunkInfos.begin(); it != chunkInfos.end(); ++it)
+    {
+      double dcount = double(it->second.count);
+
+      RDCLOG(
+          "| % 5d chunks - Time: %9.3fms total/%9.3fms avg - Size: %8.3fMB total/%7.3fMB avg - %s "
+          "(%u)",
+          it->second.count, it->second.total, it->second.total / dcount,
+          double(it->second.totalsize) / (1024.0 * 1024.0),
+          double(it->second.totalsize) / (dcount * 1024.0 * 1024.0),
+          GetChunkName((uint32_t)it->first).c_str(), uint32_t(it->first));
+    }
+  }
 
   GetReplay()->WriteFrameRecord().frameInfo.uncompressedFileSize =
       rdc->GetSectionProperties(sectionIdx).uncompressedSize;
@@ -1541,7 +1559,7 @@ RDResult WrappedID3D11Device::ReadLogInitialisation(RDCFile *rdc, bool storeStru
   GetReplay()->WriteFrameRecord().frameInfo.initDataSize =
       chunkInfos[(D3D11Chunk)SystemChunk::InitialContents].totalsize;
 
-  RDCDEBUG("Allocating %llu persistant bytes of memory for the log.",
+  RDCDEBUG("Allocating %llu persistent bytes of memory for the log.",
            GetReplay()->WriteFrameRecord().frameInfo.persistentSize);
 
   if(HasFatalError())
@@ -1621,6 +1639,9 @@ void WrappedID3D11Device::ReleaseSwapchainResources(IDXGISwapper *swapper, UINT 
                                                     IUnknown *const *ppPresentQueue,
                                                     IUnknown **unwrappedQueues)
 {
+  if(m_LastSwap == swapper)
+    m_LastSwap = NULL;
+
   RDCASSERT(ppPresentQueue == NULL);
 
   if(ppPresentQueue)
@@ -1708,14 +1729,12 @@ bool WrappedID3D11Device::Serialise_WrapSwapchainBuffer(SerialiserType &ser, IDX
     else
     {
       WrappedID3D11Texture2D1 *wrapped =
-          new WrappedID3D11Texture2D1(fakeBB, this, TEXDISPLAY_INDIRECT_VIEW);
+          new WrappedID3D11Texture2D1(SwapbufferID, fakeBB, this, TEXDISPLAY_INDIRECT_VIEW);
       fakeBB = wrapped;
 
       wrapped->m_RealDescriptor = new D3D11_TEXTURE2D_DESC(realDescriptor);
 
       SetDebugName(fakeBB, "Serialised Swap Chain Buffer");
-
-      GetResourceManager()->AddLiveResource(SwapbufferID, fakeBB);
     }
   }
 
@@ -1741,7 +1760,8 @@ IUnknown *WrappedID3D11Device::WrapSwapchainBuffer(IDXGISwapper *swapper, DXGI_F
   }
   else
   {
-    pTex = new WrappedID3D11Texture2D1((ID3D11Texture2D *)realSurface, this, TEXDISPLAY_UNKNOWN);
+    pTex = new WrappedID3D11Texture2D1(ResourceId(), (ID3D11Texture2D *)realSurface, this,
+                                       TEXDISPLAY_UNKNOWN);
 
     // this is only used to indicate that this texture is a backbuffer
     pTex->m_RealDescriptor = new D3D11_TEXTURE2D_DESC();
@@ -1778,10 +1798,6 @@ IUnknown *WrappedID3D11Device::WrapSwapchainBuffer(IDXGISwapper *swapper, DXGI_F
       Serialise_WrapSwapchainBuffer(ser, swapper, bufferFormat, buffer, pTex);
 
       record->AddChunk(scope.Get());
-    }
-    else
-    {
-      GetResourceManager()->AddLiveResource(id, pTex);
     }
   }
 
@@ -1830,21 +1846,28 @@ void WrappedID3D11Device::ReportDeath(ID3D11DeviceChild *obj)
 
   ID3D11DeviceChild *texObj = obj;
 
-  ResourceRange range = ResourceRange::Null;
-
   // backbuffers and their views are destroyed immediately to accommodate D3D's refcounting rules for
   // backbuffers. For views, get the resource to check and for everything else check the object directly
   if(WrappedID3D11ShaderResourceView1::IsAlloc(obj))
-    range = ResourceRange((WrappedID3D11ShaderResourceView1 *)obj);
+  {
+    WrappedID3D11ShaderResourceView1 *view = (WrappedID3D11ShaderResourceView1 *)obj;
+    texObj = view->GetResourceRange().GetResource();
+  }
   else if(WrappedID3D11UnorderedAccessView1::IsAlloc(obj))
-    range = ResourceRange((WrappedID3D11UnorderedAccessView1 *)obj);
+  {
+    WrappedID3D11UnorderedAccessView1 *view = (WrappedID3D11UnorderedAccessView1 *)obj;
+    texObj = view->GetResourceRange().GetResource();
+  }
   else if(WrappedID3D11RenderTargetView1::IsAlloc(obj))
-    range = ResourceRange((WrappedID3D11RenderTargetView1 *)obj);
+  {
+    WrappedID3D11RenderTargetView1 *view = (WrappedID3D11RenderTargetView1 *)obj;
+    texObj = view->GetResourceRange().GetResource();
+  }
   else if(WrappedID3D11DepthStencilView::IsAlloc(obj))
-    range = ResourceRange((WrappedID3D11DepthStencilView *)obj);
-
-  if(range.GetResource() != NULL)
-    texObj = range.GetResource();
+  {
+    WrappedID3D11DepthStencilView *view = (WrappedID3D11DepthStencilView *)obj;
+    texObj = view->GetResourceRange().GetResource();
+  }
 
   // if this is a wrapped 2D texture and is a backbuffer, destroy whatever object we were reporting
   // the death of and stop
@@ -1925,15 +1948,15 @@ void WrappedID3D11Device::DestroyDeadObject(ID3D11DeviceChild *child)
   {
     ResourceId id = wrapped->GetResourceID();
 
+    if(m_pImmediateContext)
+      m_pImmediateContext->RemoveAnnotations(id);
+
     // clean up book-keeping
-    rm->RemoveWrapper(wrapped->GetReal());
-    rm->ReleaseCurrentResource(id);
+    rm->RemoveWrapper(wrapped, wrapped->GetReal());
+    rm->ReleaseResource(id);
     D3D11ResourceRecord *record = GetResourceManager()->GetResourceRecord(id);
     if(record)
       record->Delete(GetResourceManager());
-
-    if(GetResourceManager()->HasLiveResource(id))
-      GetResourceManager()->EraseLiveResource(id);
 
     // this is a bit of a hack. the vtable for e.g. a wrapped blend state will have:
     //
@@ -1977,6 +2000,32 @@ int WrappedID3D11Device::EndEvent()
     return 0;
 
   return m_pCurrentWrappedDevice->m_pImmediateContext->ThreadSafe_EndEvent();
+}
+
+uint32_t WrappedID3D11Device::SetObjectAnnotation(void *object, const char *key,
+                                                  RENDERDOC_AnnotationType valueType,
+                                                  uint32_t valueVectorWidth,
+                                                  const RENDERDOC_AnnotationValue *value)
+{
+  return m_pImmediateContext->SetObjectAnnotation(object, key, valueType, valueVectorWidth, value);
+}
+
+uint32_t WrappedID3D11Device::SetCommandAnnotation(void *queueOrCommandBuffer, const char *key,
+                                                   RENDERDOC_AnnotationType valueType,
+                                                   uint32_t valueVectorWidth,
+                                                   const RENDERDOC_AnnotationValue *value)
+{
+  if(queueOrCommandBuffer != NULL && queueOrCommandBuffer != m_pImmediateContext)
+    return 2;
+
+  // D3D11 doesn't have queues or command buffers, so we accept NULL
+  // and treat all command annotations as immediate/global
+  if(IsActiveCapturing(m_State))
+  {
+    return m_pImmediateContext->SetCommandAnnotation(key, valueType, valueVectorWidth, value);
+  }
+
+  return 0;
 }
 
 void WrappedID3D11Device::StartFrameCapture(DeviceOwnedWindow devWnd)
@@ -2834,13 +2883,13 @@ void WrappedID3D11Device::AddResourceCurChunk(ResourceDescription &descr)
 
 void WrappedID3D11Device::AddResourceCurChunk(ResourceId id)
 {
-  if(GetResourceManager()->HasLiveResource(id))
+  if(GetResourceManager()->HasResource(id))
     AddResourceCurChunk(GetReplay()->GetResourceDesc(id));
 }
 
 void WrappedID3D11Device::DerivedResource(ID3D11DeviceChild *parent, ResourceId child)
 {
-  ResourceId parentId = GetResourceManager()->GetOriginalID(GetIDForDeviceChild(parent));
+  ResourceId parentId = GetIDForDeviceChild(parent);
 
   if(GetReplay()->GetResourceDesc(parentId).derivedResources.contains(child))
     return;
@@ -2860,7 +2909,7 @@ bool WrappedID3D11Device::Serialise_SetShaderDebugPath(SerialiserType &ser,
 
   if(IsReplayingAndReading() && pResource)
   {
-    ResourceId resId = GetResourceManager()->GetOriginalID(GetIDForDeviceChild(pResource));
+    ResourceId resId = GetIDForDeviceChild(pResource);
 
     AddResourceCurChunk(resId);
 
@@ -2913,8 +2962,7 @@ bool WrappedID3D11Device::Serialise_SetResourceName(SerialiserType &ser,
 
   if(IsReplayingAndReading() && pResource)
   {
-    ResourceDescription &descr = GetReplay()->GetResourceDesc(
-        GetResourceManager()->GetOriginalID(GetIDForDeviceChild(pResource)));
+    ResourceDescription &descr = GetReplay()->GetResourceDesc(GetIDForDeviceChild(pResource));
     if(Name && Name[0])
       descr.SetCustomName(Name);
     AddResourceCurChunk(descr);

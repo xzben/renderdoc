@@ -1,4 +1,3 @@
-import renderdoc as rd
 import rdtest
 
 class D3D12_Multi_Wait_Before_Signal(rdtest.TestCase):
@@ -11,10 +10,13 @@ class D3D12_Multi_Wait_Before_Signal(rdtest.TestCase):
         return False, 'Renderdoc does not yet adequately reorder capture replay'
 
     def check_capture(self):
-        draw_marker: rd.ActionDescription = self.find_action("Last draw")
-        self.controller.SetFrameEvent(draw_marker.eventId, False)
+        draw_marker = self.find_action("Last draw")
 
-        pipe: rd.PipeState = self.controller.GetPipelineState()
+        assert draw_marker is not None
+
+        self.set_event(draw_marker.eventId, False)
+
+        pipe = self.controller.GetPipelineState()
 
         tex = pipe.GetOutputTargets()[0].resource
         self.check_pixel_value(tex, 270, 194, [0.20117, 0.20117, 0.20117, 0.0])

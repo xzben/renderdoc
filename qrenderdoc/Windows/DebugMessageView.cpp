@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -174,7 +174,12 @@ protected:
 
   bool isVisibleRow(int sourceRow) const
   {
-    const DebugMessage &msg = m_Ctx.DebugMessages()[sourceRow];
+    const rdcarray<DebugMessage> &debugMessages = m_Ctx.DebugMessages();
+
+    if(sourceRow >= debugMessages.count())
+      return false;
+
+    const DebugMessage &msg = debugMessages[sourceRow];
 
     if(m_HiddenSources.contains(msg.source))
       return false;

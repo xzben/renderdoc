@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -56,6 +56,7 @@
 #include "Code/Resources.h"
 #include "Widgets/Extended/RDListWidget.h"
 #include "Widgets/Extended/RDTreeWidget.h"
+#include "scintilla/include/qt/ScintillaEdit.h"
 
 // normally this is in the renderdoc core library, but it's needed for the 'unknown enum' path,
 // so we implement it here using QString. It's inefficient, but this is a very uncommon path -
@@ -121,6 +122,45 @@ uint32_t PointerTypeRegistry::GetTypeID(const ShaderConstantType &structDef)
   return id;
 }
 
+static void UpdatePendingPointerTypes(ShaderConstantType &constType, QMap<uint32_t, uint32_t> remap)
+{
+  if(remap.contains(constType.pointerTypeID))
+    constType.pointerTypeID = remap[constType.pointerTypeID];
+
+  for(ShaderConstant &m : constType.members)
+    UpdatePendingPointerTypes(m.type, remap);
+}
+
+QList<uint32_t> PointerTypeRegistry::ResolveTypeIDsForPointerCycle(
+    QList<QPair<ShaderConstantType *, uint32_t>> structTypes)
+{
+  QList<uint32_t> ret;
+
+  // we don't attempt to deduplicate when declaring pointer cycles, we just allocate new types. This
+  // leads to a "leak" but it's expected to be small, rare, and limited in number
+  uint32_t base = (uint32_t)typeDescriptions.size();
+
+  QMap<uint32_t, uint32_t> remap;
+
+  typeDescriptions.reserve(base + structTypes.size());
+  for(int i = 0; i < structTypes.count(); i++)
+  {
+    uint32_t id = TypeIDBit | (uint32_t)typeDescriptions.size();
+
+    typeDescriptions.push_back(*structTypes[i].first);
+    typeMapping[qMakePair(ResourceId(), id)] = id;
+
+    remap[structTypes[i].second] = id;
+
+    ret.push_back(id);
+  }
+
+  for(int i = 0; i < structTypes.count(); i++)
+    UpdatePendingPointerTypes(typeDescriptions[base + i], remap);
+
+  return ret;
+}
+
 const ShaderConstantType &PointerTypeRegistry::GetTypeDescriptor(uint32_t typeId)
 {
   return typeDescriptions[typeId & ~TypeIDBit];
@@ -174,9 +214,8 @@ rdcstr DoStringise(const PointerVal &el)
   }
 }
 
-QString GetTruncatedResourceName(const ICaptureContext &ctx, ResourceId id)
+void TruncateStringFromEnd(QString &name)
 {
-  QString name = ctx.GetResourceName(id);
   if(name.length() > 64)
   {
     QTextBoundaryFinder boundaries(QTextBoundaryFinder::Grapheme, name.data(), name.length());
@@ -187,6 +226,12 @@ QString GetTruncatedResourceName(const ICaptureContext &ctx, ResourceId id)
     name.resize(pos);
     name += lit("...");
   }
+}
+
+QString GetTruncatedResourceName(const ICaptureContext &ctx, ResourceId id)
+{
+  QString name = ctx.GetResourceName(id);
+  TruncateStringFromEnd(name);
 
   return name;
 }
@@ -755,7 +800,7 @@ void RichResourceTextPaint(const QWidget *owner, QPainter *painter, QRect rect, 
 
     static const int margin = RichResourceTextMargin;
 
-    rect.adjust(margin, 0, -margin * 2, 0);
+    rect.adjust(margin, 0, -margin, 0);
 
     QString name;
 
@@ -966,7 +1011,8 @@ int RichResourceTextWidthHint(const QWidget *owner, const QFont &font, const QVa
         name = lit("NULL");
     }
 
-    const QPixmap &px = Pixmaps::link(owner->devicePixelRatio());
+    // this calculation is in device independent sizes so use a ratio of 1 for the pixmap
+    const QPixmap &px = Pixmaps::link(1);
 
     int ret = margin + metrics.boundingRect(name).width() + margin + px.width() + margin;
     return ret;
@@ -983,18 +1029,21 @@ int RichResourceTextHeightHint(const QWidget *owner, const QFont &font, const QV
 {
   QFontMetrics metrics(font);
 
+  static const int margin = RichResourceTextMargin;
+
   if(var.userType() == qMetaTypeId<RichResourceTextPtr>())
   {
     RichResourceTextPtr linkedText = var.value<RichResourceTextPtr>();
-
-    static const int margin = RichResourceTextMargin;
 
     linkedText->cacheDocument(owner);
 
     return linkedText->numLines * (metrics.lineSpacing() + margin * 2);
   }
 
-  return metrics.height();
+  // this calculation is in device independent sizes so use a ratio of 1 for the pixmap
+  const QPixmap &px = Pixmaps::link(1);
+
+  return qMax(metrics.height(), px.height() + margin * 2);
 }
 
 bool RichResourceTextMouseEvent(const QWidget *owner, const QVariant &var, QRect rect,
@@ -1098,9 +1147,22 @@ bool RichResourceTextMouseEvent(const QWidget *owner, const QVariant &var, QRect
           QString formatter;
 
           if(!ptrType.members.isEmpty())
-            formatter = BufferFormatter::DeclareStruct(
-                BufferFormatter::EstimatePackingRules(ResourceId(), ptrType.members), ResourceId(),
-                ptrType.name, ptrType.members, ptrType.arrayByteStride);
+          {
+            PackingRules pack = BufferFormatter::EstimatePackingRules(ResourceId(), ptrType);
+
+            // for scalar-wrapped structs (generated by 'float *foo' type declarations) use scalar
+            // packing by default as that's probably what people will want most often and if we
+            // guess we're going to guess very conservatively.
+            if(ptrType.name.isEmpty() && ptrType.members.size() == 1)
+              pack = PackingRules::Scalar();
+
+            formatter = BufferFormatter::DeclareStruct(pack, ResourceId(), ptrType.name,
+                                                       ptrType.members, ptrType.arrayByteStride);
+          }
+          else if(!ptrType.name.empty() && ptrType.name[0] != '<')
+          {
+            formatter = ptrType.name;
+          }
 
           IBufferViewer *view = ctx.ViewBuffer(ptr->offset, ~0ULL, ptr->base, formatter);
 
@@ -1825,19 +1887,133 @@ QString GetComponentString(byte mask)
   return ret;
 }
 
-void CombineUsageEvents(ICaptureContext &ctx, const rdcarray<EventUsage> &usage,
+QIcon MakeSwatchIcon(QWidget *parentWidget, QColor swatchColor)
+{
+  int h = parentWidget->fontMetrics().height();
+  QPixmap pm(1, 1);
+  pm.fill(swatchColor);
+  pm = pm.scaled(QSize(h, h));
+
+  {
+    QPainter painter(&pm);
+
+    QPen pen(parentWidget->palette().foreground(), 1.0);
+    painter.setPen(pen);
+    painter.drawLine(QPoint(0, 0), QPoint(h - 1, 0));
+    painter.drawLine(QPoint(h - 1, 0), QPoint(h - 1, h - 1));
+    painter.drawLine(QPoint(h - 1, h - 1), QPoint(0, h - 1));
+    painter.drawLine(QPoint(0, h - 1), QPoint(0, 0));
+  }
+
+  return QIcon(pm);
+}
+
+float ConvertLinearToSRGB(float linear)
+{
+  if(linear <= 0.0031308f)
+    return 12.92f * linear;
+
+  if(linear < 0.0f)
+    linear = 0.0f;
+  else if(linear > 1.0f)
+    linear = 1.0f;
+
+  return 1.055f * powf(linear, 1.0f / 2.4f) - 0.055f;
+}
+
+static const ActionDescription *GetParentMarker(ICaptureContext &ctx, uint32_t eventId)
+{
+  const ActionDescription *parent = ctx.GetAction(eventId);
+  if(!parent)
+  {
+    rdcarray<const ActionDescription *> actions;
+    // Search the actions to find which action contains this eventId
+    for(const ActionDescription &action : ctx.CurRootActions())
+      actions.push_back(&action);
+
+    while(!parent && !actions.empty())
+    {
+      const ActionDescription *action = actions.back();
+      for(const APIEvent &event : action->events)
+      {
+        if(event.eventId == eventId)
+        {
+          parent = action;
+          break;
+        }
+      }
+      actions.pop_back();
+      bool addChildren = (action->eventId < eventId);
+      if(!addChildren)
+      {
+        if(!action->children.empty())
+          addChildren = action->children[0].eventId < eventId;
+      }
+
+      if(addChildren)
+      {
+        for(const ActionDescription &child : action->children)
+          actions.push_back(&child);
+      }
+    }
+  }
+  while(parent != NULL && (parent->flags != ActionFlags::PushMarker))
+    parent = parent->parent;
+
+  return parent;
+}
+
+QString GetParentMarkerName(ICaptureContext &ctx, uint32_t eventId)
+{
+  const ActionDescription *parent = GetParentMarker(ctx, eventId);
+  return parent ? QString(parent->customName) : QString();
+}
+
+QString GetParentMarkerPath(ICaptureContext &ctx, uint32_t eventId, bool &hasParent)
+{
+  const ActionDescription *parent = GetParentMarker(ctx, eventId);
+
+  QString markerPath;
+  while(parent)
+  {
+    if(parent->flags & ActionFlags::PushMarker)
+    {
+      QString prevPath = markerPath;
+      markerPath = parent->customName;
+      if(!prevPath.isEmpty())
+      {
+        markerPath += lit(" -> ");
+        markerPath += prevPath;
+        hasParent = true;
+      }
+    }
+    parent = parent->parent;
+  }
+  return markerPath;
+}
+
+uint32_t GetParentMarkerEventId(ICaptureContext &ctx, uint32_t eventId)
+{
+  const ActionDescription *parent = GetParentMarker(ctx, eventId);
+  return parent ? parent->eventId : 0;
+}
+
+void CombineUsageEvents(ICaptureContext &ctx, const rdcarray<EventUsage> &usage, bool splitByMarker,
                         std::function<void(uint32_t startEID, uint32_t endEID, ResourceUsage use)> callback)
 {
   uint32_t start = 0;
   uint32_t end = 0;
   ResourceUsage us = ResourceUsage::IndexBuffer;
 
+  uint32_t parentEID = 0;
   for(const EventUsage &u : usage)
   {
     if(start == 0)
     {
       start = end = u.eventId;
       us = u.usage;
+
+      parentEID = GetParentMarkerEventId(ctx, u.eventId);
     }
 
     if(u.usage == us && u.eventId == end)
@@ -1847,9 +2023,12 @@ void CombineUsageEvents(ICaptureContext &ctx, const rdcarray<EventUsage> &usage,
 
     bool distinct = false;
 
+    const uint32_t newParentEID = GetParentMarkerEventId(ctx, u.eventId);
+
     // if the usage is different from the last, add a new entry,
     // or if the previous action link is broken.
-    if(u.usage != us || action == NULL || action->previous == 0)
+    if(u.usage != us || action == NULL || action->previousAction == 0 ||
+       (splitByMarker && (parentEID != newParentEID)))
     {
       distinct = true;
     }
@@ -1859,14 +2038,24 @@ void CombineUsageEvents(ICaptureContext &ctx, const rdcarray<EventUsage> &usage,
       // last event was where we were - otherwise it's a new
       // distinct set of actions and should have a separate
       // entry in the context menu
-      const ActionDescription *prev = action->previous;
+      const ActionDescription *prev = action->previousAction;
 
       while(prev != NULL && prev->eventId > end)
       {
+        if(splitByMarker)
+        {
+          const uint32_t prevParentEID = GetParentMarkerEventId(ctx, prev->eventId);
+          if(parentEID != prevParentEID)
+          {
+            distinct = true;
+            break;
+          }
+        }
+
         if(!(prev->flags & (ActionFlags::Dispatch | ActionFlags::MeshDispatch |
                             ActionFlags::Drawcall | ActionFlags::CmdList)))
         {
-          prev = prev->previous;
+          prev = prev->previousAction;
         }
         else
         {
@@ -1890,6 +2079,7 @@ void CombineUsageEvents(ICaptureContext &ctx, const rdcarray<EventUsage> &usage,
       {
         start = end = u.eventId;
         us = u.usage;
+        parentEID = newParentEID;
       }
     }
 
@@ -1912,6 +2102,13 @@ QVariant SDObject2Variant(const SDObject *obj, bool inlineImportant)
   if(obj->type.basetype == SDBasic::Resource)
   {
     param = QVariant::fromValue(obj->data.basic.id);
+  }
+  else if(obj->type.basetype == SDBasic::GPUAddress)
+  {
+    PointerVal p;
+    p.pointerTypeID = ~0U;
+    p.pointer = obj->data.basic.u;
+    param = ToQStr(p);
   }
   else if(obj->type.flags & SDTypeFlags::NullString)
   {
@@ -2037,7 +2234,10 @@ QVariant SDObject2Variant(const SDObject *obj, bool inlineImportant)
         param = trimmedStr.trimmed();
         break;
       }
+      // won't be hit, these are handled above
       case SDBasic::Resource:
+      case SDBasic::GPUAddress:
+        // normal cases
       case SDBasic::Enum:
       case SDBasic::UnsignedInteger:
         param = Formatter::HumanFormat(obj->data.basic.u, flags);
@@ -2067,6 +2267,7 @@ void addStructuredChildren(RDTreeWidgetItem *parent, const SDObject &parentObj)
       name = obj->name;
 
     RDTreeWidgetItem *item = new RDTreeWidgetItem({name, QString()});
+    item->setTag(QVariant::fromValue((void *)obj));
 
     item->setText(1, SDObject2Variant(obj, false));
 
@@ -2523,6 +2724,18 @@ QString RDDialog::getSaveFileName(QWidget *parent, const QString &caption, const
   return QString();
 }
 
+void RDDialog::closeEvent(QCloseEvent *e)
+{
+  emit(aboutToClose(e));
+  QDialog::closeEvent(e);
+}
+
+void RDDialog::keyPressEvent(QKeyEvent *e)
+{
+  emit(keyPress(e));
+  QDialog::keyPressEvent(e);
+}
+
 bool QFileFilterModel::filterAcceptsRow(int source_row, const QModelIndex &source_parent) const
 {
   QModelIndex idx = sourceModel()->index(source_row, 0, source_parent);
@@ -2627,7 +2840,7 @@ float Formatter::m_FixedFontBaseSize = 10.0f;
 QColor Formatter::m_DarkChecker, Formatter::m_LightChecker;
 OffsetSizeDisplayMode Formatter::m_OffsetSizeDisplayMode = OffsetSizeDisplayMode::Auto;
 
-void Formatter::setParams(const PersistantConfig &config)
+void Formatter::setParams(const PersistentConfig &config)
 {
   m_minFigures = qMax(0, config.Formatter_MinFigures);
   m_maxFigures = qMax(2, config.Formatter_MaxFigures);
@@ -2935,11 +3148,11 @@ bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &par
   };
 
   // if none of the graphical options, then look for sudo and either
-  const QString termEmulator[] = {
-      lit("x-terminal-emulator"),
-      lit("gnome-terminal"),
-      lit("konsole"),
-      lit("xterm"),
+  const QPair<QString, QString> termEmulator[] = {
+      qMakePair(lit("x-terminal-emulator"), lit("-e")),
+      qMakePair(lit("gnome-terminal"), lit("-x")),
+      qMakePair(lit("konsole"), lit("-e")),
+      qMakePair(lit("xterm"), lit("-e")),
   };
 
   for(const QString &sudo : graphicalSudo)
@@ -2988,9 +3201,9 @@ bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &par
     return false;
   }
 
-  for(const QString &term : termEmulator)
+  for(const QPair<QString, QString> &term : termEmulator)
   {
-    QString inPath = QStandardPaths::findExecutable(term);
+    QString inPath = QStandardPaths::findExecutable(term.first);
 
     // can't find in path
     if(inPath.isEmpty())
@@ -3000,12 +3213,12 @@ bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &par
 
     // run terminal sudo with emulator
     QStringList termParams;
-    termParams << lit("-e")
-               << lit("bash -c 'echo Running \"%1 %2\" as root.;echo;sudo %1 %2'")
+    termParams << term.second << lit("bash") << lit("-c")
+               << lit("echo Running \"%1 %2\" as root.;echo;sudo %1 %2")
                       .arg(fullExecutablePath)
                       .arg(params.join(QLatin1Char(' ')));
 
-    process->start(term, termParams);
+    process->start(term.first, termParams);
 
     // when the process exits, call the callback and delete
     QObject::connect(process, OverloadedSlot<int, QProcess::ExitStatus>::of(&QProcess::finished),
@@ -3389,10 +3602,8 @@ void LambdaThread::windowsSetName()
       GetModuleHandleA("kernel32.dll"), "SetThreadDescription");
 
   if(setThreadDesc)
-  {
     setThreadDesc(GetCurrentThread(), m_Name.toStdWString().c_str());
-  }
-  else
+
   {
     // don't throw the exception if there's no debugger present
     if(!IsDebuggerPresent())
@@ -3467,6 +3678,15 @@ void UpdateVisibleColumns(rdcstr windowTitle, int columnCount, QHeaderView *head
 
     header->moveSection(header->visualIndex(logicalIdx), i);
   }
+}
+
+void EnsureLineScrolled(ScintillaEdit *editor, int line)
+{
+  int firstLine = editor->firstVisibleLine();
+  int linesVisible = editor->linesOnScreen();
+
+  if(editor->isVisible() && (line < firstLine || line > (firstLine + linesVisible - 1)))
+    editor->setFirstVisibleLine(qMax(0, line - linesVisible / 2));
 }
 
 const rdcarray<SDObject *> &StructuredDataItemModel::objects() const

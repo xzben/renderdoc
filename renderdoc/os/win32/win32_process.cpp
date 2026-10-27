@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -980,11 +980,20 @@ rdcpair<RDResult, uint32_t> Process::InjectIntoProcess(uint32_t pid,
 
   if(loc == 0)
   {
+    const char *largeAddrMsg =
+#if ENABLED(RDOC_X64)
+        ", and is not built with /LARGEADDRESSAWARE:NO";
+#else
+        "";
+#endif
+
     SET_ERROR_RESULT(
         result.first, ResultCode::InjectionFailed,
         "Failed to inject %s.dll into process. Check that the process did not crash or exit "
-        "early in initialisation, e.g. if the working directory is incorrectly set.",
-        rdoc_dll);
+        "early in initialisation, e.g. if the working directory is incorrectly set.\n"
+        "Otherwise ensure the program does not have significant "
+        "code that will run on global constructors/thread start and crash%s",
+        rdoc_dll, largeAddrMsg);
   }
   else
   {
@@ -1143,12 +1152,23 @@ rdcpair<RDResult, uint32_t> Process::LaunchAndInjectIntoProcess(
     return {result, 0};
   }
 
+  if(get_basename(app) == "explorer.exe" || get_basename(app) == "dllhost.exe")
+  {
+    RDResult result;
+    SET_ERROR_RESULT(
+        result, ResultCode::InjectionFailed,
+        "For safety reasons RenderDoc does not support capturing executables with a "
+        "reserved system filename such as '%s'. Please rename your executable to capture.",
+        get_basename(app).c_str());
+    return {result, 0};
+  }
+
   PROCESS_INFORMATION pi = RunProcess(app, workingDir, cmdLine, env, false, NULL, NULL);
 
   if(pi.dwProcessId == 0)
   {
     RDResult result;
-    SET_ERROR_RESULT(result, ResultCode::InjectionFailed, "Failed to launch process");
+    SET_ERROR_RESULT(result, ResultCode::InjectionFailed, "Failed to launch process.");
     return {result, 0};
   }
 

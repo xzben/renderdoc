@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -127,7 +127,7 @@ void RDPreviewTooltip::hideTip()
   hide();
 }
 
-QSize RDPreviewTooltip::configureTip(QWidget *widget, QModelIndex idx, QString text)
+QSize RDPreviewTooltip::configureTip(QWidget *widget, QString text, QModelIndex idx)
 {
   ResourceId id = pipe->updateThumbnail(widget, idx);
   if(id != ResourceId())
@@ -146,7 +146,7 @@ QSize RDPreviewTooltip::configureTip(QWidget *widget, QModelIndex idx, QString t
   return minimumSizeHint();
 }
 
-void RDPreviewTooltip::showTip(QPoint pos)
+void RDPreviewTooltip::showTipAtPos(QPoint pos)
 {
   move(pos);
   resize(minimumSize());
@@ -1021,8 +1021,8 @@ IShaderViewer *PipelineStateViewer::EditDecompiledSource(const ShaderProcessingT
     if(flag.name == "@spirver")
       flags.flags.push_back(flag);
 
-  IShaderViewer *sv = EditShader(id, shaderDetails->stage, shaderDetails->debugInfo.entrySourceName,
-                                 flags, KnownShaderTool::Unknown, tool.output, files);
+  IShaderViewer *sv = EditShader(id, shaderDetails->stage, shaderDetails->entryPoint, flags,
+                                 KnownShaderTool::Unknown, tool.output, files);
 
   sv->ShowErrors(out.log);
 
@@ -1190,7 +1190,7 @@ void PipelineStateViewer::ShowResourceContextMenu(RDTreeWidget *widget, const QP
       m_Ctx.GetResourceInspector()->Inspect(id);
     });
 
-    CombineUsageEvents(m_Ctx, usage,
+    CombineUsageEvents(m_Ctx, usage, false,
                        [this, &contextMenu](uint32_t start, uint32_t end, ResourceUsage use) {
                          AddResourceUsageEntry(contextMenu, start, end, use);
                        });

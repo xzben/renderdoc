@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -40,7 +40,7 @@ struct ThumbTypeAndData
 
 static const char *typeNames[] = {
     "chunk", "struct", "array", "null", "buffer", "string",     "enum",
-    "uint",  "int",    "float", "bool", "char",   "ResourceId",
+    "uint",  "int",    "float", "bool", "char",   "ResourceId", "GPUAddress",
 };
 
 struct LiteralFileSection
@@ -232,7 +232,8 @@ static bool Obj2XML(pugi::xml_node &parent, SDObject &child)
 
   if(child.type.basetype == SDBasic::UnsignedInteger ||
      child.type.basetype == SDBasic::SignedInteger || child.type.basetype == SDBasic::Float ||
-     child.type.basetype == SDBasic::Resource || child.type.basetype == SDBasic::Enum)
+     child.type.basetype == SDBasic::GPUAddress || child.type.basetype == SDBasic::Resource ||
+     child.type.basetype == SDBasic::Enum)
   {
     obj.append_attribute("width") = child.type.byteSize;
   }
@@ -299,6 +300,7 @@ static bool Obj2XML(pugi::xml_node &parent, SDObject &child)
 
     switch(child.type.basetype)
     {
+      case SDBasic::GPUAddress:
       case SDBasic::Resource:
       case SDBasic::Enum:
       case SDBasic::UnsignedInteger: obj.text() = child.data.basic.u; break;
@@ -544,8 +546,8 @@ static SDObject *XML2Obj(pugi::xml_node &obj)
     }
   }
 
-  if(ret->type.basetype == SDBasic::UnsignedInteger ||
-     ret->type.basetype == SDBasic::SignedInteger || ret->type.basetype == SDBasic::Float ||
+  if(ret->type.basetype == SDBasic::UnsignedInteger || ret->type.basetype == SDBasic::SignedInteger ||
+     ret->type.basetype == SDBasic::Float || ret->type.basetype == SDBasic::GPUAddress ||
      ret->type.basetype == SDBasic::Resource || ret->type.basetype == SDBasic::Enum)
   {
     ret->type.byteSize = obj.attribute("width").as_uint(4);
@@ -624,6 +626,7 @@ static SDObject *XML2Obj(pugi::xml_node &obj)
 
     switch(ret->type.basetype)
     {
+      case SDBasic::GPUAddress:
       case SDBasic::Resource:
       case SDBasic::Enum:
       case SDBasic::UnsignedInteger: ret->data.basic.u = obj.text().as_ullong(); break;
@@ -872,7 +875,7 @@ static RDResult XML2Structured(const rdcstr &xml, const ThumbTypeAndData &thumb,
     SDChunk *chunk = new SDChunk(rdcstr(xChunk.attribute("name").as_string()));
 
     chunk->metadata.chunkID = xChunk.attribute("id").as_uint();
-    chunk->metadata.length = xChunk.attribute("length").as_uint();
+    chunk->metadata.length = xChunk.attribute("length").as_ullong();
     if(xChunk.attribute("threadID"))
       chunk->metadata.threadID = xChunk.attribute("threadID").as_ullong();
     if(xChunk.attribute("timestamp"))

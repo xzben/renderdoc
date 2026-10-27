@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021-2024 Baldur Karlsson
+ * Copyright (c) 2021-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,10 +24,11 @@
 
 #include "dummy_driver.h"
 
-DummyDriver::DummyDriver(IReplayDriver *original, const rdcarray<ShaderReflection *> &shaders,
-                         SDFile *sdfile)
+DummyDriver::DummyDriver(IReplayDriver *original, const rdcarray<const ShaderReflection *> &shaders,
+                         SDFile *sdfile, const rdcarray<SDObject *> &annotations)
 {
   m_Shaders = shaders;
+  m_Annotations = annotations;
   m_SDFile = sdfile;
 
   m_Props = original->GetAPIProperties();
@@ -44,13 +45,19 @@ DummyDriver::DummyDriver(IReplayDriver *original, const rdcarray<ShaderReflectio
   m_WindowSystems = original->GetSupportedWindowSystems();
   m_CustomEncodings = original->GetCustomShaderEncodings();
   m_CustomPrefixes = original->GetCustomShaderSourcePrefixes();
+
+  sdfile->Detach();
 }
 
 DummyDriver::~DummyDriver()
 {
   // we own the shaders
-  for(ShaderReflection *refl : m_Shaders)
+  for(const ShaderReflection *refl : m_Shaders)
     delete refl;
+
+  // and annotations
+  for(const SDObject *ann : m_Annotations)
+    delete ann;
 
   // and we own the structured file
   delete m_SDFile;
@@ -214,11 +221,6 @@ void DummyDriver::InitPostVSBuffers(const rdcarray<uint32_t> &passEvents)
 {
 }
 
-ResourceId DummyDriver::GetLiveID(ResourceId id)
-{
-  return id;
-}
-
 MeshFormat DummyDriver::GetPostVSBuffers(uint32_t eventId, uint32_t instID, uint32_t viewID,
                                          MeshDataStage stage)
 {
@@ -261,6 +263,14 @@ void DummyDriver::FreeTargetResource(ResourceId id)
 {
 }
 
+void DummyDriver::ClearReplayCache()
+{
+}
+
+void DummyDriver::ReloadShaderDebugInformation()
+{
+}
+
 rdcarray<GPUCounter> DummyDriver::EnumerateCounters()
 {
   return {};
@@ -292,6 +302,13 @@ rdcarray<PixelModification> DummyDriver::PixelHistory(rdcarray<EventUsage> event
 
 ShaderDebugTrace *DummyDriver::DebugVertex(uint32_t eventId, uint32_t vertid, uint32_t instid,
                                            uint32_t idx, uint32_t view)
+{
+  return new ShaderDebugTrace;
+}
+
+ShaderDebugTrace *DummyDriver::DebugMeshThread(uint32_t eventId,
+                                               const rdcfixedarray<uint32_t, 3> &groupid,
+                                               const rdcfixedarray<uint32_t, 3> &threadid)
 {
   return new ShaderDebugTrace;
 }
@@ -414,10 +431,6 @@ void DummyDriver::DestroyOutputWindow(uint64_t id)
 bool DummyDriver::CheckResizeOutputWindow(uint64_t id)
 {
   return false;
-}
-
-void DummyDriver::SetOutputWindowDimensions(uint64_t id, int32_t w, int32_t h)
-{
 }
 
 void DummyDriver::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h)

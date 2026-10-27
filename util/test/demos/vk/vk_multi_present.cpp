@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2022-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -147,6 +147,8 @@ RD_TEST(VK_Multi_Present, VulkanGraphicsTest)
 
         win->Submit(0, 1, {cmd}, {}, queue);
       }
+
+      vkDeviceWaitIdle(device);
 
       VulkanWindow::MultiPresent(queue, presentWindows);
 

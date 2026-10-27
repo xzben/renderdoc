@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -29,7 +29,9 @@
 #include <QScrollBar>
 #include <QXmlStreamWriter>
 #include "Code/Resources.h"
+#include "Widgets/ComputeDebugSelector.h"
 #include "Widgets/Extended/RDHeaderView.h"
+#include "flowlayout/FlowLayout.h"
 #include "toolwindowmanager/ToolWindowManager.h"
 #include "PipelineStateViewer.h"
 #include "ui_GLPipelineStateViewer.h"
@@ -85,12 +87,22 @@ GLPipelineStateViewer::GLPipelineStateViewer(ICaptureContext &ctx, PipelineState
 {
   ui->setupUi(this);
 
+  m_ComputeDebugSelector = new ComputeDebugSelector(this);
+
   const QIcon &action = Icons::action();
   const QIcon &action_hover = Icons::action_hover();
 
   RDLabel *shaderLabels[] = {
-      ui->vaoLabel, ui->vsShader, ui->tcsShader, ui->tesShader,
-      ui->gsShader, ui->fsShader, ui->csShader,
+      ui->vaoLabel,
+
+      ui->vsPipeline, ui->tcsPipeline, ui->tesPipeline,
+      ui->gsPipeline, ui->fsPipeline,  ui->csPipeline,
+
+      ui->vsProgram,  ui->tcsProgram,  ui->tesProgram,
+      ui->gsProgram,  ui->fsProgram,   ui->csProgram,
+
+      ui->vsShader,   ui->tcsShader,   ui->tesShader,
+      ui->gsShader,   ui->fsShader,    ui->csShader,
   };
 
   QToolButton *viewButtons[] = {
@@ -132,6 +144,29 @@ GLPipelineStateViewer::GLPipelineStateViewer(ICaptureContext &ctx, PipelineState
       ui->gsReadWrite, ui->fsReadWrite,  ui->csReadWrite,
   };
 
+  QWidget *shaderGroups[] = {
+      ui->vsShaderGroup, ui->tcsShaderGroup, ui->tesShaderGroup,
+      ui->gsShaderGroup, ui->fsShaderGroup,  ui->csShaderGroup,
+  };
+
+  // setup FlowLayout for shader groups
+  for(QWidget *shaderGroup : shaderGroups)
+  {
+    QLayout *oldLayout = shaderGroup->layout();
+
+    QObjectList childs = shaderGroup->children();
+    childs.removeOne((QObject *)oldLayout);
+
+    delete oldLayout;
+
+    FlowLayout *shaderFlow = new FlowLayout(shaderGroup, -1, 3, 3);
+
+    for(QObject *o : childs)
+      shaderFlow->addWidget(qobject_cast<QWidget *>(o));
+
+    shaderGroup->setLayout(shaderFlow);
+  }
+
   for(QToolButton *b : viewButtons)
     QObject::connect(b, &QToolButton::clicked, this, &GLPipelineStateViewer::shaderView_clicked);
 
@@ -140,7 +175,7 @@ GLPipelineStateViewer::GLPipelineStateViewer(ICaptureContext &ctx, PipelineState
     b->setAutoFillBackground(true);
     b->setBackgroundRole(QPalette::ToolTipBase);
     b->setForegroundRole(QPalette::ToolTipText);
-    b->setMinimumSizeHint(QSize(250, 0));
+    b->setMinimumSizeHint(QSize(150, 0));
   }
 
   for(RDLabel *b : {ui->xfbObj, ui->readFBO, ui->drawFBO})
@@ -174,6 +209,9 @@ GLPipelineStateViewer::GLPipelineStateViewer(ICaptureContext &ctx, PipelineState
   for(RDTreeWidget *res : readwrites)
     QObject::connect(res, &RDTreeWidget::itemActivated, this,
                      &GLPipelineStateViewer::resource_itemActivated);
+
+  QObject::connect(m_ComputeDebugSelector, &ComputeDebugSelector::beginDebug, this,
+                   &GLPipelineStateViewer::computeDebugSelector_beginDebug);
 
   {
     QMenu *extensionsMenu = new QMenu(this);
@@ -485,6 +523,8 @@ void GLPipelineStateViewer::OnEventChanged(uint32_t eventId)
     range.offset = 0;
     range.descriptorSize = state->descriptorByteSize;
     range.count = state->descriptorCount;
+    // GL doesn't need the descriptor type, it has internal type information
+    range.type = DescriptorType::Unknown;
 
     rdcarray<DescriptorRange> ranges = {range};
 
@@ -1134,10 +1174,13 @@ const GLPipe::Shader *GLPipelineStateViewer::stageForSender(QWidget *widget)
   return NULL;
 }
 
-void GLPipelineStateViewer::clearShaderState(RDLabel *shader, RDTreeWidget *tex, RDTreeWidget *samp,
+void GLPipelineStateViewer::clearShaderState(RDLabel *pipeline, RDLabel *program, RDLabel *shader,
+                                             RDTreeWidget *tex, RDTreeWidget *samp,
                                              RDTreeWidget *ubo, RDTreeWidget *sub, RDTreeWidget *rw)
 {
-  shader->setText(tr("Unbound Shader"));
+  pipeline->hide();
+  program->setText(ToQStr(ResourceId()));
+  shader->setText(ToQStr(ResourceId()));
   tex->clear();
   samp->clear();
   sub->clear();
@@ -1158,18 +1201,18 @@ void GLPipelineStateViewer::clearState()
   ui->primRestart->setVisible(false);
   ui->topologyDiagram->setPixmap(QPixmap());
 
-  clearShaderState(ui->vsShader, ui->vsTextures, ui->vsSamplers, ui->vsUBOs, ui->vsSubroutines,
-                   ui->vsReadWrite);
-  clearShaderState(ui->gsShader, ui->gsTextures, ui->gsSamplers, ui->gsUBOs, ui->gsSubroutines,
-                   ui->gsReadWrite);
-  clearShaderState(ui->tcsShader, ui->tcsTextures, ui->tcsSamplers, ui->tcsUBOs, ui->tcsSubroutines,
-                   ui->tcsReadWrite);
-  clearShaderState(ui->tesShader, ui->tesTextures, ui->tesSamplers, ui->tesUBOs, ui->tesSubroutines,
-                   ui->tesReadWrite);
-  clearShaderState(ui->fsShader, ui->fsTextures, ui->fsSamplers, ui->fsUBOs, ui->fsSubroutines,
-                   ui->fsReadWrite);
-  clearShaderState(ui->csShader, ui->csTextures, ui->csSamplers, ui->csUBOs, ui->csSubroutines,
-                   ui->csReadWrite);
+  clearShaderState(ui->vsPipeline, ui->vsProgram, ui->vsShader, ui->vsTextures, ui->vsSamplers,
+                   ui->vsUBOs, ui->vsSubroutines, ui->vsReadWrite);
+  clearShaderState(ui->gsPipeline, ui->gsProgram, ui->gsShader, ui->gsTextures, ui->gsSamplers,
+                   ui->gsUBOs, ui->gsSubroutines, ui->gsReadWrite);
+  clearShaderState(ui->tcsPipeline, ui->tcsProgram, ui->tcsShader, ui->tcsTextures, ui->tcsSamplers,
+                   ui->tcsUBOs, ui->tcsSubroutines, ui->tcsReadWrite);
+  clearShaderState(ui->tesPipeline, ui->tesProgram, ui->tesShader, ui->tesTextures, ui->tesSamplers,
+                   ui->tesUBOs, ui->tesSubroutines, ui->tesReadWrite);
+  clearShaderState(ui->fsPipeline, ui->fsProgram, ui->fsShader, ui->fsTextures, ui->fsSamplers,
+                   ui->fsUBOs, ui->fsSubroutines, ui->fsReadWrite);
+  clearShaderState(ui->csPipeline, ui->csProgram, ui->csShader, ui->csTextures, ui->csSamplers,
+                   ui->csUBOs, ui->csSubroutines, ui->csReadWrite);
 
   ui->xfbBuffers->clear();
 
@@ -1236,29 +1279,28 @@ void GLPipelineStateViewer::clearState()
   ui->depthBounds->setText(lit("0.0-1.0"));
 
   ui->stencils->clear();
+
+  ui->computeDebugSelector->setEnabled(false);
 }
 
-void GLPipelineStateViewer::setShaderState(const GLPipe::Shader &stage, RDLabel *shader,
-                                           RDTreeWidget *subs)
+void GLPipelineStateViewer::setShaderState(const GLPipe::Shader &stage, RDLabel *pipeline,
+                                           RDLabel *program, RDLabel *shader, RDTreeWidget *subs)
 {
-  ShaderReflection *shaderDetails = stage.reflection;
+  const ShaderReflection *shaderDetails = stage.reflection;
   const GLPipe::State &state = *m_Ctx.CurGLPipelineState();
 
-  if(stage.shaderResourceId == ResourceId())
+  if(state.pipelineResourceId != ResourceId())
   {
-    shader->setText(ToQStr(stage.shaderResourceId));
+    pipeline->show();
+    pipeline->setText(ToQStr(state.pipelineResourceId));
   }
   else
   {
-    QString shText = ToQStr(stage.shaderResourceId);
-
-    shText = ToQStr(stage.programResourceId) + lit(" > ") + shText;
-
-    if(state.pipelineResourceId != ResourceId())
-      shText = ToQStr(state.pipelineResourceId) + lit(" > ") + shText;
-
-    shader->setText(shText);
+    pipeline->hide();
   }
+
+  program->setText(ToQStr(stage.programResourceId));
+  shader->setText(ToQStr(stage.shaderResourceId));
 
   int vs = subs->verticalScrollBar()->value();
   subs->beginUpdate();
@@ -1833,12 +1875,18 @@ void GLPipelineStateViewer::setState()
     // UBOs don't have to be sorted because there's only one type there, the locations are already
     // in order
 
-    setShaderState(state.vertexShader, ui->vsShader, ui->vsSubroutines);
-    setShaderState(state.geometryShader, ui->gsShader, ui->gsSubroutines);
-    setShaderState(state.tessControlShader, ui->tcsShader, ui->tcsSubroutines);
-    setShaderState(state.tessEvalShader, ui->tesShader, ui->tesSubroutines);
-    setShaderState(state.fragmentShader, ui->fsShader, ui->fsSubroutines);
-    setShaderState(state.computeShader, ui->csShader, ui->csSubroutines);
+    setShaderState(state.vertexShader, ui->vsPipeline, ui->vsProgram, ui->vsShader,
+                   ui->vsSubroutines);
+    setShaderState(state.geometryShader, ui->gsPipeline, ui->gsProgram, ui->gsShader,
+                   ui->gsSubroutines);
+    setShaderState(state.tessControlShader, ui->tcsPipeline, ui->tcsProgram, ui->tcsShader,
+                   ui->tcsSubroutines);
+    setShaderState(state.tessEvalShader, ui->tesPipeline, ui->tesProgram, ui->tesShader,
+                   ui->tesSubroutines);
+    setShaderState(state.fragmentShader, ui->fsPipeline, ui->fsProgram, ui->fsShader,
+                   ui->fsSubroutines);
+    setShaderState(state.computeShader, ui->csPipeline, ui->csProgram, ui->csShader,
+                   ui->csSubroutines);
 
     ui->vsReadWrite->parentWidget()->setVisible(ui->vsReadWrite->topLevelItemCount() > 0 &&
                                                 shaderRefls[0] &&
@@ -2290,7 +2338,7 @@ void GLPipelineStateViewer::setState()
         {
           if(r)
             setViewDetails(node, tex, r->firstMip, 1, r->firstSlice, r->numSlices);
-          node->setTag(QVariant::fromValue(p));
+          node->setTag(QVariant::fromValue(GLReadOnlyTag(0, p)));
         }
 
         if(p == ResourceId())
@@ -2382,7 +2430,7 @@ void GLPipelineStateViewer::setState()
         if(tex)
         {
           setViewDetails(node, tex, mip, 1, slice, numSlices);
-          node->setTag(QVariant::fromValue(ds));
+          node->setTag(QVariant::fromValue(GLReadOnlyTag(0, ds)));
         }
 
         if(ds == ResourceId())
@@ -2550,6 +2598,57 @@ void GLPipelineStateViewer::setState()
   }
   ui->stencils->clearSelection();
   ui->stencils->endUpdate();
+
+  // set up thread debugging inputs
+  bool enableDebug = m_Ctx.APIProps().shaderDebugging && state.computeShader.reflection &&
+                     state.computeShader.reflection->debugInfo.debuggable && action &&
+                     (action->flags & ActionFlags::Dispatch);
+  if(enableDebug)
+  {
+    // Validate dispatch/threadgroup dimensions
+    enableDebug &= action->dispatchDimension[0] > 0;
+    enableDebug &= action->dispatchDimension[1] > 0;
+    enableDebug &= action->dispatchDimension[2] > 0;
+
+    const rdcfixedarray<uint32_t, 3> &threadDims =
+        (action->dispatchThreadsDimension[0] == 0)
+            ? state.computeShader.reflection->dispatchThreadsDimension
+            : action->dispatchThreadsDimension;
+    enableDebug &= threadDims[0] > 0;
+    enableDebug &= threadDims[1] > 0;
+    enableDebug &= threadDims[2] > 0;
+  }
+
+  if(enableDebug)
+  {
+    ui->computeDebugSelector->setEnabled(true);
+
+    // set maximums for CS debugging
+    m_ComputeDebugSelector->SetThreadBounds(
+        action->dispatchDimension, (action->dispatchThreadsDimension[0] == 0)
+                                       ? state.computeShader.reflection->dispatchThreadsDimension
+                                       : action->dispatchThreadsDimension);
+
+    ui->computeDebugSelector->setToolTip(
+        tr("Debug this compute shader by specifying group/thread ID or dispatch ID"));
+  }
+  else
+  {
+    ui->computeDebugSelector->setEnabled(false);
+
+    if(!m_Ctx.APIProps().shaderDebugging)
+      ui->computeDebugSelector->setToolTip(tr("This API does not support shader debugging"));
+    else if(!action || !(action->flags & ActionFlags::Dispatch))
+      ui->computeDebugSelector->setToolTip(tr("No dispatch selected"));
+    else if(!state.computeShader.reflection)
+      ui->computeDebugSelector->setToolTip(tr("No compute shader bound"));
+    else if(!state.computeShader.reflection->debugInfo.debuggable)
+      ui->computeDebugSelector->setToolTip(
+          tr("This shader doesn't support debugging: %1")
+              .arg(state.computeShader.reflection->debugInfo.debugStatus));
+    else
+      ui->computeDebugSelector->setToolTip(tr("Invalid dispatch/threadgroup dimensions."));
+  }
 
   // highlight the appropriate stages in the flowchart
   if(action == NULL)
@@ -2836,7 +2935,7 @@ void GLPipelineStateViewer::shaderView_clicked()
   if(stage == NULL || stage->shaderResourceId == ResourceId())
     return;
 
-  ShaderReflection *shaderDetails = stage->reflection;
+  const ShaderReflection *shaderDetails = stage->reflection;
 
   if(!shaderDetails)
     return;
@@ -2853,7 +2952,7 @@ void GLPipelineStateViewer::shaderSave_clicked()
   if(stage == NULL)
     return;
 
-  ShaderReflection *shaderDetails = stage->reflection;
+  const ShaderReflection *shaderDetails = stage->reflection;
 
   if(stage->shaderResourceId == ResourceId())
     return;
@@ -3024,7 +3123,7 @@ void GLPipelineStateViewer::exportHTML(QXmlStreamWriter &xml, const GLPipe::Vert
 void GLPipelineStateViewer::exportHTML(QXmlStreamWriter &xml, const GLPipe::Shader &sh)
 {
   const GLPipe::State &pipe = *m_Ctx.CurGLPipelineState();
-  ShaderReflection *shaderDetails = sh.reflection;
+  const ShaderReflection *shaderDetails = sh.reflection;
 
   {
     xml.writeStartElement(tr("h3"));
@@ -3901,4 +4000,94 @@ void GLPipelineStateViewer::on_meshView_clicked()
   if(!m_Ctx.HasMeshPreview())
     m_Ctx.ShowMeshPreview();
   ToolWindowManager::raiseToolWindow(m_Ctx.GetMeshPreview()->Widget());
+}
+
+void GLPipelineStateViewer::on_computeDebugSelector_clicked()
+{
+  // Check whether debugging is valid for this event before showing the dialog
+  if(!m_Ctx.IsCaptureLoaded())
+    return;
+
+  const ActionDescription *action = m_Ctx.CurAction();
+
+  if(!action)
+    return;
+
+  const ShaderReflection *shaderDetails =
+      m_Ctx.CurPipelineState().GetShaderReflection(ShaderStage::Compute);
+
+  if(!shaderDetails)
+    return;
+
+  RDDialog::show(m_ComputeDebugSelector);
+}
+
+void GLPipelineStateViewer::computeDebugSelector_beginDebug(const rdcfixedarray<uint32_t, 3> &group,
+                                                            const rdcfixedarray<uint32_t, 3> &thread)
+{
+  const ActionDescription *action = m_Ctx.CurAction();
+
+  if(!action)
+    return;
+
+  const ShaderReflection *shaderDetails =
+      m_Ctx.CurPipelineState().GetShaderReflection(ShaderStage::Compute);
+
+  if(!shaderDetails)
+    return;
+
+  struct threadSelect
+  {
+    rdcfixedarray<uint32_t, 3> g;
+    rdcfixedarray<uint32_t, 3> t;
+  } debugThread = {
+      // g[]
+      {group[0], group[1], group[2]},
+      // t[]
+      {thread[0], thread[1], thread[2]},
+  };
+
+  bool done = false;
+  ShaderDebugTrace *trace = NULL;
+
+  m_Ctx.Replay().AsyncInvoke([&trace, &done, debugThread](IReplayController *r) {
+    trace = r->DebugThread(debugThread.g, debugThread.t);
+
+    if(trace->debugger == NULL)
+    {
+      r->FreeTrace(trace);
+      trace = NULL;
+    }
+
+    done = true;
+  });
+
+  QString debugContext = lit("Group [%1,%2,%3] Thread [%4,%5,%6]")
+                             .arg(group[0])
+                             .arg(group[1])
+                             .arg(group[2])
+                             .arg(thread[0])
+                             .arg(thread[1])
+                             .arg(thread[2]);
+
+  // wait a short while before displaying the progress dialog (which won't show if we're already
+  // done by the time we reach it)
+  for(int i = 0; !done && i < 100; i++)
+    QThread::msleep(5);
+
+  ShowProgressDialog(this, tr("Debugging %1").arg(debugContext), [&done]() { return done; });
+
+  if(!trace)
+  {
+    RDDialog::critical(
+        this, tr("Error debugging"),
+        tr("Error debugging thread - make sure a valid group and thread is selected"));
+    return;
+  }
+
+  // viewer takes ownership of the trace
+  IShaderViewer *s = m_Ctx.DebugShader(
+      shaderDetails, m_Ctx.CurPipelineState().GetComputePipelineObject(), trace, debugContext);
+
+  m_Ctx.AddDockWindow(s->Widget(), DockReference::AddTo, this);
 }

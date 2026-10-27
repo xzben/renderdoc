@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -160,13 +160,6 @@ int RDTweakedNativeStyle::styleHint(StyleHint stylehint, const QStyleOption *opt
 QIcon RDTweakedNativeStyle::standardIcon(StandardPixmap standardIcon, const QStyleOption *opt,
                                          const QWidget *widget) const
 {
-  if(standardIcon == QStyle::SP_TitleBarCloseButton)
-  {
-    int sz = pixelMetric(QStyle::PM_SmallIconSize);
-
-    return QIcon(QPixmap(QSize(sz, sz)));
-  }
-
   return QProxyStyle::standardIcon(standardIcon, opt, widget);
 }
 

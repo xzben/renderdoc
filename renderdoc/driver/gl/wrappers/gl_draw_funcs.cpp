@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -158,10 +158,15 @@ static constexpr uint32_t GetIdxSize(GLenum idxtype)
   return (idxtype == eGL_UNSIGNED_BYTE ? 1 : (idxtype == eGL_UNSIGNED_SHORT ? 2 : 4));
 }
 
+bool WrappedOpenGL::Check_SafeDrawAtEventID(uint32_t eid) const
+{
+  return m_UnsafeDraws.find(eid) == m_UnsafeDraws.end();
+}
+
 bool WrappedOpenGL::Check_SafeDraw(bool indexed)
 {
   if(IsActiveReplaying(m_State))
-    return m_UnsafeDraws.find(m_CurEventID) == m_UnsafeDraws.end();
+    return Check_SafeDrawAtEventID(m_CurEventID);
 
   bool ret = true;
 
@@ -195,14 +200,14 @@ bool WrappedOpenGL::Check_SafeDraw(bool indexed)
   if(prog)
   {
     ResourceId id = GetResourceManager()->GetResID(ProgramRes(GetCtx(), prog));
-    const ProgramData &progDetails = m_Programs[id];
+    const ProgramData &progDetails = GetProgram(id);
 
     vs = progDetails.stageShaders[0];
   }
   else if(pipe)
   {
     ResourceId id = GetResourceManager()->GetResID(ProgramPipeRes(GetCtx(), pipe));
-    const PipelineData &pipeDetails = m_Pipelines[id];
+    const PipelineData &pipeDetails = GetPipeline(id);
 
     GL.glGetProgramPipelineiv(pipe, eGL_VERTEX_SHADER, (GLint *)&prog);
 
@@ -218,17 +223,17 @@ bool WrappedOpenGL::Check_SafeDraw(bool indexed)
   }
   else
   {
-    const ShaderData &shaderDetails = m_Shaders[vs];
+    const ShaderData &shaderDetails = GetShader(vs);
 
     rdcarray<int32_t> vertexAttrBindings;
-    EvaluateVertexAttributeBinds(prog, shaderDetails.reflection, !shaderDetails.spirvWords.empty(),
-                                 vertexAttrBindings);
+    EvaluateVertexAttributeBinds(prog, shaderDetails.GetReflection(),
+                                 !shaderDetails.spirvWords.empty(), vertexAttrBindings);
 
     for(int attrib = 0; attrib < vertexAttrBindings.count(); attrib++)
     {
       // skip attributes that don't map to the shader, they're unused
       int reflIndex = vertexAttrBindings[attrib];
-      if(reflIndex >= 0 && reflIndex < shaderDetails.reflection->inputSignature.count())
+      if(reflIndex >= 0 && reflIndex < shaderDetails.GetReflection()->inputSignature.count())
       {
         // check that this attribute is in-bounds, and enabled. If so then the driver will read from
         // it so we make sure there's a buffer bound
@@ -253,7 +258,7 @@ bool WrappedOpenGL::Check_SafeDraw(bool indexed)
                   "No vertex buffer bound to attribute %d: %s (buffer slot %d) at draw!\n"
                   "This can be caused by deleting a buffer early, before all draws using it "
                   "have been made",
-                  attrib, shaderDetails.reflection->inputSignature[reflIndex].varName.c_str(),
+                  attrib, shaderDetails.GetReflection()->inputSignature[reflIndex].varName.c_str(),
                   bufIdx));
 
           ret = false;
@@ -272,8 +277,8 @@ bool WrappedOpenGL::Check_SafeDraw(bool indexed)
                     "Vertex buffer %s bound to attribute %d: %s (buffer slot %d) at "
                     "draw is 0-sized!\n"
                     "Has this buffer been initialised?",
-                    ToStr(GetResourceManager()->GetOriginalID(id)).c_str(), attrib,
-                    shaderDetails.reflection->inputSignature[reflIndex].varName.c_str(), bufIdx));
+                    ToStr(id).c_str(), attrib,
+                    shaderDetails.GetReflection()->inputSignature[reflIndex].varName.c_str(), bufIdx));
 
             ret = false;
           }
@@ -2255,8 +2260,9 @@ bool WrappedOpenGL::Serialise_glMultiDrawArrays(SerialiserType &ser, GLenum mode
         // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
         // by just reducing the drawcount parameter to however many we want to replay. This only
         // works if we're replaying from the first multidraw to the nth (n less than drawcount)
-        GL.glMultiDrawArrays(mode, first, count,
-                             RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID));
+        if(drawcount == 0 || count == 0 || Check_SafeDrawAtEventID(baseEventID))
+          GL.glMultiDrawArrays(mode, first, count,
+                               RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID));
 
         m_CurEventID += (uint32_t)drawcount;
       }
@@ -2278,7 +2284,8 @@ bool WrappedOpenGL::Serialise_glMultiDrawArrays(SerialiserType &ser, GLenum mode
         for(uint32_t d = 0; d < firstDrawIdx; d++)
           modcount[d] = 0;
 
-        GL.glMultiDrawArrays(mode, first, count, lastDrawIdx + 1);
+        if(count == 0 || Check_SafeDrawAtEventID(baseEventID))
+          GL.glMultiDrawArrays(mode, first, count, lastDrawIdx + 1);
 
         m_CurEventID += (uint32_t)RDCMIN((uint32_t)drawcount, lastDrawIdx - firstDrawIdx);
       }
@@ -2423,7 +2430,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawElements(SerialiserType &ser, GLenum mo
         // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
         // by just reducing the Count parameter to however many we want to replay. This only
         // works if we're replaying from the first multidraw to the nth (n less than Count)
-        if(drawcount == 0 || count == 0 || Check_SafeDraw(true))
+        if(drawcount == 0 || count == 0 || Check_SafeDrawAtEventID(baseEventID))
           GL.glMultiDrawElements(mode, count, type, inds.data(),
                                  RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID));
 
@@ -2447,7 +2454,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawElements(SerialiserType &ser, GLenum mo
         for(uint32_t d = 0; d < firstDrawIdx; d++)
           modcount[d] = 0;
 
-        if(count == 0 || Check_SafeDraw(true))
+        if(count == 0 || Check_SafeDrawAtEventID(baseEventID))
           GL.glMultiDrawElements(mode, count, type, inds.data(), lastDrawIdx + 1);
 
         m_CurEventID += (uint32_t)RDCMIN((uint32_t)drawcount, lastDrawIdx - firstDrawIdx);
@@ -2596,7 +2603,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsBaseVertex(SerialiserType &ser,
         // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
         // by just reducing the Count parameter to however many we want to replay. This only
         // works if we're replaying from the first multidraw to the nth (n less than Count)
-        if(count == 0 || Check_SafeDraw(true))
+        if(count == 0 || Check_SafeDrawAtEventID(baseEventID))
           GL.glMultiDrawElementsBaseVertex(mode, count, type, inds.data(),
                                            RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID),
                                            basevertex);
@@ -2621,7 +2628,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsBaseVertex(SerialiserType &ser,
         for(uint32_t d = 0; d < firstDrawIdx; d++)
           modcount[d] = 0;
 
-        if(count == 0 || Check_SafeDraw(true))
+        if(count == 0 || Check_SafeDrawAtEventID(baseEventID))
           GL.glMultiDrawElementsBaseVertex(mode, count, type, inds.data(), lastDrawIdx + 1,
                                            basevertex);
 
@@ -2788,7 +2795,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(SerialiserType &ser, GLe
         // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
         // by just reducing the Count parameter to however many we want to replay. This only
         // works if we're replaying from the first multidraw to the nth (n less than Count)
-        if(drawcount == 0 || Check_SafeDraw(false))
+        if(drawcount == 0 || Check_SafeDrawAtEventID(baseEventID))
           GL.glMultiDrawArraysIndirect(mode, (const void *)offset,
                                        RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID),
                                        stride);
@@ -2841,7 +2848,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(SerialiserType &ser, GLe
 
           // the offset is 0 because it's referring to our custom buffer, stride is 0 because we
           // tightly pack.
-          if(Check_SafeDraw(false))
+          if(Check_SafeDrawAtEventID(baseEventID))
             GL.glMultiDrawArraysIndirect(mode, (const void *)0, lastDrawIdx + 1, 0);
 
           GL.glBindBuffer(eGL_DRAW_INDIRECT_BUFFER, prevBuf);
@@ -3018,7 +3025,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(SerialiserType &ser, G
         // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
         // by just reducing the Count parameter to however many we want to replay. This only
         // works if we're replaying from the first multidraw to the nth (n less than Count)
-        if(Check_SafeDraw(true))
+        if(Check_SafeDrawAtEventID(baseEventID))
           GL.glMultiDrawElementsIndirect(mode, type, (const void *)offset,
                                          RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID),
                                          stride);
@@ -3071,7 +3078,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(SerialiserType &ser, G
 
           // the offset is 0 because it's referring to our custom buffer, stride is 0 because we
           // tightly pack.
-          if(Check_SafeDraw(true))
+          if(Check_SafeDrawAtEventID(baseEventID))
             GL.glMultiDrawElementsIndirect(mode, type, (const void *)0, lastDrawIdx + 1, 0);
 
           GL.glBindBuffer(eGL_DRAW_INDIRECT_BUFFER, prevBuf);
@@ -3256,7 +3263,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCount(SerialiserType &ser
         // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
         // by just reducing the Count parameter to however many we want to replay. This only
         // works if we're replaying from the first multidraw to the nth (n less than Count)
-        if(maxdrawcount == 0 || Check_SafeDraw(false))
+        if(maxdrawcount == 0 || Check_SafeDrawAtEventID(baseEventID))
           GL.glMultiDrawArraysIndirect(mode, (const void *)offset,
                                        RDCMIN((uint32_t)realdrawcount, m_LastEventID - baseEventID),
                                        stride);
@@ -3309,7 +3316,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCount(SerialiserType &ser
 
           // the offset is 0 because it's referring to our custom buffer, stride is 0 because we
           // tightly pack.
-          if(Check_SafeDraw(false))
+          if(Check_SafeDrawAtEventID(baseEventID))
             GL.glMultiDrawArraysIndirect(mode, (const void *)0, lastDrawIdx + 1, 0);
 
           GL.glBindBuffer(eGL_DRAW_INDIRECT_BUFFER, prevBuf);
@@ -3503,7 +3510,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCount(SerialiserType &s
         // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
         // by just reducing the Count parameter to however many we want to replay. This only
         // works if we're replaying from the first multidraw to the nth (n less than Count)
-        if(maxdrawcount == 0 || Check_SafeDraw(true))
+        if(maxdrawcount == 0 || Check_SafeDrawAtEventID(baseEventID))
           GL.glMultiDrawElementsIndirect(
               mode, type, (const void *)offset,
               RDCMIN((uint32_t)realdrawcount, m_LastEventID - baseEventID), stride);
@@ -3556,7 +3563,7 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCount(SerialiserType &s
 
           // the offset is 0 because it's referring to our custom buffer, stride is 0 because we
           // tightly pack.
-          if(maxdrawcount == 0 || Check_SafeDraw(true))
+          if(maxdrawcount == 0 || Check_SafeDrawAtEventID(baseEventID))
             GL.glMultiDrawElementsIndirect(mode, type, (const void *)0, lastDrawIdx + 1, 0);
 
           GL.glBindBuffer(eGL_DRAW_INDIRECT_BUFFER, prevBuf);
@@ -3658,7 +3665,7 @@ bool WrappedOpenGL::Serialise_glClearNamedFramebufferfv(SerialiserType &ser,
           id = GetResourceManager()->GetResID(RenderbufferRes(GetCtx(), attachment));
 
         m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
-        action.copyDestination = GetResourceManager()->GetOriginalID(id);
+        action.copyDestination = id;
 
         if(type == eGL_TEXTURE)
         {
@@ -3798,7 +3805,7 @@ bool WrappedOpenGL::Serialise_glClearNamedFramebufferiv(SerialiserType &ser,
           id = GetResourceManager()->GetResID(RenderbufferRes(GetCtx(), attachment));
 
         m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
-        action.copyDestination = GetResourceManager()->GetOriginalID(id);
+        action.copyDestination = id;
 
         if(type == eGL_TEXTURE)
         {
@@ -3918,7 +3925,7 @@ bool WrappedOpenGL::Serialise_glClearNamedFramebufferuiv(SerialiserType &ser,
           id = GetResourceManager()->GetResID(RenderbufferRes(GetCtx(), attachment));
 
         m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
-        action.copyDestination = GetResourceManager()->GetOriginalID(id);
+        action.copyDestination = id;
 
         if(type == eGL_TEXTURE)
         {
@@ -4040,12 +4047,12 @@ bool WrappedOpenGL::Serialise_glClearNamedFramebufferfi(SerialiserType &ser, GLu
           id = GetResourceManager()->GetResID(RenderbufferRes(GetCtx(), attachment));
 
         m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
-        action.copyDestination = GetResourceManager()->GetOriginalID(id);
+        action.copyDestination = id;
 
         if(type == eGL_TEXTURE)
         {
           GLint mip = 0, slice = 0;
-          GetFramebufferMipAndLayer(framebuffer.name, eGL_COLOR_ATTACHMENT0, &mip, &slice);
+          GetFramebufferMipAndLayer(framebuffer.name, eGL_DEPTH_ATTACHMENT, &mip, &slice);
           action.copyDestinationSubresource.mip = mip;
           action.copyDestinationSubresource.slice = slice;
         }
@@ -4547,7 +4554,7 @@ bool WrappedOpenGL::Serialise_glClear(SerialiserType &ser, GLbitfield mask)
         }
       }
 
-      action.copyDestination = GetResourceManager()->GetOriginalID(dstId);
+      action.copyDestination = dstId;
 
       if(dstId != ResourceId() && m_Textures[dstId].curType != eGL_RENDERBUFFER)
       {
@@ -4679,8 +4686,7 @@ bool WrappedOpenGL::Serialise_glClearTexImage(SerialiserType &ser, GLuint textur
     {
       AddEvent();
 
-      ResourceId liveId = GetResourceManager()->GetResID(texture);
-      ResourceId id = GetResourceManager()->GetOriginalID(liveId);
+      ResourceId id = GetResourceManager()->GetResID(texture);
 
       ActionDescription action;
       action.flags |= ActionFlags::Clear;
@@ -4694,7 +4700,7 @@ bool WrappedOpenGL::Serialise_glClearTexImage(SerialiserType &ser, GLuint textur
 
       AddAction(action);
 
-      m_ResourceUses[liveId].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
+      m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
     }
   }
 
@@ -4828,8 +4834,7 @@ bool WrappedOpenGL::Serialise_glClearTexSubImage(SerialiserType &ser, GLuint tex
     {
       AddEvent();
 
-      ResourceId liveId = GetResourceManager()->GetResID(texture);
-      ResourceId id = GetResourceManager()->GetOriginalID(liveId);
+      ResourceId id = GetResourceManager()->GetResID(texture);
 
       ActionDescription action;
       action.flags |= ActionFlags::Clear;
@@ -4843,7 +4848,7 @@ bool WrappedOpenGL::Serialise_glClearTexSubImage(SerialiserType &ser, GLuint tex
 
       AddAction(action);
 
-      m_ResourceUses[liveId].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
+      m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
     }
   }
 

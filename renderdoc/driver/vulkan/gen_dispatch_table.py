@@ -26,7 +26,7 @@ f.write('''
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2020-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -114,7 +114,7 @@ for cmd in registry.findall('commands/command'):
 
     if first_param_type == 'VkInstance' or first_param_type == 'VkPhysicalDevice':
         commands[name] = INSTANCE_CMD
-    elif first_param_type == 'VkDevice' or first_param_type == 'VkQueue' or first_param_type == 'VkCommandBuffer':
+    elif first_param_type == 'VkDevice' or first_param_type == 'VkQueue' or first_param_type == 'VkCommandBuffer' or first_param_type == 'VkExternalComputeQueueNV':
         commands[name] = DEVICE_CMD
     else:
         raise ValueError('type {} of first parameter to {} is unexpected'.format(first_param_type, name))

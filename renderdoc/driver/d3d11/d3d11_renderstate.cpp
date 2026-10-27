@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1053,7 +1053,7 @@ bool D3D11RenderState::Shader::Used_CB(uint32_t slot) const
   if(shad == NULL)
     return false;
 
-  DXBC::DXBCContainer *dxbc = shad->GetDXBC();
+  const DXBC::DXBCContainer *dxbc = shad->GetDXBC();
 
   // have to assume it's used if there's no DXBC
   if(dxbc == NULL)
@@ -1076,7 +1076,7 @@ bool D3D11RenderState::Shader::Used_SRV(uint32_t slot) const
   if(shad == NULL)
     return false;
 
-  DXBC::DXBCContainer *dxbc = shad->GetDXBC();
+  const DXBC::DXBCContainer *dxbc = shad->GetDXBC();
 
   // have to assume it's used if there's no DXBC
   if(dxbc == NULL)
@@ -1096,7 +1096,7 @@ bool D3D11RenderState::Shader::Used_UAV(uint32_t slot) const
   if(shad == NULL)
     return false;
 
-  DXBC::DXBCContainer *dxbc = shad->GetDXBC();
+  const DXBC::DXBCContainer *dxbc = shad->GetDXBC();
 
   // have to assume it's used if there's no DXBC
   if(dxbc == NULL)

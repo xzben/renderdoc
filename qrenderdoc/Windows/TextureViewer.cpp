@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -97,10 +97,12 @@ static Descriptor MakeDescriptor(ResourceId res, Subresource sub = Subresource()
   return ret;
 }
 
-static UsedDescriptor MakeUsedDescriptor(ResourceId res, Subresource sub = Subresource())
+static UsedDescriptor MakeUsedDescriptor(ShaderStage stage, ResourceId res,
+                                         Subresource sub = Subresource())
 {
   UsedDescriptor ret;
   ret.descriptor = MakeDescriptor(res, sub);
+  ret.access.stage = stage;
   ret.access.type = ret.descriptor.type;
   ret.access.index = DescriptorAccess::NoShaderBinding;
   ret.access.byteSize = 1;
@@ -336,7 +338,8 @@ rdcarray<UsedDescriptor> Following::GetReadOnlyResources(ICaptureContext &ctx, S
 
     // only return copy source for one stage
     if(copy && stage == ShaderStage::Pixel)
-      ret.push_back(MakeUsedDescriptor(curAction->copySource, curAction->copySourceSubresource));
+      ret.push_back(
+          MakeUsedDescriptor(stage, curAction->copySource, curAction->copySourceSubresource));
 
     return ret;
   }
@@ -1024,7 +1027,12 @@ void TextureViewer::UI_UpdateStatusText()
   QString pickedText;
   QString pickedTooltip;
 
-  if(m_PickedPoint.x() >= 0)
+  if(tex.format.type == ResourceFormatType::Regular && tex.format.compByteWidth == 8 &&
+     (tex.format.compType == CompType::UInt || tex.format.compType == CompType::SInt))
+  {
+    pickedText = tr("64-bit int textures can't be displayed");
+  }
+  else if(m_PickedPoint.x() >= 0)
   {
     x = MipCoordFromBase(m_PickedPoint.x(), tex.width);
     y = MipCoordFromBase(m_PickedPoint.y(), tex.height);
@@ -2291,6 +2299,11 @@ uint32_t TextureViewer::GetChannelVisibilityBits()
   return ret;
 }
 
+rdcfixedarray<bool, 4> TextureViewer::GetChannelVisibility()
+{
+  return {m_TexDisplay.red, m_TexDisplay.green, m_TexDisplay.blue, m_TexDisplay.alpha};
+}
+
 void TextureViewer::SetChannelVisibility(bool red, bool green, bool blue, bool alpha)
 {
   ui->channelRed->setChecked(red);
@@ -2389,7 +2402,7 @@ void TextureViewer::OpenResourceContextMenu(ResourceId id, bool input,
       m_Ctx.GetResourceInspector()->Inspect(id);
     });
 
-    CombineUsageEvents(m_Ctx, usage,
+    CombineUsageEvents(m_Ctx, usage, false,
                        [this, &contextMenu](uint32_t start, uint32_t end, ResourceUsage use) {
                          AddResourceUsageEntry(contextMenu, start, end, use);
                        });
@@ -2751,26 +2764,27 @@ void TextureViewer::render_keyPress(QKeyEvent *e)
 
   bool nudged = false;
 
-  int increment = 1 << (int)m_TexDisplay.subresource.mip;
+  uint32_t mipx = MipCoordFromBase(m_PickedPoint.x(), texptr->width);
+  uint32_t mipy = MipCoordFromBase(m_PickedPoint.y(), texptr->height);
 
   if(e->key() == Qt::Key_Up && m_PickedPoint.y() > 0)
   {
-    m_PickedPoint -= QPoint(0, increment);
+    m_PickedPoint.setY(BaseCoordFromMip(mipy - 1, texptr->height));
     nudged = true;
   }
   else if(e->key() == Qt::Key_Down && m_PickedPoint.y() < (int)texptr->height - 1)
   {
-    m_PickedPoint += QPoint(0, increment);
+    m_PickedPoint.setY(BaseCoordFromMip(mipy + 1, texptr->height));
     nudged = true;
   }
   else if(e->key() == Qt::Key_Left && m_PickedPoint.x() > 0)
   {
-    m_PickedPoint -= QPoint(increment, 0);
+    m_PickedPoint.setX(BaseCoordFromMip(mipx - 1, texptr->width));
     nudged = true;
   }
   else if(e->key() == Qt::Key_Right && m_PickedPoint.x() < (int)texptr->width - 1)
   {
-    m_PickedPoint += QPoint(increment, 0);
+    m_PickedPoint.setX(BaseCoordFromMip(mipx + 1, texptr->width));
     nudged = true;
   }
 
@@ -3126,6 +3140,24 @@ void TextureViewer::OnEventChanged(uint32_t eventId)
       ShaderStage::Pixel,  ShaderStage::Task, ShaderStage::Mesh,
   };
 
+  QFont font = ui->overlay->font();
+  if(m_Ctx.APIProps().pipelineType == GraphicsAPI::Vulkan &&
+     m_Ctx.CurVulkanPipelineState()->multisample.rasterSamples > 1)
+  {
+    font.setItalic(true);
+    ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawDraw, tr("Overdraw (N/A on MSAA)"));
+    ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawPass, tr("Overdraw (N/A on MSAA)"));
+    ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawDraw, font, Qt::FontRole);
+    ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawPass, font, Qt::FontRole);
+  }
+  else
+  {
+    ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawDraw, tr("Quad Overdraw (Draw)"));
+    ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawPass, tr("Quad Overdraw (Pass)"));
+    ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawDraw, font, Qt::FontRole);
+    ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawPass, font, Qt::FontRole);
+  }
+
   int count = 7;
 
   if(compute)
@@ -3273,15 +3305,14 @@ void TextureViewer::OnEventChanged(uint32_t eventId)
 
         // if the last range is contiguous with this access, append this access as a new range to query
         if(!ranges.empty() && ranges.back().descriptorSize == update.access.byteSize &&
-           ranges.back().offset + ranges.back().descriptorSize == update.access.byteOffset)
+           ranges.back().offset + ranges.back().descriptorSize == update.access.byteOffset &&
+           ranges.back().type == update.access.type)
         {
           ranges.back().count++;
           continue;
         }
 
-        DescriptorRange range;
-        range.offset = update.access.byteOffset;
-        range.descriptorSize = update.access.byteSize;
+        DescriptorRange range = update.access;
         ranges.push_back(range);
       }
 
@@ -3499,7 +3530,9 @@ void TextureViewer::on_zoomOption_currentIndexChanged(int index)
 
 void TextureViewer::zoomOption_returnPressed()
 {
-  UI_SetScale(GetZoomLevel());
+  ui->fitToWindow->setChecked(false);
+  float zoom = GetZoomLevel();
+  UI_SetScale(zoom);
 }
 
 void TextureViewer::on_overlay_currentIndexChanged(int index)
@@ -4122,7 +4155,7 @@ void TextureViewer::on_debugPixelContext_clicked()
   if(!trace)
   {
     if(m_Ctx.APIProps().pixelHistory)
-      on_pixelHistory_clicked();
+      ShowPixelHistory(true);
     else
       RDDialog::critical(this, tr("Debug Error"), tr("Error debugging pixel."));
     return;
@@ -4139,6 +4172,11 @@ void TextureViewer::on_debugPixelContext_clicked()
 }
 
 void TextureViewer::on_pixelHistory_clicked()
+{
+  ShowPixelHistory(false);
+}
+
+void TextureViewer::ShowPixelHistory(bool failedDebug)
 {
   TextureDescription *texptr = GetCurrentTexture();
 
@@ -4157,6 +4195,9 @@ void TextureViewer::on_pixelHistory_clicked()
 
   uint32_t view = m_TexDisplay.subresource.slice - m_Following.GetFirstArraySlice(m_Ctx);
   IPixelHistoryView *hist = m_Ctx.ViewPixelHistory(texptr->resourceId, x, y, view, m_TexDisplay);
+
+  if(failedDebug)
+    hist->SetFailedDebug();
 
   m_Ctx.AddDockWindow(hist->Widget(), DockReference::TransientPopupArea, this, 0.3f);
 

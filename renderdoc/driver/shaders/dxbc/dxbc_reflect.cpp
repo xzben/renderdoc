@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -61,12 +61,12 @@ static ShaderConstantType MakeShaderConstantType(bool cbufferPacking, DXBC::CBuf
      type.varClass == DXBC::CLASS_SCALAR)
     ret.flags |= ShaderVariableFlags::RowMajorMatrix;
 
-  uint32_t baseElemSize = (ret.baseType == VarType::Double) ? 8 : 4;
+  uint32_t baseElemSize = VarTypeByteSize(ret.baseType);
 
   // in D3D matrices in cbuffers always take up a float4 per row/column. Structured buffers in
   // SRVs/UAVs are tightly packed
   if(cbufferPacking)
-    ret.matrixByteStride = uint8_t(baseElemSize * 4);
+    ret.matrixByteStride = AlignUp16(uint8_t(baseElemSize * 4));
   else
     ret.matrixByteStride = uint8_t(baseElemSize * (ret.RowMajor() ? ret.columns : ret.rows));
 
@@ -132,6 +132,8 @@ static ShaderConstant MakeConstantBufferVariable(bool cbufferPacking, const DXBC
   ret.byteOffset = var.offset;
   ret.defaultValue = 0;
   ret.type = MakeShaderConstantType(cbufferPacking, var.type);
+  ret.bitFieldOffset = var.bitFieldOffset;
+  ret.bitFieldSize = var.bitFieldSize;
 
   // fxc emits negative values for offsets of empty structs sometimes. Replace that with a single
   // value so we can say 'use the previous value'
@@ -319,15 +321,36 @@ void MakeShaderReflection(DXBC::DXBCContainer *dxbc, const ShaderEntryPoint &ent
 
   refl->debugInfo.entrySourceName = refl->entryPoint = "main";
 
+  if(!dxbc->HasDebugInfo())
+  {
+    refl->debugInfo.debugInfoLoadingLog = "Did not find debug data.\n\n";
+  }
+  else if(!dxbc->LoadedDebugBlob())
+  {
+    refl->debugInfo.debugInfoLoadingLog = "Shader contained debug data.\n\n";
+  }
+  else
+  {
+    refl->debugInfo.debugInfoLoadingLog = "Found separate debug data.\n\n";
+  }
+
+  refl->debugInfo.debugInfoLoadingLog += dxbc->GetDebugInfoLoadingLog();
+
   if(dxbc->GetDebugInfo())
   {
     refl->debugInfo.encoding = ShaderEncoding::HLSL;
 
-    refl->debugInfo.sourceDebugInformation = true;
+    refl->debugInfo.sourceDebugInformation = dxbc->GetDebugInfo()->HasSourceDebugInfo();
 
     refl->debugInfo.compileFlags = dxbc->GetDebugInfo()->GetShaderCompileFlags();
 
     refl->debugInfo.files = dxbc->GetDebugInfo()->Files;
+
+    // For DXIL ensure the entry point meta data has been parsed
+    if(dxbc->GetDXILByteCode())
+    {
+      dxbc->GetDXILByteCode()->FetchEntryPoint();
+    }
 
     dxbc->GetDebugInfo()->GetLineInfo(~0U, ~0U, refl->debugInfo.entryLocation);
 
@@ -376,6 +399,19 @@ void MakeShaderReflection(DXBC::DXBCContainer *dxbc, const ShaderEntryPoint &ent
     else
       refl->debugInfo.debugStatus = "Shader contains no recognised bytecode";
   }
+
+  const DXBC::Reflection *dxbcRefl = dxbc->GetReflection();
+
+  for(const SigParameter &sig : dxbcRefl->InputSig)
+  {
+    if(sig.systemValue == ShaderBuiltin::PackedFragRate)
+    {
+      if(refl->debugInfo.debugStatus.empty())
+        refl->debugInfo.debugStatus = "Unsupported input value SV_ShadingRate";
+      break;
+    }
+  }
+
   refl->debugInfo.debuggable = refl->debugInfo.debugStatus.empty();
 
   refl->encoding = ShaderEncoding::DXBC;
@@ -387,8 +423,6 @@ void MakeShaderReflection(DXBC::DXBCContainer *dxbc, const ShaderEntryPoint &ent
   }
   refl->rawBytes = dxbc->GetShaderBlob();
 
-  const DXBC::Reflection *dxbcRefl = dxbc->GetReflection();
-
   refl->dispatchThreadsDimension[0] = dxbcRefl->DispatchThreadsDimension[0];
   refl->dispatchThreadsDimension[1] = dxbcRefl->DispatchThreadsDimension[1];
   refl->dispatchThreadsDimension[2] = dxbcRefl->DispatchThreadsDimension[2];
@@ -396,6 +430,7 @@ void MakeShaderReflection(DXBC::DXBCContainer *dxbc, const ShaderEntryPoint &ent
   refl->inputSignature = dxbcRefl->InputSig;
   refl->outputSignature = dxbcRefl->OutputSig;
 
+  dxbc->CacheOutputTopology();
   switch(dxbc->GetOutputTopology())
   {
     case D3D_PRIMITIVE_TOPOLOGY_POINTLIST: refl->outputTopology = Topology::PointList; break;

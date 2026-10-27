@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,10 @@ struct DescSetLayout;
 
 struct VulkanStatePipeline
 {
+  VulkanStatePipeline(VkPipelineBindPoint bindPoint) : bindPoint(bindPoint) {}
+
+  VkPipelineBindPoint bindPoint;
+
   ResourceId pipeline;
 
   // shader object
@@ -41,14 +45,53 @@ struct VulkanStatePipeline
   struct DescriptorAndOffsets
   {
     ResourceId pipeLayout;
+    bool push = false;
+
+    // if descriptor set bound
     ResourceId descSet;
     rdcarray<uint32_t> offsets;
+
+    // if descriptor buffer bound
+    uint32_t descBufferIdx = ~0U;
+    VkDeviceSize descBufferOffset = 0;
+    bool descBufferEmbeddedSamplers = false;
+    bool descBufferPush = false;
+
+    bool IsDescBufferBound() const
+    {
+      return descBufferIdx != ~0U || descBufferEmbeddedSamplers || descBufferPush;
+    }
+
+    bool IsBound() const
+    {
+      return descSet != ResourceId() || descBufferIdx != ~0U || descBufferEmbeddedSamplers;
+    }
   };
   rdcarray<DescriptorAndOffsets> descSets;
   // the index of the last set bound. In the case where we are re-binding sets and don't have a
   // valid pipeline to reference, this can help us resolve which descriptor sets to rebind in the
   // event that they're not all compatible
-  uint32_t lastBoundSet = 0;
+  // we need to track the last descriptor set separately from the last descriptor buffer set,
+  // because if a descriptor buffer set is invalidated the previous last descriptor set may still be
+  // valid. There is no way to do the other direction (any descriptor set bind invalidates all
+  // descriptor buffer set bindings)
+  int32_t lastBoundDescSet = -1;
+  int32_t lastBoundDescBufSet = -1;
+
+  uint32_t LastBoundSet() const
+  {
+    if(UsingDescBufs() && lastBoundDescBufSet >= 0)
+      return lastBoundDescBufSet;
+    if(lastBoundDescSet >= 0)
+      return lastBoundDescSet;
+    return 0;
+  }
+
+  bool UsingDescBufs() const
+  {
+    // all sets must be using buffers or not
+    return !descSets.empty() && descSets[0].descBufferIdx != ~0U;
+  }
 };
 
 struct VulkanRenderState
@@ -67,6 +110,9 @@ struct VulkanRenderState
   void BeginRenderPassAndApplyState(WrappedVulkan *vk, VkCommandBuffer cmd, PipelineBinding binding,
                                     bool obeySuspending);
   void BindPipeline(WrappedVulkan *vk, VkCommandBuffer cmd, PipelineBinding binding, bool subpass0);
+
+  void BindDescriptorBuffers(WrappedVulkan *vk, VkCommandBuffer cmd);
+
   void BindShaderObjects(WrappedVulkan *vk, VkCommandBuffer cmd, PipelineBinding binding);
   void BindDynamicState(WrappedVulkan *vk, VkCommandBuffer cmd);
 
@@ -92,6 +138,10 @@ struct VulkanRenderState
     float depth = 0.0f;
     float biasclamp = 0.0f;
     float slope = 0.0f;
+
+    VkDepthBiasRepresentationEXT repr =
+        VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORMAT_EXT;
+    bool exact = false;
   } bias;
   float blendConst[4] = {};
   float mindepth = 0.0f;
@@ -164,7 +214,9 @@ struct VulkanRenderState
   bool ActiveRenderPass() const { return renderPass != ResourceId() || dynamicRendering.active; }
   VkRect2D renderArea = {};
 
-  VulkanStatePipeline compute, graphics, rt;
+  VulkanStatePipeline compute = VulkanStatePipeline(VK_PIPELINE_BIND_POINT_COMPUTE);
+  VulkanStatePipeline graphics = VulkanStatePipeline(VK_PIPELINE_BIND_POINT_GRAPHICS);
+  VulkanStatePipeline rt = VulkanStatePipeline(VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR);
 
   VulkanStatePipeline &GetPipeline(VkPipelineBindPoint pipelineBindPoint)
   {
@@ -175,10 +227,20 @@ struct VulkanRenderState
     return compute;
   }
 
+  struct DescriptorBuffer
+  {
+    VkDeviceAddress address;
+    VkBufferUsageFlags2 usage;
+    bool flags2;
+    ResourceId pushBuffer;
+  };
+  rdcarray<DescriptorBuffer> descBufs;
+
   struct IdxBuffer
   {
     ResourceId buf;
     VkDeviceSize offs = 0;
+    VkDeviceSize size = VK_WHOLE_SIZE;
     int bytewidth = 0;
   } ibuffer;
 
@@ -253,7 +315,7 @@ struct VulkanRenderState
   VkBool32 depthClipEnable = VK_FALSE;
   VkBool32 negativeOneToOne = VK_FALSE;
   float primOverestimationSize = 0.0f;
-  VkLineRasterizationModeKHR lineRasterMode = VK_LINE_RASTERIZATION_MODE_DEFAULT_KHR;
+  VkLineRasterizationMode lineRasterMode = VK_LINE_RASTERIZATION_MODE_DEFAULT;
   VkBool32 stippledLineEnable = VK_FALSE;
   VkBool32 logicOpEnable = VK_FALSE;
   VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
@@ -271,6 +333,42 @@ struct VulkanRenderState
   // dynamic rendering
   struct DynamicRendering
   {
+    DynamicRendering() = default;
+    DynamicRendering &operator=(const DynamicRendering &o)
+    {
+      active = o.active;
+      suspended = o.suspended;
+      flags = o.flags;
+      layerCount = o.layerCount;
+      viewMask = o.viewMask;
+      color = o.color;
+      depth = o.depth;
+      stencil = o.stencil;
+
+      fragmentDensityView = o.fragmentDensityView;
+      fragmentDensityLayout = o.fragmentDensityLayout;
+
+      shadingRateView = o.shadingRateView;
+      shadingRateLayout = o.shadingRateLayout;
+      shadingRateTexelSize = o.shadingRateTexelSize;
+
+      tileOnlyMSAAEnable = o.tileOnlyMSAAEnable;
+      tileOnlyMSAASampleCount = o.tileOnlyMSAASampleCount;
+
+      localRead = o.localRead;
+
+      beginCustomResolve = o.beginCustomResolve;
+
+      // this will deep copy from the incoming object
+      CopyAttachmentNexts();
+
+      return *this;
+    }
+
+    DynamicRendering(const DynamicRendering &o) { *this = o; }
+
+    void CopyAttachmentNexts();
+
     bool active = false;
     bool suspended = false;
     VkRenderingFlags flags = 0;
@@ -289,6 +387,18 @@ struct VulkanRenderState
 
     bool tileOnlyMSAAEnable = false;
     VkSampleCountFlagBits tileOnlyMSAASampleCount = VK_SAMPLE_COUNT_1_BIT;
+
+    // VK_KHR_dynamic_rendering_local_read
+    DynamicRenderingLocalRead localRead;
+
+    // VK_EXT_custom_resolve
+    bool beginCustomResolve = false;
+
+  private:
+    // VK_KHR_unified_image_layouts
+    rdcarray<VkAttachmentFeedbackLoopInfoEXT> feedbacks;
+
+    void CopyAttachmentNext(VkRenderingAttachmentInfo &info);
   } dynamicRendering;
 
   // fdm offset

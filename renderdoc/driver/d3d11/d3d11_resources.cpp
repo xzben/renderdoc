@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -143,6 +143,38 @@ void WrappedShader::ShaderEntry::BuildReflection()
         EncodeD3D11DescriptorIndex({access.stage, D3D11DescriptorMapping::UAVs,
                                     m_Details->readWriteResources[i].fixedBindNumber});
     m_Access.push_back(access);
+  }
+}
+
+void WrappedShader::ReloadShaderDebugInformation()
+{
+  SCOPED_LOCK(m_ShaderListLock);
+  for(auto it = m_ShaderList.begin(); it != m_ShaderList.end(); ++it)
+  {
+    if(ResourceIDGen::IsReplayOnlyID(it->first))
+      continue;
+    it->second->Reload();
+  }
+}
+
+void WrappedShader::ShaderEntry::Reload()
+{
+  bool wasBuilt = m_Built;
+  m_Built = false;
+  *m_Details = ShaderReflection();
+  m_Access.clear();
+
+  if(m_DXBCFile)
+  {
+    // recreate the DXBC file, this will pull any old debug info over
+    m_DXBCFile = new DXBC::DXBCContainer(m_DXBCFile, m_DebugInfoPath);
+    m_DXBCFile->SetShaderExts(GraphicsAPI::D3D11, m_ShaderExtSlot, ~0U);
+  }
+
+  if(wasBuilt)
+  {
+    BuildReflection();
+    m_Built = true;
   }
 }
 
@@ -714,9 +746,10 @@ void GetDXTextureProperties(void *dxObject, ResourceFormat &fmt, uint32_t &width
   RDCERR("Getting DX texture properties for unknown/unhandled objects %p", dxObject);
 }
 
-WrappedID3DDeviceContextState::WrappedID3DDeviceContextState(ID3DDeviceContextState *real,
+WrappedID3DDeviceContextState::WrappedID3DDeviceContextState(ResourceId id,
+                                                             ID3DDeviceContextState *real,
                                                              WrappedID3D11Device *device)
-    : WrappedDeviceChild11(real, device)
+    : WrappedDeviceChild11(id, real, device)
 {
   state = new D3D11RenderState(D3D11RenderState::Empty);
 

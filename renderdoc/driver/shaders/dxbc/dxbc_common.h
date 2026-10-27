@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -29,7 +29,7 @@
 #include "api/replay/rdcpair.h"
 #include "api/replay/rdcstr.h"
 #include "api/replay/shader_types.h"
-#include "dxbcdxil_debug.h"
+#include "dx_debug.h"
 
 struct DXBCContainerDebugger : public ShaderDebugger
 {
@@ -56,7 +56,7 @@ struct CountOffset
 };
 
 // matches D3D11_SHADER_VERSION_TYPE from d3d11shader.h
-enum class ShaderType
+enum class ShaderType : uint8_t
 {
   // D3D10 Shaders
   Pixel = 0,
@@ -85,6 +85,16 @@ enum class ShaderType
 
 ShaderStage GetShaderStage(ShaderType type);
 
+enum class ThreadScope : uint32_t
+{
+  Thread = 0,
+  Quad = 0x1,
+  Subgroup = 0x2,
+  Workgroup = 0x4,
+};
+
+BITMASK_OPERATORS(ThreadScope);
+
 /////////////////////////////////////////////////////////////////////////
 // the below classes basically mimics the existing reflection interface.
 //
@@ -106,7 +116,7 @@ enum ResourceRetType : uint8_t
   NUM_RETURN_TYPES,
 };
 
-enum SigCompType
+enum class SigCompType : uint8_t
 {
   COMPONENT_TYPE_UNKNOWN = 0,
   COMPONENT_TYPE_UINT32,
@@ -120,6 +130,20 @@ enum SigCompType
   COMPONENT_TYPE_FLOAT64,
 
   NUM_COMP_TYPES,
+};
+
+enum class InterpolationMode : uint8_t
+{
+  INTERPOLATION_UNDEFINED = 0,
+  INTERPOLATION_CONSTANT,
+  INTERPOLATION_LINEAR,
+  INTERPOLATION_LINEAR_CENTROID,
+  INTERPOLATION_LINEAR_NOPERSPECTIVE,
+  INTERPOLATION_LINEAR_NOPERSPECTIVE_CENTROID,
+  INTERPOLATION_LINEAR_SAMPLE,
+  INTERPOLATION_LINEAR_NOPERSPECTIVE_SAMPLE,
+
+  NUM_INTERPOLATIONS,
 };
 
 enum SVSemantic
@@ -238,6 +262,83 @@ enum VariableType
   VARTYPE_UINT64,
 };
 
+enum class TessellatorDomain : uint8_t
+{
+  DOMAIN_UNDEFINED = 0,
+  DOMAIN_ISOLINE,
+  DOMAIN_TRI,
+  DOMAIN_QUAD,
+
+  NUM_DOMAINS,
+};
+
+enum TessellatorPartitioning
+{
+  PARTITIONING_UNDEFINED = 0,
+  PARTITIONING_INTEGER,
+  PARTITIONING_POW2,
+  PARTITIONING_FRACTIONAL_ODD,
+  PARTITIONING_FRACTIONAL_EVEN,
+
+  NUM_PARTITIONINGS,
+};
+
+enum TessellatorOutputPrimitive
+{
+  OUTPUT_PRIMITIVE_UNDEFINED = 0,
+  OUTPUT_PRIMITIVE_POINT,
+  OUTPUT_PRIMITIVE_LINE,
+  OUTPUT_PRIMITIVE_TRIANGLE_CW,
+  OUTPUT_PRIMITIVE_TRIANGLE_CCW,
+
+  NUM_OUTPUT_PRIMITIVES,
+};
+
+enum PrimitiveType
+{
+  PRIMITIVE_UNDEFINED = 0,
+  PRIMITIVE_POINT,
+  PRIMITIVE_LINE,
+  PRIMITIVE_TRIANGLE,
+  // 4 and 5 are skipped
+  PRIMITIVE_LINE_ADJ = 6,
+  PRIMITIVE_TRIANGLE_ADJ,
+  PRIMITIVE_1_CONTROL_POINT_PATCH,
+  PRIMITIVE_2_CONTROL_POINT_PATCH,
+  PRIMITIVE_3_CONTROL_POINT_PATCH,
+  PRIMITIVE_4_CONTROL_POINT_PATCH,
+  PRIMITIVE_5_CONTROL_POINT_PATCH,
+  PRIMITIVE_6_CONTROL_POINT_PATCH,
+  PRIMITIVE_7_CONTROL_POINT_PATCH,
+  PRIMITIVE_8_CONTROL_POINT_PATCH,
+  PRIMITIVE_9_CONTROL_POINT_PATCH,
+  PRIMITIVE_10_CONTROL_POINT_PATCH,
+  PRIMITIVE_11_CONTROL_POINT_PATCH,
+  PRIMITIVE_12_CONTROL_POINT_PATCH,
+  PRIMITIVE_13_CONTROL_POINT_PATCH,
+  PRIMITIVE_14_CONTROL_POINT_PATCH,
+  PRIMITIVE_15_CONTROL_POINT_PATCH,
+  PRIMITIVE_16_CONTROL_POINT_PATCH,
+  PRIMITIVE_17_CONTROL_POINT_PATCH,
+  PRIMITIVE_18_CONTROL_POINT_PATCH,
+  PRIMITIVE_19_CONTROL_POINT_PATCH,
+  PRIMITIVE_20_CONTROL_POINT_PATCH,
+  PRIMITIVE_21_CONTROL_POINT_PATCH,
+  PRIMITIVE_22_CONTROL_POINT_PATCH,
+  PRIMITIVE_23_CONTROL_POINT_PATCH,
+  PRIMITIVE_24_CONTROL_POINT_PATCH,
+  PRIMITIVE_25_CONTROL_POINT_PATCH,
+  PRIMITIVE_26_CONTROL_POINT_PATCH,
+  PRIMITIVE_27_CONTROL_POINT_PATCH,
+  PRIMITIVE_28_CONTROL_POINT_PATCH,
+  PRIMITIVE_29_CONTROL_POINT_PATCH,
+  PRIMITIVE_30_CONTROL_POINT_PATCH,
+  PRIMITIVE_31_CONTROL_POINT_PATCH,
+  PRIMITIVE_32_CONTROL_POINT_PATCH,
+
+  NUM_PRIMITIVES,
+};
+
 struct ShaderInputBind
 {
   rdcstr name;
@@ -333,12 +434,16 @@ struct CBufferVariableType
   rdcarray<CBufferVariable> members;
 };
 
+void RecalculateScalarOffsetsSizes(CBufferVariableType &type);
 rdcstr TypeName(CBufferVariableType desc);
 
 struct CBufferVariable
 {
   rdcstr name;
   uint32_t offset;    // offset in parent (cbuffer or nested struct)
+
+  uint16_t bitFieldOffset = 0;
+  uint16_t bitFieldSize = 0;
 
   // type details of this variable
   CBufferVariableType type;
@@ -390,6 +495,7 @@ struct Reflection
   rdcarray<SigParameter> PatchConstantSig;
 
   uint32_t DispatchThreadsDimension[3];
+  uint32_t WaveSize = 0;
 };
 
 class DXBCContainer;
@@ -402,6 +508,7 @@ public:
   virtual rdcstr GetEntryFunction() const = 0;
   virtual rdcstr GetShaderProfile() const = 0;
 
+  virtual bool HasSourceDebugInfo() const = 0;
   virtual ShaderCompileFlags GetShaderCompileFlags() const = 0;
 
   rdcarray<ShaderSourceFile> Files;
@@ -410,11 +517,14 @@ public:
   virtual void GetCallstack(size_t instruction, uintptr_t offset,
                             rdcarray<rdcstr> &callstack) const = 0;
 
-  virtual bool HasSourceMapping() const = 0;
   virtual void GetLocals(const DXBC::DXBCContainer *dxbc, size_t instruction, uintptr_t offset,
                          rdcarray<SourceVariableMapping> &locals) const = 0;
+
+  virtual void FillReflection(DXBC::Reflection &refl) {}
 };
 
 rdcstr BasicDemangle(const rdcstr &possiblyMangledName);
+
+void ResetSearchDirsCache();
 
 };

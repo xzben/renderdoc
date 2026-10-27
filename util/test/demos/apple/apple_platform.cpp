@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022-2024 Baldur Karlsson
+ * Copyright (c) 2022-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@
 
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
+#include <unistd.h>
 #include "test_common.h"
 
 uint64_t GetMemoryUsage()
@@ -94,4 +95,9 @@ std::string GetExecutableName()
     selfName = path;
 
   return selfName;
+}
+
+uint32_t GetPID()
+{
+  return (uint32_t)getpid();
 }

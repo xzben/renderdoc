@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -203,10 +203,9 @@ int main(int argc, char *argv[])
   {
     const char *qpa_plat = getenv("QT_QPA_PLATFORM");
     // if not set or empty, force non-wayland to help go through backwards compatibility path on wayland.
-    char env_set[] = "QT_QPA_PLATFORM=xcb\0";
     if(!qpa_plat || qpa_plat[0] == 0)
     {
-      putenv(env_set);
+      setenv("QT_QPA_PLATFORM", "xcb", 1);
       envChanged = true;
     }
   }
@@ -280,9 +279,15 @@ int main(int argc, char *argv[])
       }
     }
 
+    GlobalEnvironment env;
+    env.enumerateGPUs = false;
+    rdcarray<rdcstr> coreargs;
+    RENDERDOC_InitialiseReplay(env, coreargs);
+
     {
       QCoreApplication application(argc, mod_argv);
-      PythonContext::GlobalInit();
+      PersistentConfig cfg;
+      PythonContext::GlobalInit(cfg);
 
       logstream << "Checking python binding consistency.\n";
 
@@ -303,7 +308,11 @@ int main(int argc, char *argv[])
       {
         logstream << "Python bindings are consistent.\n";
       }
+
+      PythonContext::GlobalShutdown();
     }
+
+    RENDERDOC_ShutdownReplay();
 
     logbuf.finish();
 
@@ -352,6 +361,10 @@ int main(int argc, char *argv[])
   QCommandLineOption updateFailed(lit("updatefailed"), QString(), lit("errormsg"));
   hideOption(updateFailed);
   parser.addOption(updateFailed);
+
+  QCommandLineOption updateDoneAdmin(lit("updatedone_admin"));
+  hideOption(updateDoneAdmin);
+  parser.addOption(updateDoneAdmin);
 
   QCommandLineOption updateDone(lit("updatedone"));
   hideOption(updateDone);
@@ -405,9 +418,20 @@ int main(int argc, char *argv[])
 
   if(parser.isSet(updateDone))
   {
+    qInfo() << "Finishing update as user";
     updateApplied = true;
 
+    // the renderdoccmd updater that runs us is from the old version, so older versions might be
+    // running us as admin expecting the version number to be updated.
+    // if we're not running as admin, this will immediately exit
     RENDERDOC_UpdateInstalledVersionNumber();
+  }
+
+  if(parser.isSet(updateDoneAdmin))
+  {
+    qInfo() << "Finishing update as admin";
+    RENDERDOC_UpdateInstalledVersionNumber();
+    return 0;
   }
 
   QString remoteHost;
@@ -485,7 +509,7 @@ int main(int argc, char *argv[])
   RegisterMetatypeConversions();
 
   {
-    PersistantConfig config;
+    PersistentConfig config;
 
     {
       QString configPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -608,7 +632,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-      PythonContext::GlobalInit();
+      PythonContext::GlobalInit(config);
 
       if(updateApplied)
       {
@@ -647,33 +671,31 @@ int main(int argc, char *argv[])
 
         ANALYTIC_SET(UIFeatures.PythonInterop, true);
 
-        py.ctx().setGlobal("pyrenderdoc", (ICaptureContext *)&ctx);
+        QObject::connect(&py.ctx(), &PythonContext::exception,
+                         [&pythonExited](const QString &, const QString &type, const QString &value,
+                                         int, QList<QString> frames) {
+                           if(type == lit("SystemExit"))
+                           {
+                             pythonExited = true;
+                             return;
+                           }
 
-        QObject::connect(
-            &py.ctx(), &PythonContext::exception,
-            [&pythonExited](const QString &type, const QString &value, int, QList<QString> frames) {
-              if(type == lit("SystemExit"))
-              {
-                pythonExited = true;
-                return;
-              }
+                           QString exString;
 
-              QString exString;
+                           if(!frames.isEmpty())
+                           {
+                             exString += tr("Traceback (most recent call last):\n");
+                             for(const QString &f : frames)
+                               exString += QFormatStr("  %1\n").arg(f);
+                           }
 
-              if(!frames.isEmpty())
-              {
-                exString += tr("Traceback (most recent call last):\n");
-                for(const QString &f : frames)
-                  exString += QFormatStr("  %1\n").arg(f);
-              }
+                           exString += QFormatStr("%1: %2\n").arg(type).arg(value);
 
-              exString += QFormatStr("%1: %2\n").arg(type).arg(value);
-
-              qCritical("%s", exString.toUtf8().data());
-            });
+                           qCritical("%s", exString.toUtf8().data());
+                         });
 
         QObject::connect(&py.ctx(), &PythonContext::textOutput,
-                         [](bool isStdError, const QString &output) {
+                         [](const QString &, bool isStdError, const QString &output) {
                            if(isStdError)
                              qCritical("%s", output.toUtf8().data());
                            else

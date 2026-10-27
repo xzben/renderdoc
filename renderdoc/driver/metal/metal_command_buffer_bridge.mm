@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022-2024 Baldur Karlsson
+ * Copyright (c) 2022-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -284,6 +284,19 @@
 {
   METAL_NOT_HOOKED();
   return [self.real popDebugGroup];
+}
+
+- (void)useResidencySet:(id<MTLResidencySet>)residencySet API_AVAILABLE(macos(15.0), ios(18.0))
+{
+  METAL_NOT_HOOKED();
+  return [self.real useResidencySet:residencySet];
+}
+
+- (void)useResidencySets:(const id<MTLResidencySet> _Nonnull[_Nonnull])residencySets
+                   count:(NSUInteger)count API_AVAILABLE(macos(15.0), ios(18.0))
+{
+  METAL_NOT_HOOKED();
+  return [self.real useResidencySets:residencySets count:count];
 }
 
 @end

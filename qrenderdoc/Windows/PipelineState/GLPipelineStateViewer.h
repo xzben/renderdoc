@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,6 +34,7 @@ class GLPipelineStateViewer;
 
 class QXmlStreamWriter;
 
+class ComputeDebugSelector;
 class RDLabel;
 class RDTreeWidget;
 class RDTreeWidgetItem;
@@ -83,16 +84,22 @@ private slots:
   void ubo_itemActivated(RDTreeWidgetItem *item, int column);
   void vertex_leave(QEvent *e);
 
+  void on_computeDebugSelector_clicked();
+  void computeDebugSelector_beginDebug(const rdcfixedarray<uint32_t, 3> &group,
+                                       const rdcfixedarray<uint32_t, 3> &thread);
+
 private:
   Ui::GLPipelineStateViewer *ui;
   ICaptureContext &m_Ctx;
   PipelineStateViewer &m_Common;
+  ComputeDebugSelector *m_ComputeDebugSelector;
 
   QString MakeGenericValueString(uint32_t compCount, CompType compType,
                                  const GLPipe::VertexAttribute &val);
   GLReadWriteType GetGLReadWriteType(ShaderResource res);
 
-  void setShaderState(const GLPipe::Shader &stage, RDLabel *shader, RDTreeWidget *sub);
+  void setShaderState(const GLPipe::Shader &stage, RDLabel *pipeline, RDLabel *program,
+                      RDLabel *shader, RDTreeWidget *sub);
 
   void addUBORow(const Descriptor &descriptor, uint32_t reg, uint32_t index,
                  const ConstantBlock *shaderBind, bool usedSlot, RDTreeWidget *ubos);
@@ -106,8 +113,8 @@ private:
                        const GLPipe::TextureCompleteness *texCompleteness,
                        RDTreeWidgetItem *readwrites);
 
-  void clearShaderState(RDLabel *shader, RDTreeWidget *tex, RDTreeWidget *samp, RDTreeWidget *ubo,
-                        RDTreeWidget *sub, RDTreeWidget *rw);
+  void clearShaderState(RDLabel *pipeline, RDLabel *program, RDLabel *shader, RDTreeWidget *tex,
+                        RDTreeWidget *samp, RDTreeWidget *ubo, RDTreeWidget *sub, RDTreeWidget *rw);
   void setState();
   void clearState();
 

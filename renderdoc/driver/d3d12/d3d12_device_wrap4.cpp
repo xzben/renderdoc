@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -72,11 +72,6 @@ bool WrappedID3D12Device::Serialise_CreateCommandList1(SerialiserType &ser, UINT
                        "Failed creating command list, HRESULT: %s", ToStr(hr).c_str());
       return false;
     }
-    else if(list)
-    {
-      // don't have to close it, as there's no implicit reset
-      GetResourceManager()->AddLiveResource(pCommandList, list);
-    }
 
     AddResource(pCommandList, ResourceType::CommandBuffer, "Command List");
   }
@@ -96,7 +91,7 @@ HRESULT WrappedID3D12Device::CreateCommandList1(UINT nodeMask, D3D12_COMMAND_LIS
      riid != __uuidof(ID3D12GraphicsCommandList3) && riid != __uuidof(ID3D12GraphicsCommandList4) &&
      riid != __uuidof(ID3D12GraphicsCommandList5) && riid != __uuidof(ID3D12GraphicsCommandList6) &&
      riid != __uuidof(ID3D12GraphicsCommandList7) && riid != __uuidof(ID3D12GraphicsCommandList8) &&
-     riid != __uuidof(ID3D12GraphicsCommandList9))
+     riid != __uuidof(ID3D12GraphicsCommandList9) && riid != __uuidof(ID3D12GraphicsCommandList10))
     return E_NOINTERFACE;
 
   void *realptr = NULL;
@@ -128,11 +123,13 @@ HRESULT WrappedID3D12Device::CreateCommandList1(UINT nodeMask, D3D12_COMMAND_LIS
     real = (ID3D12GraphicsCommandList8 *)realptr;
   else if(riid == __uuidof(ID3D12GraphicsCommandList9))
     real = (ID3D12GraphicsCommandList9 *)realptr;
+  else if(riid == __uuidof(ID3D12GraphicsCommandList10))
+    real = (ID3D12GraphicsCommandList10 *)realptr;
 
   if(SUCCEEDED(ret))
   {
     WrappedID3D12GraphicsCommandList *wrapped =
-        new WrappedID3D12GraphicsCommandList(real, this, m_State);
+        new WrappedID3D12GraphicsCommandList(ResourceId(), real, this, m_State);
 
     if(m_pAMDExtObject)
     {
@@ -160,7 +157,7 @@ HRESULT WrappedID3D12Device::CreateCommandList1(UINT nodeMask, D3D12_COMMAND_LIS
       }
     }
 
-    // during replay, the caller is responsible for calling AddLiveResource as this function
+    // during replay, the caller is responsible for calling AddResource as this function
     // can be called from ID3D12GraphicsCommandList::Reset serialising
 
     if(riid == __uuidof(ID3D12GraphicsCommandList))
@@ -183,6 +180,8 @@ HRESULT WrappedID3D12Device::CreateCommandList1(UINT nodeMask, D3D12_COMMAND_LIS
       *ppCommandList = (ID3D12GraphicsCommandList8 *)wrapped;
     else if(riid == __uuidof(ID3D12GraphicsCommandList9))
       *ppCommandList = (ID3D12GraphicsCommandList9 *)wrapped;
+    else if(riid == __uuidof(ID3D12GraphicsCommandList10))
+      *ppCommandList = (ID3D12GraphicsCommandList10 *)wrapped;
     else if(riid == __uuidof(ID3D12CommandList))
       *ppCommandList = (ID3D12CommandList *)wrapped;
     else
@@ -190,7 +189,7 @@ HRESULT WrappedID3D12Device::CreateCommandList1(UINT nodeMask, D3D12_COMMAND_LIS
   }
   else
   {
-    CheckHRESULT(ret);
+    CHECK_HR(this, ret);
   }
 
   return ret;
@@ -215,7 +214,7 @@ HRESULT WrappedID3D12Device::CreateProtectedResourceSession(
   if(SUCCEEDED(ret))
   {
     WrappedID3D12ProtectedResourceSession *wrapped =
-        new WrappedID3D12ProtectedResourceSession(real, this);
+        new WrappedID3D12ProtectedResourceSession(ResourceId(), real, this);
 
     if(riid == __uuidof(ID3D12ProtectedResourceSession))
       *ppSession = (ID3D12ProtectedResourceSession *)wrapped;
@@ -273,9 +272,7 @@ bool WrappedID3D12Device::Serialise_CreateHeap1(SerialiserType &ser, const D3D12
     }
     else
     {
-      ret = new WrappedID3D12Heap(ret, this);
-
-      GetResourceManager()->AddLiveResource(pHeap, ret);
+      ret = new WrappedID3D12Heap(pHeap, ret, this);
     }
 
     AddResource(pHeap, ResourceType::Memory, "Heap");
@@ -308,7 +305,7 @@ HRESULT WrappedID3D12Device::CreateHeap1(const D3D12_HEAP_DESC *pDesc,
 
   if(SUCCEEDED(ret))
   {
-    WrappedID3D12Heap *wrapped = new WrappedID3D12Heap(real, this);
+    WrappedID3D12Heap *wrapped = new WrappedID3D12Heap(ResourceId(), real, this);
 
     if(IsCaptureMode(m_State))
     {
@@ -327,16 +324,12 @@ HRESULT WrappedID3D12Device::CreateHeap1(const D3D12_HEAP_DESC *pDesc,
 
       record->AddChunk(scope.Get());
     }
-    else
-    {
-      GetResourceManager()->AddLiveResource(wrapped->GetResourceID(), wrapped);
-    }
 
     *ppvHeap = (ID3D12Heap *)wrapped;
   }
   else
   {
-    CheckHRESULT(ret);
+    CHECK_HR(this, ret);
   }
 
   return ret;
@@ -366,7 +359,7 @@ ID3D12Fence *WrappedID3D12Device::CreateProtectedSessionFence(ID3D12Fence *real)
 
     // we basically treat this kind of like CreateFence and serialise it as such, and guess at the
     // parameters to CreateFence.
-    wrapped = new WrappedID3D12Fence(real, this);
+    wrapped = new WrappedID3D12Fence(ResourceId(), real, this);
   }
 
   if(IsCaptureMode(m_State))

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -166,6 +166,36 @@ public:
   // to flag if some context-sensitive members might be invalid
   void SetStructArg(uint64_t arg) { m_StructArg = arg; }
   uint64_t GetStructArg() { return m_StructArg; }
+
+  // in rare cases it is necessary to pass side-band data even further than the small context
+  // allowed by SetStructArg, from serialisation users all the way down to child structs. We allow
+  // adding side-band data indexed by 'GUID' here for those rare cases.
+  template <typename T>
+  T GetSidebandData(uint64_t guid)
+  {
+    RDCCOMPILE_ASSERT(sizeof(T) <= sizeof(uint64_t), "Side-band data is at most 64-bit");
+
+    T ret;
+    for(rdcpair<uint64_t, uint64_t> &kv : m_SidebandKV)
+    {
+      if(kv.first == guid)
+      {
+        memcpy(&ret, &kv.second, sizeof(T));
+        return ret;
+      }
+    }
+
+    return ret;
+  }
+  template <typename T>
+  void SetSidebandData(uint64_t guid, const T &t)
+  {
+    RDCCOMPILE_ASSERT(sizeof(T) <= sizeof(uint64_t), "Side-band data is at most 64-bit");
+    uint64_t data = 0;
+    memcpy(&data, &t, sizeof(T));
+    m_SidebandKV.push_back({guid, data});
+  }
+
   //////////////////////////////////////////
   // Public serialisation interface
 
@@ -1026,7 +1056,9 @@ public:
   Serialiser &SerialiseStream(const rdcstr &name, StreamReader &stream,
                               RENDERDOC_ProgressCallback progress = RENDERDOC_ProgressCallback())
   {
-    RDCCOMPILE_ASSERT(IsWriting(), "Can't read into a StreamReader");
+    // we don't make this a compile-time assert so this code can be compiled in a
+    // templated-serialisation function (but we still assert as this will not be valid to execute
+    RDCASSERTMSG("Can't read into a StreamReader", IsWriting());
 
     uint64_t totalSize = stream.GetSize();
 
@@ -1237,6 +1269,24 @@ public:
     return *this;
   }
 
+  Serialiser &GPUAddress()
+  {
+    if(ExportStructure() && !m_StructureStack.empty())
+    {
+      SDObject &current = *m_StructureStack.back();
+
+      if(current.NumChildren() > 0)
+      {
+        SDType &type = current.GetChild(current.NumChildren() - 1)->type;
+        RDCASSERT(type.basetype == SDBasic::UnsignedInteger);
+        RDCASSERT(type.byteSize == 8);
+        type.basetype = SDBasic::GPUAddress;
+      }
+    }
+
+    return *this;
+  }
+
   // these functions should be used very carefully, they completely disable structured export for
   // anything serialised while internal is set.
   void PushInternal() { m_InternalElement++; }
@@ -1277,6 +1327,7 @@ public:
       case SDBasic::String: RDCFATAL("eString should be specialised!"); break;
       case SDBasic::Enum:
       case SDBasic::Resource:
+      case SDBasic::GPUAddress:
       case SDBasic::UnsignedInteger:
         if(byteSize == 1)
           current.data.basic.u = (uint64_t)(uint8_t)el;
@@ -1578,6 +1629,7 @@ private:
   uint64_t m_Version = 0;
 
   uint64_t m_StructArg = 0;
+  rdcarray<rdcpair<uint64_t, uint64_t>> m_SidebandKV;
 
   StreamWriter *m_Write = NULL;
   StreamReader *m_Read = NULL;
@@ -1857,7 +1909,7 @@ private:
 // passed around and moved between owners before being serialised out
 class Chunk
 {
-  Chunk(bool fromAllocator) : m_FromAllocator(fromAllocator) {}
+  Chunk(bool fromAllocator) : m_FromAllocator(fromAllocator ? 1 : 0) {}
   ~Chunk()
   {
     FreeAlignedBuffer(m_Data);
@@ -1869,8 +1921,8 @@ class Chunk
   }
 
 public:
-  void Delete() { Delete(m_FromAllocator); }
-  bool IsFromAllocator() { return m_FromAllocator; }
+  void Delete() { Delete(IsFromAllocator()); }
+  bool IsFromAllocator() { return m_FromAllocator != 0; }
   void Delete(bool fromAllocator)
   {
     if(!fromAllocator)
@@ -1902,7 +1954,7 @@ public:
     ret->m_ChunkType = m_ChunkType;
 
     ret->m_Data = AllocAlignedBuffer(m_Length);
-    ret->m_FromAllocator = false;
+    ret->m_FromAllocator = 0;
 
     memcpy(ret->m_Data, m_Data, (size_t)m_Length);
 
@@ -1924,11 +1976,12 @@ private:
   Chunk(const Chunk &) = delete;
   Chunk &operator=(const Chunk &) = delete;
 
-  uint16_t m_ChunkType;
+#define CHUNK_LENGTH_BITS 45
 
-  bool m_FromAllocator = false;
+  uint64_t m_ChunkType : 16;
+  uint64_t m_FromAllocator : 1;
+  uint64_t m_Length : CHUNK_LENGTH_BITS;
 
-  uint32_t m_Length;
   byte *m_Data;
 
 #if ENABLED(RDOC_DEVEL)
@@ -2079,6 +2132,7 @@ struct ScopedDeserialiseArray<SerialiserType, byte *>
 // can be overridden to change the name in the helper macros locally
 #define GET_SERIALISER (ser)
 
+#define LARGE_CHUNK_SIZE (~0ULL)
 #define SCOPED_SERIALISE_CHUNK(...) ScopedChunk scope(GET_SERIALISER, __VA_ARGS__);
 
 // these helper macros are intended for use when serialising objects in chunks

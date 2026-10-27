@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +36,7 @@
 #include "d3d12_command_queue.h"
 #include "d3d12_device.h"
 #include "d3d12_replay.h"
+#include "d3d12_rootsig.h"
 #include "d3d12_shader_cache.h"
 
 #include "data/hlsl/hlsl_cbuffers.h"
@@ -145,7 +146,7 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   desc.NumDescriptors = rtvCount;
   desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 
-  RDCCOMPILE_ASSERT(LAST_WIN_RTV < rtvCount, "Increase size of RTV heap");
+  RDCCOMPILE_ASSERT(MAX_RTV_SLOT < rtvCount, "Increase size of RTV heap");
 
   hr = m_pDevice->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap), (void **)&rtvHeap);
   m_pDevice->InternalRef();
@@ -162,7 +163,7 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   desc.NumDescriptors = dsvCount;
   desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 
-  RDCCOMPILE_ASSERT(LAST_WIN_DSV < dsvCount, "Increase size of DSV heap");
+  RDCCOMPILE_ASSERT(MAX_DSV_SLOT < dsvCount, "Increase size of DSV heap");
 
   hr = m_pDevice->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap), (void **)&dsvHeap);
   m_pDevice->InternalRef();
@@ -174,10 +175,12 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
 
   rm->SetInternalResource(dsvHeap);
 
-  desc.NumDescriptors = 4096;
+  const uint32_t srvCount = 4096;
+
+  desc.NumDescriptors = srvCount;
   desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 
-  RDCCOMPILE_ASSERT(MAX_SRV_SLOT < 4096, "Increase size of CBV/SRV/UAV heap");
+  RDCCOMPILE_ASSERT(MAX_SRV_SLOT < srvCount, "Increase size of CBV/SRV/UAV heap");
 
   hr = m_pDevice->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap), (void **)&uavClearHeap);
   m_pDevice->InternalRef();
@@ -202,8 +205,12 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
 
   rm->SetInternalResource(cbvsrvuavHeap);
 
-  desc.NumDescriptors = 16;
+  const uint32_t samplerCount = 300;
+
+  desc.NumDescriptors = samplerCount;
   desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+
+  RDCCOMPILE_ASSERT(MAX_SAMPLER_SLOT < samplerCount, "Increase size of sampler heap");
 
   hr = m_pDevice->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap), (void **)&samplerHeap);
   m_pDevice->InternalRef();
@@ -248,45 +255,39 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   shaderCache->SetCaching(true);
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        // cbuffer
-        cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0),
-        // normal SRVs (2x, 4x, 8x, 16x, 32x)
-        tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 1, 5),
-        // stencil SRVs (2x, 4x, 8x, 16x, 32x)
-        tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 11, 5),
-    });
+    bytebuf root = EncodeRootSig(
+        m_pDevice->RootSigVersion(),
+        {
+            // cbuffer
+            cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0),
+            // normal SRVs (2x, 4x, 8x, 16x, 32x)
+            tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 1, 5),
+            // stencil SRVs (2x, 4x, 8x, 16x, 32x)
+            tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 11, 5),
+        });
 
-    RDCASSERT(root);
-
-    hr = m_pDevice->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                        __uuidof(ID3D12RootSignature), (void **)&m_ArrayMSAARootSig);
+    hr = m_pDevice->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                        (void **)&m_ArrayMSAARootSig);
     m_pDevice->InternalRef();
-
-    SAFE_RELEASE(root);
 
     rm->SetInternalResource(m_ArrayMSAARootSig);
   }
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig(
-        {
-            cbvParam(D3D12_SHADER_VISIBILITY_VERTEX, 0, 0),
-            cbvParam(D3D12_SHADER_VISIBILITY_GEOMETRY, 0, 0),
-            // 'push constant' CBV
-            constParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0, 4),
-            // meshlet sizes SRV
-            srvParam(D3D12_SHADER_VISIBILITY_VERTEX, 0, 0),
-        },
-        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+    bytebuf root = EncodeRootSig(m_pDevice->RootSigVersion(),
+                                 {
+                                     cbvParam(D3D12_SHADER_VISIBILITY_VERTEX, 0, 0),
+                                     cbvParam(D3D12_SHADER_VISIBILITY_GEOMETRY, 0, 0),
+                                     // 'push constant' CBV
+                                     constParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0, 4),
+                                     // meshlet sizes SRV
+                                     srvParam(D3D12_SHADER_VISIBILITY_VERTEX, 0, 0),
+                                 },
+                                 D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
-    RDCASSERT(root);
-
-    hr = m_pDevice->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                        __uuidof(ID3D12RootSignature), (void **)&m_MeshRootSig);
+    hr = m_pDevice->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                        (void **)&m_MeshRootSig);
     m_pDevice->InternalRef();
-
-    SAFE_RELEASE(root);
 
     rm->SetInternalResource(m_MeshRootSig);
   }
@@ -376,20 +377,17 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   }
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
-        tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 0, 0, 5),
-        tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 10),
-    });
+    bytebuf root = EncodeRootSig(
+        m_pDevice->RootSigVersion(),
+        {
+            cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
+            tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 0, 0, 5),
+            tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 10),
+        });
 
-    RDCASSERT(root);
-
-    hr = m_pDevice->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                        __uuidof(ID3D12RootSignature),
+    hr = m_pDevice->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
                                         (void **)&m_PixelHistoryCopySig);
     m_pDevice->InternalRef();
-
-    SAFE_RELEASE(root);
 
     rm->SetInternalResource(m_PixelHistoryCopySig);
 
@@ -398,18 +396,65 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
     shaderCache->GetShaderBlob(hlsl.c_str(), "RENDERDOC_PixelHistoryCopyPixel",
                                D3DCOMPILE_WARNINGS_ARE_ERRORS, {}, "cs_5_0", &m_PixelHistoryCopyCS);
 
-    D3D12_COMPUTE_PIPELINE_STATE_DESC pipeDesc = {};
-    pipeDesc.CS.pShaderBytecode = m_PixelHistoryCopyCS->GetBufferPointer();
-    pipeDesc.CS.BytecodeLength = m_PixelHistoryCopyCS->GetBufferSize();
-    pipeDesc.pRootSignature = m_PixelHistoryCopySig;
-    hr = m_pDevice->CreateComputePipelineState(&pipeDesc, __uuidof(ID3D12PipelineState),
-                                               (void **)&m_PixelHistoryCopyPso);
+    if(m_PixelHistoryCopyCS)
+    {
+      D3D12_COMPUTE_PIPELINE_STATE_DESC pipeDesc = {};
+      pipeDesc.CS.pShaderBytecode = m_PixelHistoryCopyCS->GetBufferPointer();
+      pipeDesc.CS.BytecodeLength = m_PixelHistoryCopyCS->GetBufferSize();
+      pipeDesc.pRootSignature = m_PixelHistoryCopySig;
+      hr = m_pDevice->CreateComputePipelineState(&pipeDesc, __uuidof(ID3D12PipelineState),
+                                                 (void **)&m_PixelHistoryCopyPso);
+      if(FAILED(hr))
+      {
+        RDCERR("Failed to create PSO for pixel history HRESULT: %s", ToStr(hr).c_str());
+      }
+      m_pDevice->GetResourceManager()->SetInternalResource(m_PixelHistoryCopyPso);
+    }
+  }
+
+  {
+    bytebuf root = EncodeRootSig(m_pDevice->RootSigVersion(),
+                                 {
+                                     cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
+                                     srvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 1),
+                                     constParam(D3D12_SHADER_VISIBILITY_ALL, 0, 2, 1),
+                                     srvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
+                                     uavParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
+                                 });
+
+    hr = m_pDevice->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                        (void **)&m_EIPatchRootSig);
+
     if(FAILED(hr))
     {
-      RDCERR("Failed to create PSO for pixel history HRESULT: %s", ToStr(hr).c_str());
-      return;
+      RDCERR("Couldn't create execute indirect patching RootSig! HRESULT: %s", ToStr(hr).c_str());
     }
-    m_pDevice->GetResourceManager()->SetInternalResource(m_PixelHistoryCopyPso);
+  }
+
+  {
+    rdcstr mischlsl = GetEmbeddedResource(misc_hlsl);
+
+    ID3DBlob *eiPatchCS;
+
+    shaderCache->GetShaderBlob(mischlsl.c_str(), "RENDERDOC_ExecuteIndirectPatchCS",
+                               D3DCOMPILE_WARNINGS_ARE_ERRORS, {}, "cs_5_0", &eiPatchCS);
+
+    RDCASSERT(eiPatchCS);
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC compPipeDesc = {};
+    compPipeDesc.pRootSignature = m_EIPatchRootSig;
+    compPipeDesc.CS.BytecodeLength = eiPatchCS->GetBufferSize();
+    compPipeDesc.CS.pShaderBytecode = eiPatchCS->GetBufferPointer();
+
+    hr = m_pDevice->CreateComputePipelineState(&compPipeDesc, __uuidof(ID3D12PipelineState),
+                                               (void **)&m_EIPatchPso);
+
+    if(FAILED(hr))
+    {
+      RDCERR("Couldn't create m_MeshPickPipe! HRESULT: %s", ToStr(hr).c_str());
+    }
+
+    SAFE_RELEASE(eiPatchCS);
   }
 
   shaderCache->SetCaching(false);
@@ -442,10 +487,10 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   if(FAILED(hr))
   {
     RDCERR("Failed to create readback buffer, HRESULT: %s", ToStr(hr).c_str());
-    return;
   }
 
-  m_ReadbackBuffer->SetName(L"m_ReadbackBuffer");
+  if(m_ReadbackBuffer)
+    m_ReadbackBuffer->SetName(L"m_ReadbackBuffer");
 
   rm->SetInternalResource(m_ReadbackBuffer);
 
@@ -456,7 +501,6 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   if(FAILED(hr))
   {
     RDCERR("Failed to create readback command allocator, HRESULT: %s", ToStr(hr).c_str());
-    return;
   }
 
   rm->SetInternalResource(m_DebugAlloc);
@@ -468,17 +512,19 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
 
   ID3D12GraphicsCommandList *list = NULL;
 
-  hr = m_pDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_DebugAlloc, NULL,
-                                    __uuidof(ID3D12GraphicsCommandList), (void **)&list);
-  m_pDevice->InternalRef();
-
-  // safe to upcast - this is a wrapped object
-  m_DebugList = (ID3D12GraphicsCommandListX *)list;
-
-  if(FAILED(hr))
+  if(m_DebugAlloc)
   {
-    RDCERR("Failed to create readback command list, HRESULT: %s", ToStr(hr).c_str());
-    return;
+    hr = m_pDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_DebugAlloc, NULL,
+                                      __uuidof(ID3D12GraphicsCommandList), (void **)&list);
+    m_pDevice->InternalRef();
+
+    // safe to upcast - this is a wrapped object
+    m_DebugList = (ID3D12GraphicsCommandListX *)list;
+
+    if(FAILED(hr))
+    {
+      RDCERR("Failed to create readback command list, HRESULT: %s", ToStr(hr).c_str());
+    }
   }
 
   rm->SetInternalResource(m_DebugList);
@@ -509,18 +555,15 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
     m_pDevice->InternalRef();
     FillBuffer(m_DiscardConstantsUndefined, 0, pattern.data(), pattern.size());
 
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0),
-        constParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 1, 1),
-    });
+    bytebuf root = EncodeRootSig(m_pDevice->RootSigVersion(),
+                                 {
+                                     cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0),
+                                     constParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 1, 1),
+                                 });
 
-    RDCASSERT(root);
-
-    hr = m_pDevice->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                        __uuidof(ID3D12RootSignature), (void **)&m_DiscardRootSig);
+    hr = m_pDevice->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                        (void **)&m_DiscardRootSig);
     m_pDevice->InternalRef();
-
-    SAFE_RELEASE(root);
   }
 }
 
@@ -611,6 +654,12 @@ D3D12DebugManager::~D3D12DebugManager()
 
 bool D3D12DebugManager::CreateShaderDebugResources()
 {
+  // MathOp is 2, SampleGatherOp is 6
+  const uint64_t resultMaxElementSize = sizeof(Vec4f) * (2 + 6);
+  const uint32_t maxQueuedResults = ShaderDebugConstants::MAX_SHADER_DEBUG_QUEUED_OPS;
+  const uint64_t shaderDebugReadbackSize = resultMaxElementSize * maxQueuedResults;
+  RDCCOMPILE_ASSERT(shaderDebugReadbackSize < m_ReadbackSize, "Readback buffer is not big enough");
+
   rdcstr hlsl = GetEmbeddedResource(shaderdebug_hlsl);
 
   D3D12RootSignature rootSig;
@@ -662,19 +711,17 @@ bool D3D12DebugManager::CreateShaderDebugResources()
   sampParam.ranges.push_back(range);
   rootSig.Parameters.push_back(sampParam);
 
-  ID3DBlob *root = m_pDevice->GetShaderCache()->MakeRootSig(rootSig);
-  if(root == NULL)
+  bytebuf root = EncodeRootSig(m_pDevice->RootSigVersion(), rootSig);
+  if(root.empty())
   {
     RDCERR("Failed to create root signature for shader debugging");
     SAFE_RELEASE(csBlob);
     return false;
   }
 
-  HRESULT hr =
-      m_pDevice->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                     __uuidof(ID3D12RootSignature), (void **)&m_ShaderDebugRootSig);
+  HRESULT hr = m_pDevice->CreateRootSignature(
+      0, root.data(), root.size(), __uuidof(ID3D12RootSignature), (void **)&m_ShaderDebugRootSig);
   m_pDevice->InternalRef();
-  SAFE_RELEASE(root);
   if(FAILED(hr))
   {
     RDCERR("Failed to create root signature for shader debugging HRESULT: %s", ToStr(hr).c_str());
@@ -848,9 +895,46 @@ bool D3D12DebugManager::CreateShaderDebugResources()
       RDCERR("Failed to compile DXIL vertex shader for shader debugging");
       return false;
     }
+    // CheckFeatureSupport returns E_INVALIDARG if HighestShaderModel isn't known by the current runtime.
+    int smMajor = 6;
+    int smMinor = -1;
+    for(smMinor = D3D_HIGHEST_SHADER_MODEL & 0xF; smMinor >= 0; smMinor--)
+    {
+      if(!m_pDevice->GetOpts14().AdvancedTextureOpsSupported && smMinor >= 7)
+        continue;
+
+      D3D_SHADER_MODEL smModel = (D3D_SHADER_MODEL)(smMajor << 4 | smMinor);
+      D3D12_FEATURE_DATA_SHADER_MODEL smMaxSupport = {smModel};
+      if(m_pDevice->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &smMaxSupport,
+                                        sizeof(smMaxSupport)) == S_OK)
+      {
+        smMajor = smMaxSupport.HighestShaderModel >> 4;
+        smMinor = smMaxSupport.HighestShaderModel & 0xF;
+
+        // make sure we can compile this SM version
+        ID3DBlob *testBlob = NULL;
+        if(m_pDevice->GetShaderCache()->GetShaderBlob(
+               "float4 main() : SV_Target0 { return 0.0f.xxxx; }", "main", 0, {},
+               StringFormat::Fmt("ps_%d_%d", smMajor, smMinor).c_str(), &testBlob) != "")
+        {
+          SAFE_RELEASE(testBlob);
+          continue;
+        }
+        SAFE_RELEASE(testBlob);
+
+        break;
+      }
+    }
+    if(smMinor < 0)
+    {
+      RDCERR("Failed to find highest shader model 6.x supported by the current runtime");
+      return false;
+    }
+
     ID3DBlob *dxilPsBlob = NULL;
+    rdcstr psSM = StringFormat::Fmt("ps_%d_%d", smMajor, smMinor);
     if(m_pDevice->GetShaderCache()->GetShaderBlob(hlsl.c_str(), "RENDERDOC_DebugSamplePS",
-                                                  D3DCOMPILE_WARNINGS_ARE_ERRORS, {}, "ps_6_0",
+                                                  D3DCOMPILE_WARNINGS_ARE_ERRORS, {}, psSM.c_str(),
                                                   &dxilPsBlob) != "")
     {
       RDCASSERT(!dxilPsBlob);
@@ -1054,7 +1138,7 @@ ID3D12PipelineState *D3D12DebugManager::GetDXILTexSamplePso(const int8_t offsets
 
 ID3D12Resource *D3D12DebugManager::MakeCBuffer(UINT64 size)
 {
-  ID3D12Resource *ret;
+  ID3D12Resource *ret = NULL;
 
   D3D12_HEAP_PROPERTIES heapProps;
   heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -1092,10 +1176,13 @@ ID3D12Resource *D3D12DebugManager::MakeCBuffer(UINT64 size)
 
 void D3D12DebugManager::FillBuffer(ID3D12Resource *buf, size_t offset, const void *data, size_t size)
 {
+  if(!buf)
+    return;
+
   D3D12_RANGE range = {offset, offset + size};
   byte *ptr = NULL;
   HRESULT hr = buf->Map(0, &range, (void **)&ptr);
-  m_pDevice->CheckHRESULT(hr);
+  CHECK_HR(m_pDevice, hr);
 
   if(FAILED(hr))
   {
@@ -1179,6 +1266,11 @@ rdcpair<ID3D12Resource *, UINT64> D3D12DebugManager::PatchExecuteIndirect(
     UINT maxCount)
 {
   rdcarray<uint32_t> argOffsets;
+
+  if(!m_EIPatchBufferData || maxCount == 0)
+  {
+    return {argBuf, argBufOffset};
+  }
 
   WrappedID3D12CommandSignature *wrappedComSig = (WrappedID3D12CommandSignature *)comSig;
   uint32_t offset = 0;
@@ -1294,9 +1386,9 @@ rdcpair<ID3D12Resource *, UINT64> D3D12DebugManager::PatchExecuteIndirect(
   cmd->SetComputeRootSignature(m_EIPatchRootSig);
   cmd->SetComputeRootConstantBufferView(0, UploadConstants(argOffsets.data(), argOffsets.byteSize()));
   if(countBufAddr == 0)
-    cmd->SetComputeRootConstantBufferView(1, UploadConstants(&maxCount, sizeof(uint32_t)));
+    cmd->SetComputeRootShaderResourceView(1, UploadConstants(&maxCount, sizeof(uint32_t)));
   else
-    cmd->SetComputeRootConstantBufferView(1, countBufAddr);
+    cmd->SetComputeRootShaderResourceView(1, countBufAddr);
   cmd->SetComputeRoot32BitConstant(2, maxCount, 0);
   cmd->SetComputeRootShaderResourceView(3, m_EIPatchBufferData->GetGPUVirtualAddress());
   cmd->SetComputeRootUnorderedAccessView(4, ret.first->GetGPUVirtualAddress() + ret.second);
@@ -1374,8 +1466,15 @@ void D3D12DebugManager::FillWithDiscardPattern(ID3D12GraphicsCommandListX *cmd,
       FillBuffer(patternBuf, 0, pattern.data(), size);
     }
 
+    D3D12_RESOURCE_BARRIER b = {};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+
+    cmd->ResourceBarrier(1, &b);
+
     // fill the destination with a copy from the pattern buffer
     cmd->CopyBufferRegion(res, 0, patternBuf, 0, size);
+
+    cmd->ResourceBarrier(1, &b);
 
     return;
   }
@@ -1597,7 +1696,7 @@ void D3D12DebugManager::FillWithDiscardPattern(ID3D12GraphicsCommandListX *cmd,
     D3D12_RANGE range = {0, 0};
     byte *ptr = NULL;
     HRESULT hr = buf->Map(0, &range, (void **)&ptr);
-    m_pDevice->CheckHRESULT(hr);
+    CHECK_HR(m_pDevice, hr);
 
     if(ptr)
     {
@@ -1658,15 +1757,26 @@ void D3D12DebugManager::FillWithDiscardPattern(ID3D12GraphicsCommandListX *cmd,
     b.Transition.pResource = res;
     b.Transition.Subresource = sub;
 
-    // TODO can we do better than an educated guess as to what the previous state was?
-    if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-    else if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    if(cmd->GetType() == D3D12_COMMAND_LIST_TYPE_COMPUTE)
+    {
+      b.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    }
     else
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+    {
+      // TODO can we do better than an educated guess as to what the previous state was?
+      if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+      else if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+      else
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+    }
 
     b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+
+    // Special case for D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS
+    if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS)
+      b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
 
     D3D12_TEXTURE_BARRIER tex = {};
     D3D12_BARRIER_GROUP group = {};
@@ -1682,6 +1792,10 @@ void D3D12DebugManager::FillWithDiscardPattern(ID3D12GraphicsCommandListX *cmd,
       tex.LayoutAfter = D3D12_BARRIER_LAYOUT_COPY_DEST;
       tex.AccessAfter = D3D12_BARRIER_ACCESS_COPY_DEST;
       tex.SyncAfter = D3D12_BARRIER_SYNC_COPY;
+
+      // Special case for D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS
+      if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS)
+        tex.LayoutAfter = D3D12_BARRIER_LAYOUT_COMMON;
 
       tex.Flags = D3D12_TEXTURE_BARRIER_FLAG_DISCARD;
       tex.Subresources.IndexOrFirstMipLevel = (UINT)sub;
@@ -1780,6 +1894,10 @@ void D3D12DebugManager::FillWithDiscardPattern(ID3D12GraphicsCommandListX *cmd,
         tex.LayoutAfter = D3D12_BARRIER_LAYOUT_COMMON;
       }
 
+      // Special case for D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS
+      if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS)
+        tex.LayoutBefore = D3D12_BARRIER_LAYOUT_COMMON;
+
       cmd->Barrier(1, &group);
     }
     else
@@ -1863,7 +1981,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE D3D12DebugManager::GetTempDescriptor(const D3D12Desc
   D3D12_CPU_DESCRIPTOR_HANDLE ret = {};
 
   ID3D12Resource *res =
-      m_pDevice->GetResourceManager()->GetCurrentAs<ID3D12Resource>(desc.GetResResourceId());
+      m_pDevice->GetResourceManager()->GetResAs<ID3D12Resource>(desc.GetResResourceId());
 
   if(desc.GetType() == D3D12DescriptorType::RTV)
   {
@@ -1909,7 +2027,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE D3D12DebugManager::GetTempDescriptor(const D3D12Desc
     ret = GetUAVClearHandle(TMP_UAV);
 
     ID3D12Resource *counterRes =
-        m_pDevice->GetResourceManager()->GetCurrentAs<ID3D12Resource>(desc.GetCounterResourceId());
+        m_pDevice->GetResourceManager()->GetResAs<ID3D12Resource>(desc.GetCounterResourceId());
 
     D3D12_UNORDERED_ACCESS_VIEW_DESC unpacked = desc.GetUAV();
 
@@ -1979,63 +2097,9 @@ D3D12_CPU_DESCRIPTOR_HANDLE D3D12DebugManager::GetUAVClearHandle(CBVUAVSRVSlot s
   return ret;
 }
 
-void D3D12DebugManager::PrepareExecuteIndirectPatching(const GPUAddressRangeTracker &origAddresses)
+void D3D12DebugManager::PrepareExecuteIndirectPatching(GPUAddressRangeTracker &origAddresses)
 {
-  D3D12ShaderCache *shaderCache = m_pDevice->GetShaderCache();
-
-  shaderCache->SetCaching(true);
-
   HRESULT hr = S_OK;
-
-  {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
-        cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 1),
-        constParam(D3D12_SHADER_VISIBILITY_ALL, 0, 2, 1),
-        srvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
-        uavParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
-    });
-
-    RDCASSERT(root);
-
-    hr = m_pDevice->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                        __uuidof(ID3D12RootSignature), (void **)&m_EIPatchRootSig);
-
-    if(FAILED(hr))
-    {
-      RDCERR("Couldn't create execute indirect patching RootSig! HRESULT: %s", ToStr(hr).c_str());
-    }
-
-    SAFE_RELEASE(root);
-  }
-
-  {
-    rdcstr mischlsl = GetEmbeddedResource(misc_hlsl);
-
-    ID3DBlob *eiPatchCS;
-
-    shaderCache->GetShaderBlob(mischlsl.c_str(), "RENDERDOC_ExecuteIndirectPatchCS",
-                               D3DCOMPILE_WARNINGS_ARE_ERRORS, {}, "cs_5_0", &eiPatchCS);
-
-    RDCASSERT(eiPatchCS);
-
-    D3D12_COMPUTE_PIPELINE_STATE_DESC compPipeDesc = {};
-    compPipeDesc.pRootSignature = m_EIPatchRootSig;
-    compPipeDesc.CS.BytecodeLength = eiPatchCS->GetBufferSize();
-    compPipeDesc.CS.pShaderBytecode = eiPatchCS->GetBufferPointer();
-
-    hr = m_pDevice->CreateComputePipelineState(&compPipeDesc, __uuidof(ID3D12PipelineState),
-                                               (void **)&m_EIPatchPso);
-
-    if(FAILED(hr))
-    {
-      RDCERR("Couldn't create m_MeshPickPipe! HRESULT: %s", ToStr(hr).c_str());
-    }
-
-    SAFE_RELEASE(eiPatchCS);
-  }
-
-  shaderCache->SetCaching(false);
 
   struct buffermapping
   {
@@ -2046,13 +2110,13 @@ void D3D12DebugManager::PrepareExecuteIndirectPatching(const GPUAddressRangeTrac
   };
   rdcarray<buffermapping> buffers;
 
-  for(const GPUAddressRange &addr : origAddresses.addresses)
+  for(const GPUAddressRange &addr : origAddresses.GetAddresses())
   {
     buffermapping b = {};
     b.origBase = addr.start;
     b.origEnd = addr.realEnd;
     b.newBase =
-        m_pDevice->GetResourceManager()->GetLiveAs<ID3D12Resource>(addr.id)->GetGPUVirtualAddress();
+        m_pDevice->GetResourceManager()->GetResAs<ID3D12Resource>(addr.id)->GetGPUVirtualAddress();
     buffers.push_back(b);
   }
 
@@ -2094,13 +2158,15 @@ void D3D12DebugManager::PrepareExecuteIndirectPatching(const GPUAddressRangeTrac
         &heapProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, NULL,
         __uuidof(ID3D12Resource), (void **)&m_EIPatchScratchBuffer);
 
-    m_EIPatchScratchBuffer->SetName(L"m_EIPatchScratchBuffer");
-
     if(FAILED(hr))
     {
       RDCERR("Failed to create scratch buffer, HRESULT: %s", ToStr(hr).c_str());
       return;
     }
+
+    m_pDevice->RemoveReplayResource(GetResID(m_EIPatchScratchBuffer));
+
+    m_EIPatchScratchBuffer->SetName(L"m_EIPatchScratchBuffer");
   }
 }
 
@@ -2110,7 +2176,7 @@ void D3D12DebugManager::GetBufferData(ID3D12Resource *buffer, uint64_t offset, u
   if(buffer == NULL)
     return;
 
-  m_pDevice->GPUSyncAllQueues();
+  m_pDevice->ReplayWorkWaitForIdle();
 
   D3D12_RESOURCE_DESC desc = buffer->GetDesc();
   D3D12_HEAP_PROPERTIES heapProps = {};
@@ -2148,6 +2214,10 @@ void D3D12DebugManager::GetBufferData(ID3D12Resource *buffer, uint64_t offset, u
 
   ret.resize((size_t)length);
 
+  WrappedID3D12Resource *wrapped = (WrappedID3D12Resource *)buffer;
+  if(wrapped->IsAccelerationStructureResource())
+    return;
+
   // directly CPU mappable (and possibly invalid to transition and copy from), so just memcpy
   if(heapProps.Type == D3D12_HEAP_TYPE_UPLOAD || heapProps.Type == D3D12_HEAP_TYPE_READBACK)
   {
@@ -2155,7 +2225,7 @@ void D3D12DebugManager::GetBufferData(ID3D12Resource *buffer, uint64_t offset, u
 
     byte *data = NULL;
     HRESULT hr = buffer->Map(0, &range, (void **)&data);
-    m_pDevice->CheckHRESULT(hr);
+    CHECK_HR(m_pDevice, hr);
 
     if(FAILED(hr))
     {
@@ -2197,14 +2267,14 @@ void D3D12DebugManager::GetBufferData(ID3D12Resource *buffer, uint64_t offset, u
 
     ID3D12CommandList *l = m_DebugList;
     m_pDevice->GetQueue()->ExecuteCommandLists(1, &l);
-    m_pDevice->GPUSync();
+    m_pDevice->InternalQueueWaitForIdle();
     m_DebugAlloc->Reset();
 
     D3D12_RANGE range = {0, (size_t)chunkSize};
 
     void *data = NULL;
     HRESULT hr = m_ReadbackBuffer->Map(0, &range, &data);
-    m_pDevice->CheckHRESULT(hr);
+    CHECK_HR(m_pDevice, hr);
 
     if(FAILED(hr))
     {
@@ -2237,7 +2307,7 @@ void D3D12DebugManager::GetBufferData(ID3D12Resource *buffer, uint64_t offset, u
 
   ID3D12CommandList *l = m_DebugList;
   m_pDevice->GetQueue()->ExecuteCommandLists(1, &l);
-  m_pDevice->GPUSync();
+  m_pDevice->InternalQueueWaitForIdle();
   m_DebugAlloc->Reset();
 }
 
@@ -2284,16 +2354,13 @@ void D3D12Replay::GeneralMisc::Init(WrappedID3D12Device *device, D3D12DebugManag
   }
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0),
-    });
+    bytebuf root =
+        EncodeRootSig(device->RootSigVersion(), {
+                                                    cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0),
+                                                });
 
-    RDCASSERT(root);
-
-    hr = device->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                     __uuidof(ID3D12RootSignature), (void **)&CheckerboardRootSig);
-
-    SAFE_RELEASE(root);
+    hr = device->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                     (void **)&CheckerboardRootSig);
   }
 
   {
@@ -2403,30 +2470,28 @@ void D3D12Replay::TextureRendering::Init(WrappedID3D12Device *device, D3D12Debug
   shaderCache->SetCaching(true);
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        // VS cbuffer
-        cbvParam(D3D12_SHADER_VISIBILITY_VERTEX, 0, 0),
-        // normal FS cbuffer
-        cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0),
-        // heatmap cbuffer
-        cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 1),
-        // display SRVs
-        tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 32),
-        // samplers
-        tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 0, 0, 2),
-    });
+    bytebuf root = EncodeRootSig(
+        device->RootSigVersion(),
+        {
+            // VS cbuffer
+            cbvParam(D3D12_SHADER_VISIBILITY_VERTEX, 0, 0),
+            // normal FS cbuffer
+            cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 0),
+            // heatmap cbuffer
+            cbvParam(D3D12_SHADER_VISIBILITY_PIXEL, 0, 1),
+            // display SRVs
+            tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 32),
+            // samplers
+            tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 0, 0, 2),
+        });
 
-    RDCASSERT(root);
-
-    hr = device->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                     __uuidof(ID3D12RootSignature), (void **)&RootSig);
+    hr = device->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                     (void **)&RootSig);
 
     if(FAILED(hr))
     {
       RDCERR("Couldn't create tex display RootSig! HRESULT: %s", ToStr(hr).c_str());
     }
-
-    SAFE_RELEASE(root);
   }
 
   {
@@ -2635,17 +2700,15 @@ void D3D12Replay::OverlayRendering::Init(WrappedID3D12Device *device, D3D12Debug
   }
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        // quad overdraw results SRV
-        tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 1),
-    });
+    bytebuf root = EncodeRootSig(
+        device->RootSigVersion(),
+        {
+            // quad overdraw results SRV
+            tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 1),
+        });
 
-    RDCASSERT(root);
-
-    hr = device->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                     __uuidof(ID3D12RootSignature), (void **)&QuadResolveRootSig);
-
-    SAFE_RELEASE(root);
+    hr = device->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                     (void **)&QuadResolveRootSig);
   }
 
   {
@@ -2711,16 +2774,15 @@ void D3D12Replay::OverlayRendering::Init(WrappedID3D12Device *device, D3D12Debug
   }
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        // depth copy SRV
-        tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 1),
-    });
+    bytebuf root = EncodeRootSig(
+        device->RootSigVersion(),
+        {
+            // depth copy SRV
+            tableParam(D3D12_SHADER_VISIBILITY_PIXEL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 1),
+        });
 
-    RDCASSERT(root);
-    hr = device->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                     __uuidof(ID3D12RootSignature),
+    hr = device->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
                                      (void **)&DepthCopyResolveRootSig);
-    SAFE_RELEASE(root);
   }
 
   {
@@ -2921,18 +2983,16 @@ void D3D12Replay::VertexPicking::Init(WrappedID3D12Device *device, D3D12DebugMan
   VBSize = 0;
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
-        tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 2),
-        tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 0, 0, 1),
-    });
+    bytebuf root = EncodeRootSig(
+        device->RootSigVersion(),
+        {
+            cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
+            tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 2),
+            tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 0, 0, 1),
+        });
 
-    RDCASSERT(root);
-
-    hr = device->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                     __uuidof(ID3D12RootSignature), (void **)&RootSig);
-
-    SAFE_RELEASE(root);
+    hr = device->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                     (void **)&RootSig);
   }
 
   {
@@ -3160,22 +3220,20 @@ void D3D12Replay::HistogramMinMax::Init(WrappedID3D12Device *device, D3D12DebugM
   shaderCache->SetCaching(true);
 
   {
-    ID3DBlob *root = shaderCache->MakeRootSig({
-        cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
-        // texture SRVs
-        tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 32),
-        // samplers
-        tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 0, 0, 2),
-        // UAVs
-        tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 0, 0, 3),
-    });
+    bytebuf root = EncodeRootSig(
+        device->RootSigVersion(),
+        {
+            cbvParam(D3D12_SHADER_VISIBILITY_ALL, 0, 0),
+            // texture SRVs
+            tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 0, 0, 32),
+            // samplers
+            tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 0, 0, 2),
+            // UAVs
+            tableParam(D3D12_SHADER_VISIBILITY_ALL, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 0, 0, 3),
+        });
 
-    RDCASSERT(root);
-
-    hr = device->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
-                                     __uuidof(ID3D12RootSignature), (void **)&HistogramRootSig);
-
-    SAFE_RELEASE(root);
+    hr = device->CreateRootSignature(0, root.data(), root.size(), __uuidof(ID3D12RootSignature),
+                                     (void **)&HistogramRootSig);
   }
 
   {
@@ -3406,7 +3464,8 @@ uint32_t GetFreeRegSpace(const D3D12RootSignature &sig, const uint32_t registerS
   for(size_t i = 0; i < numParams; i++)
   {
     if(sig.Parameters[i].ShaderVisibility == visibility ||
-       sig.Parameters[i].ShaderVisibility == D3D12_SHADER_VISIBILITY_ALL)
+       sig.Parameters[i].ShaderVisibility == D3D12_SHADER_VISIBILITY_ALL ||
+       visibility == D3D12_SHADER_VISIBILITY_ALL)
     {
       D3D12_ROOT_PARAMETER_TYPE rootType = sig.Parameters[i].ParameterType;
       if(rootType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
@@ -3457,12 +3516,14 @@ uint32_t GetFreeRegSpace(const D3D12RootSignature &sig, const uint32_t registerS
 }
 
 void AddDebugDescriptorsToRenderState(WrappedID3D12Device *pDevice, D3D12RenderState &rs,
-                                      const rdcarray<PortableHandle> &handles,
+                                      bool compute, const rdcarray<PortableHandle> &handles,
                                       D3D12_DESCRIPTOR_HEAP_TYPE heapType, uint32_t sigElem,
                                       std::set<ResourceId> &copiedHeaps)
 {
-  if(rs.graphics.sigelems.size() <= sigElem)
-    rs.graphics.sigelems.resize(sigElem + 1);
+  D3D12RenderState::RootSignature &sig = compute ? rs.compute : rs.graphics;
+
+  if(sig.sigelems.size() <= sigElem)
+    sig.sigelems.resize(sigElem + 1);
 
   PortableHandle newHandle = handles[0];
 
@@ -3476,7 +3537,7 @@ void AddDebugDescriptorsToRenderState(WrappedID3D12Device *pDevice, D3D12RenderS
   for(size_t i = 0; i < rs.heaps.size(); i++)
   {
     WrappedID3D12DescriptorHeap *h =
-        pDevice->GetResourceManager()->GetCurrentAs<WrappedID3D12DescriptorHeap>(rs.heaps[i]);
+        pDevice->GetResourceManager()->GetResAs<WrappedID3D12DescriptorHeap>(rs.heaps[i]);
     if(h->GetDesc().Type == heapType)
     {
       // use the last descriptors
@@ -3490,8 +3551,7 @@ void AddDebugDescriptorsToRenderState(WrappedID3D12Device *pDevice, D3D12RenderS
         for(size_t j = 0; j < handles.size(); ++j)
         {
           WrappedID3D12DescriptorHeap *h2 =
-              pDevice->GetResourceManager()->GetCurrentAs<WrappedID3D12DescriptorHeap>(
-                  handles[j].heap);
+              pDevice->GetResourceManager()->GetResAs<WrappedID3D12DescriptorHeap>(handles[j].heap);
           D3D12_CPU_DESCRIPTOR_HANDLE src = h2->GetCPUDescriptorHandleForHeapStart();
           src.ptr += handles[j].index * sizeof(D3D12Descriptor);
 
@@ -3512,6 +3572,23 @@ void AddDebugDescriptorsToRenderState(WrappedID3D12Device *pDevice, D3D12RenderS
   if(newHandle.heap == handles[0].heap)
     rs.heaps.push_back(handles[0].heap);
 
-  rs.graphics.sigelems[sigElem] =
+  sig.sigelems[sigElem] =
       D3D12RenderState::SignatureElement(eRootTable, newHandle.heap, newHandle.index);
+}
+
+// Does a command signature modify root arguments i.e. setting root constants, updating bindings.
+bool DoesCommandSignatureModifyRootArgs(ID3D12CommandSignature *comSig)
+{
+  WrappedID3D12CommandSignature *rdComSig = (WrappedID3D12CommandSignature *)comSig;
+  for(D3D12_INDIRECT_ARGUMENT_DESC &arg : rdComSig->sig.arguments)
+  {
+    D3D12_INDIRECT_ARGUMENT_TYPE argType = arg.Type;
+    if(argType == D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT ||
+       argType == D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT_BUFFER_VIEW ||
+       argType == D3D12_INDIRECT_ARGUMENT_TYPE_SHADER_RESOURCE_VIEW ||
+       argType == D3D12_INDIRECT_ARGUMENT_TYPE_UNORDERED_ACCESS_VIEW ||
+       argType == D3D12_INDIRECT_ARGUMENT_TYPE_INCREMENTING_CONSTANT)
+      return true;
+  }
+  return false;
 }

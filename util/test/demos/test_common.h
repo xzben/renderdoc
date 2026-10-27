@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -78,14 +78,17 @@ enum class ShaderStage
   tesseval,
   geom,
   frag,
-  comp
+  comp,
+  mesh,
+  task,
 };
 
-bool InternalSpvCompiler();
 bool SpvCompilationSupported();
-std::vector<uint32_t> CompileShaderToSpv(const std::string &source_text, SPIRVTarget target,
-                                         ShaderLang lang, ShaderStage stage, const char *entry_point,
-                                         const std::map<std::string, std::string> &macros = {});
+std::vector<uint32_t> CompileShaderToSpv(const char *demo_name, const std::string &source_text,
+                                         SPIRVTarget target, ShaderLang lang, ShaderStage stage,
+                                         const char *entry_point,
+                                         const std::map<std::string, std::string> &macros = {},
+                                         bool debug_info = true);
 
 struct Vec2f
 {
@@ -203,7 +206,7 @@ struct GraphicsTest
   virtual GraphicsWindow *MakeWindow(int width, int height, const char *title) { return NULL; }
   virtual int main() { return 9; }
   virtual void Prepare(int argc, char **argv);
-  virtual void SetName(const char *name) { screenTitle = name; }
+  virtual void SetName(const char *name) { demoName = screenTitle = name; }
   virtual bool Init();
   virtual void Shutdown();
 
@@ -215,11 +218,14 @@ struct GraphicsTest
 
   int curFrame = -1;
 
+  const char *demoName = "Unknown_Test";
   const char *screenTitle = "RenderDoc test program";
 
   bool headless = false;
 
-  RENDERDOC_API_1_0_0 *rdoc = NULL;
+  RENDERDOC_API_1_7_0 *rdoc = NULL;
+
+  std::string tmpPath;
 
   // shared parameters
   static int maxFrameCount;
@@ -333,7 +339,9 @@ std::string strlower(const std::string &str);
 std::string strupper(const std::string &str);
 std::string trim(const std::string &str);
 
+void SetDebugLogEnabled(bool enabled);
 void DebugPrint(const char *fmt, ...);
+void OutputPrint(const char *fmt, ...);
 
 #define TEST_ASSERT(cond, fmt, ...)                                                                 \
   do                                                                                                \
@@ -376,6 +384,44 @@ void DebugPrint(const char *fmt, ...);
     exit(0);                                                                         \
   } while(0)
 
+namespace PixelHistory
+{
+void init();
+
+struct draw
+{
+  uint32_t first;
+  uint32_t count;
+};
+
+extern std::vector<DefaultA2V> vb;
+
+extern draw DepthWrite;
+extern draw UnboundPS;
+extern draw StencilWrite;
+extern draw Background;
+extern draw CullFront;
+extern draw DepthBoundsPrep;
+extern draw DepthBoundsClip;
+extern draw Draws300;
+extern draw Instances300;
+extern draw MainTest;
+extern draw ScissorFail;
+extern draw ScissorPass;
+extern draw StencilRef;
+extern draw StencilMask;
+extern draw DepthTest;
+extern draw SampleColour;
+extern draw DepthEqualSetup;
+extern draw DepthEqualFail;
+extern draw DepthEqualPass16;
+extern draw DepthEqualPass24;
+extern draw DepthEqualPass32;
+extern draw ColourMask;
+extern draw OverflowingDraw;
+extern draw PerFragDiscard;
+};
+
 namespace TextureZoo
 {
 enum class DataType
@@ -407,6 +453,7 @@ enum class TextureType
   BC5,
   BC6,
   BC7,
+  A8,
 };
 
 static const uint32_t texWidth = 8;

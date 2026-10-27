@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021-2024 Baldur Karlsson
+ * Copyright (c) 2021-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,7 +33,8 @@
 class DummyDriver : public IReplayDriver
 {
 public:
-  DummyDriver(IReplayDriver *original, const rdcarray<ShaderReflection *> &shaders, SDFile *sdfile);
+  DummyDriver(IReplayDriver *original, const rdcarray<const ShaderReflection *> &shaders,
+              SDFile *sdfile, const rdcarray<SDObject *> &annotations);
 
   void Shutdown();
 
@@ -81,8 +82,6 @@ public:
   void InitPostVSBuffers(uint32_t eventId);
   void InitPostVSBuffers(const rdcarray<uint32_t> &passEvents);
 
-  ResourceId GetLiveID(ResourceId id);
-
   MeshFormat GetPostVSBuffers(uint32_t eventId, uint32_t instID, uint32_t viewID,
                               MeshDataStage stage);
 
@@ -97,6 +96,8 @@ public:
   void ReplaceResource(ResourceId from, ResourceId to);
   void RemoveReplacement(ResourceId id);
   void FreeTargetResource(ResourceId id);
+  void ClearReplayCache();
+  void ReloadShaderDebugInformation();
 
   rdcarray<GPUCounter> EnumerateCounters();
   CounterDescription DescribeCounter(GPUCounter counterID);
@@ -114,6 +115,8 @@ public:
                                const DebugPixelInputs &inputs);
   ShaderDebugTrace *DebugThread(uint32_t eventId, const rdcfixedarray<uint32_t, 3> &groupid,
                                 const rdcfixedarray<uint32_t, 3> &threadid);
+  ShaderDebugTrace *DebugMeshThread(uint32_t eventId, const rdcfixedarray<uint32_t, 3> &groupid,
+                                    const rdcfixedarray<uint32_t, 3> &threadid);
   rdcarray<ShaderDebugState> ContinueDebug(ShaderDebugger *debugger);
   void FreeDebugger(ShaderDebugger *debugger);
 
@@ -143,7 +146,6 @@ public:
   uint64_t MakeOutputWindow(WindowingData window, bool depth);
   void DestroyOutputWindow(uint64_t id);
   bool CheckResizeOutputWindow(uint64_t id);
-  void SetOutputWindowDimensions(uint64_t id, int32_t w, int32_t h);
   void GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h);
   void GetOutputWindowData(uint64_t id, bytebuf &retData);
   void ClearOutputWindowColor(uint64_t id, FloatVector col);
@@ -190,7 +192,8 @@ public:
 private:
   virtual ~DummyDriver();
 
-  rdcarray<ShaderReflection *> m_Shaders;
+  rdcarray<const ShaderReflection *> m_Shaders;
+  rdcarray<SDObject *> m_Annotations;
   SDFile *m_SDFile;
 
   APIProperties m_Props;

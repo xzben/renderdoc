@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -44,6 +44,7 @@ class QTableWidgetItem;
 class QKeyEvent;
 class QMouseEvent;
 class QComboBox;
+class QTextEdit;
 
 // from Scintilla
 typedef intptr_t sptr_t;
@@ -99,6 +100,19 @@ struct VariableTag
 
   DebugVariableType debugVarType = DebugVariableType::Undefined;
   rdcstr absoluteRefPath;
+};
+
+struct ResourceReference
+{
+  ResourceReference() {}
+  ResourceReference(ShaderBindIndex bp) : bind(bp), directAccess(false) {}
+  ResourceReference(ShaderDirectAccess acc) : access(acc), directAccess(true) {}
+  union
+  {
+    ShaderBindIndex bind;
+    ShaderDirectAccess access;
+  };
+  bool directAccess;
 };
 
 class ShaderViewer : public QFrame, public IShaderViewer, public ICaptureViewer
@@ -176,6 +190,7 @@ private slots:
   void on_intView_clicked();
   void on_floatView_clicked();
   void on_debugToggle_clicked();
+  void on_toggleLog_clicked();
 
   void on_resources_sortByStep_clicked();
   void on_resources_sortByResource_clicked();
@@ -183,19 +198,12 @@ private slots:
   void on_watch_itemChanged(RDTreeWidgetItem *item, int column);
 
   // manual slots
-  void readonly_keyPressed(QKeyEvent *event);
-  void editable_keyPressed(QKeyEvent *event);
   void debug_contextMenu(const QPoint &pos);
   void variables_contextMenu(const QPoint &pos);
   void accessedResources_contextMenu(const QPoint &pos);
   void disassembly_buttonReleased(QMouseEvent *event);
   void disassemble_typeChanged(int index);
   void watch_keyPress(QKeyEvent *event);
-  void performFind();
-  void performFindAll();
-  void resultsDoubleClick(int position, int line);
-  void performReplace();
-  void performReplaceAll();
 
   void snippet_constants();
   void snippet_samplers();
@@ -224,7 +232,8 @@ private:
 
   void PopulateCompileTools();
   void PopulateCompileToolParameters();
-  bool ProcessIncludeDirectives(QString &source, const rdcstrpairs &files);
+  bool ProcessIncludeDirectives(QString &source, const rdcstrpairs &files,
+                                rdcarray<rdcstr> &allIncluded, const rdcarray<rdcstr> &exclude = {});
 
   void updateWindowTitle();
   void gotoSourceDebugging();
@@ -285,23 +294,7 @@ private:
   ScintillaEdit *m_CurInstructionScintilla = NULL;
   QList<ScintillaEdit *> m_FileScintillas;
 
-  FindReplace *m_FindReplace;
-
-  struct FindState
-  {
-    // hash identifies when the search has changed
-    QString hash;
-
-    // the range identified when the search first occurred (for incremental find/replace)
-    sptr_t start = 0;
-    sptr_t end = 0;
-
-    // the current offset where to search from next time, relative to above range
-    sptr_t offset = 0;
-
-    // the last result
-    QPair<int, int> prevResult;
-  } m_FindState;
+  FindReplace *m_FindReplace = NULL;
 
   SaveCallback m_SaveCallback;
   RevertCallback m_RevertCallback;
@@ -333,14 +326,18 @@ private:
 
   rdcarray<UsedDescriptor> m_ReadOnlyResources;
   rdcarray<UsedDescriptor> m_ReadWriteResources;
+  rdcarray<UsedDescriptor> m_Samplers;
+  rdcarray<UsedDescriptor> m_Constants;
   QSet<QPair<int, uint32_t>> m_Breakpoints;
   bool m_TempBreakpoint = false;
 
-  QList<QPair<ScintillaEdit *, int>> m_FindAllResults;
+  std::map<ShaderDirectAccess, rdcstr> m_LogicalBindNames;
 
   static const int BOOKMARK_MAX_MENU_ENTRY_LENGTH = 40;    // max length of bookmark names in menu
   static const int BOOKMARK_MAX_MENU_ENTRY_COUNT = 30;     // max number of bookmarks listed in menu
   QMap<ScintillaEdit *, QList<sptr_t>> m_Bookmarks;
+
+  QTextEdit *debugInfoLog = NULL;
 
   static const int CURRENT_MARKER = 0;
   static const int BREAKPOINT_MARKER = 2;
@@ -350,9 +347,7 @@ private:
   static const int CURRENT_INDICATOR = 20;
   static const int FINISHED_INDICATOR = 21;
 
-  static const int INDICATOR_FINDRESULT = 0;
   static const int INDICATOR_REGHIGHLIGHT = 1;
-  static const int INDICATOR_FINDALLHIGHLIGHT = 2;
 
   QString targetName(const ShaderProcessingTool &disasm);
 
@@ -386,8 +381,8 @@ private:
   void updateDebugState();
   void markWatchStale(RDTreeWidgetItem *item);
   bool updateWatchVariable(RDTreeWidgetItem *watchItem, const RDTreeWidgetItem *varItem,
-                           const rdcstr &path, uint32_t swizzle, const ShaderVariable &var,
-                           QChar regcast);
+                           const rdcstr &path, uint32_t swizzle, const SourceVariableMapping &mapping,
+                           const ShaderVariable &var, QChar regcast);
   void updateWatchVariables();
 
   void updateAccessedResources();
@@ -404,10 +399,6 @@ private:
 
   const ShaderVariable *GetDebugVariable(const DebugVariableReference &r);
 
-  void ensureLineScrolled(ScintillaEdit *s, int i);
-
-  void find(bool down);
-
   void updateEditState();
 
   enum StepMode
@@ -423,7 +414,7 @@ private:
   void runTo(const rdcarray<uint32_t> &runToInstructions, bool forward, ShaderEvents condition);
   void runTo(uint32_t runToInstruction, bool forward, ShaderEvents condition = ShaderEvents::NoEvent);
 
-  void runToResourceAccess(bool forward, VarType type, const ShaderBindIndex &resource);
+  void runToResourceAccess(bool forward, VarType type, const ResourceReference &resRef);
 
   void applyBackwardsChange();
   void applyForwardsChange();
@@ -436,9 +427,11 @@ private:
 
   QString getRegNames(const RDTreeWidgetItem *item, uint32_t swizzle, uint32_t child = ~0U);
   const RDTreeWidgetItem *evaluateVar(const RDTreeWidgetItem *item, uint32_t swizzle,
-                                      ShaderVariable *var);
+                                      ShaderVariable *var, SourceVariableMapping *mapping);
   const RDTreeWidgetItem *getVarFromPath(const rdcstr &path, const RDTreeWidgetItem *root,
-                                         ShaderVariable *var, uint32_t *swizzle);
+                                         ShaderVariable *var, uint32_t *swizzle,
+                                         SourceVariableMapping *mapping);
   const RDTreeWidgetItem *getVarFromPath(const rdcstr &path, ShaderVariable *var = NULL,
-                                         uint32_t *swizzle = NULL);
+                                         uint32_t *swizzle = NULL,
+                                         SourceVariableMapping *mapping = NULL);
 };

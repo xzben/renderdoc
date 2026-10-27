@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -158,6 +158,7 @@ private:
   ID3D12GraphicsCommandList7 *m_pList7 = NULL;
   ID3D12GraphicsCommandList8 *m_pList8 = NULL;
   ID3D12GraphicsCommandList9 *m_pList9 = NULL;
+  ID3D12GraphicsCommandList10 *m_pList10 = NULL;
 
   RefCounter12<ID3D12GraphicsCommandList> m_RefCounter;
 
@@ -200,13 +201,14 @@ private:
   static rdcstr GetChunkName(uint32_t idx);
   D3D12ResourceManager *GetResourceManager() { return m_pDevice->GetResourceManager(); }
 
-  rdcarray<std::function<bool()>> m_ImmediateASCallbacks;
-  rdcarray<std::function<bool()>> m_PendingASCallbacks;
+  rdcarray<std::function<bool()>> m_ImmediateCallbacks;
+  rdcarray<std::function<bool()>> m_PendingCallbacks;
+  rdcarray<std::function<void()>> m_UnusedCleanupCallbacks;
 public:
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D12GraphicsCommandList);
 
-  WrappedID3D12GraphicsCommandList(ID3D12GraphicsCommandList *real, WrappedID3D12Device *device,
-                                   CaptureState &state);
+  WrappedID3D12GraphicsCommandList(ResourceId id, ID3D12GraphicsCommandList *real,
+                                   WrappedID3D12Device *device, CaptureState &state);
   virtual ~WrappedID3D12GraphicsCommandList();
 
   ResourceId GetResourceID() { return m_ResourceID; }
@@ -220,15 +222,16 @@ public:
   ID3D12GraphicsCommandList7 *GetReal7() { return m_pList7; }
   ID3D12GraphicsCommandList8 *GetReal8() { return m_pList8; }
   ID3D12GraphicsCommandList9 *GetReal9() { return m_pList9; }
+  ID3D12GraphicsCommandList10 *GetReal10() { return m_pList10; }
   WrappedID3D12Device *GetWrappedDevice() { return m_pDevice; }
   D3D12ResourceRecord *GetResourceRecord() { return m_ListRecord; }
   D3D12ResourceRecord *GetCreationRecord() { return m_CreationRecord; }
 
-  void FinaliseExecuteIndirectEvents(BakedCmdListInfo &info, BakedCmdListInfo::ExecuteData &exec);
-  void SaveExecuteIndirectParameters(ID3D12GraphicsCommandListX *list,
-                                     ID3D12CommandSignature *pCommandSignature, UINT MaxCommandCount,
-                                     ID3D12Resource *pArgumentBuffer, UINT64 ArgumentBufferOffset,
-                                     ID3D12Resource *pCountBuffer, UINT64 CountBufferOffset);
+  void FinaliseExecuteIndirectEvents(BakedCmdListInfo &info, size_t nodeIdx);
+  D3D12ExecuteData SaveExecuteIndirectParameters(
+      ID3D12GraphicsCommandListX *list, ID3D12CommandSignature *pCommandSignature,
+      UINT MaxCommandCount, ID3D12Resource *pArgumentBuffer, UINT64 ArgumentBufferOffset,
+      ID3D12Resource *pCountBuffer, UINT64 CountBufferOffset);
   void ResetAndRecordExecuteIndirectStates(ID3D12GraphicsCommandListX *list, uint32_t baseEventID,
                                            uint32_t execCount,
                                            ID3D12CommandSignature *pCommandSignature,
@@ -250,32 +253,45 @@ public:
 
   bool ValidateRootGPUVA(D3D12_GPU_VIRTUAL_ADDRESS buffer);
 
-  void AddSubmissionASBuildCallback(bool waitForSubmission, const std::function<bool()> &postBldExec)
+  void AddSubmissionASBuildCallback(bool waitForSubmission, const std::function<bool()> &callback,
+                                    const std::function<void()> &cleanupCallback)
   {
-    if(waitForSubmission)
-      m_PendingASCallbacks.push_back(postBldExec);
-    else
-      m_ImmediateASCallbacks.push_back(postBldExec);
+    if(callback)
+    {
+      if(waitForSubmission)
+        m_PendingCallbacks.push_back(callback);
+      else
+        m_ImmediateCallbacks.push_back(callback);
+    }
+
+    if(cleanupCallback)
+      m_UnusedCleanupCallbacks.push_back(cleanupCallback);
   }
 
-  bool ExecuteImmediateASBuildCallbacks()
+  bool ExecuteImmediateCallbacks()
   {
     bool success = true;
 
-    for(std::function<bool()> &func : m_ImmediateASCallbacks)
+    for(std::function<bool()> &func : m_ImmediateCallbacks)
     {
       success &= func();
     }
 
-    m_ImmediateASCallbacks.clear();
+    m_ImmediateCallbacks.clear();
+    m_UnusedCleanupCallbacks.clear();
     return success;
   }
 
-  void TakeWaitingASBuildCallbacks(rdcarray<std::function<bool()>> &callbacks)
+  void TakeWaitingCallbacks(rdcarray<std::function<bool()>> &callbacks)
   {
-    callbacks.append(std::move(m_PendingASCallbacks));
-    m_PendingASCallbacks.clear();
+    callbacks.append(std::move(m_PendingCallbacks));
+    m_PendingCallbacks.clear();
   }
+
+  template <typename SerialiserType>
+  bool Serialise_SetCommandAnnotation(SerialiserType &ser, rdcstr key,
+                                      RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
+                                      RENDERDOC_AnnotationValue value);
 
   //////////////////////////////
   // implement IUnknown
@@ -588,13 +604,15 @@ public:
                                     const void *pExecutionParametersData,
                                 _In_ SIZE_T ExecutionParametersDataSizeInBytes);
 
-  bool PatchAccStructBlasAddress(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC *accStructInput,
-                                 ID3D12GraphicsCommandList4 *list,
+  bool PatchAccStructBlasAddress(D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC &accStructInput,
+                                 ID3D12GraphicsCommandList4 *unwrappedList,
                                  BakedCmdListInfo::PatchRaytracing *patchRaytracing);
 
   bool ProcessASBuildAfterSubmission(ResourceId asbWrappedResourceId,
                                      D3D12BufferOffset asbWrappedResourceBufferOffset,
-                                     UINT64 byteSize);
+                                     ResourceId dstASId,
+                                     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE type,
+                                     UINT64 byteSize, ASBuildData *buildData);
 
   IMPLEMENT_FUNCTION_SERIALISED(
       virtual void STDMETHODCALLTYPE, BuildRaytracingAccelerationStructure,
@@ -654,6 +672,14 @@ public:
 
   IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE, IASetIndexBufferStripCutValue,
                                 _In_ D3D12_INDEX_BUFFER_STRIP_CUT_VALUE IBStripCutValue);
+
+  //////////////////////////////
+  // implement ID3D12GraphicsCommandList10
+  IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE, SetProgram,
+                                _In_ const D3D12_SET_PROGRAM_DESC *pDesc);
+
+  IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE, DispatchGraph,
+                                _In_ const D3D12_DISPATCH_GRAPH_DESC *pDesc);
 };
 
 template <>
@@ -689,6 +715,8 @@ template <>
 ResourceId GetResID(ID3D12GraphicsCommandList8 *obj);
 template <>
 ResourceId GetResID(ID3D12GraphicsCommandList9 *obj);
+template <>
+ResourceId GetResID(ID3D12GraphicsCommandList10 *obj);
 
 ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList1 *obj);
 ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList2 *obj);
@@ -699,6 +727,7 @@ ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList6 *obj);
 ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList7 *obj);
 ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList8 *obj);
 ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList9 *obj);
+ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList10 *obj);
 
 ID3D12GraphicsCommandList1 *Unwrap1(ID3D12GraphicsCommandList1 *obj);
 ID3D12GraphicsCommandList2 *Unwrap2(ID3D12GraphicsCommandList2 *obj);
@@ -709,6 +738,7 @@ ID3D12GraphicsCommandList6 *Unwrap6(ID3D12GraphicsCommandList6 *obj);
 ID3D12GraphicsCommandList7 *Unwrap7(ID3D12GraphicsCommandList7 *obj);
 ID3D12GraphicsCommandList8 *Unwrap8(ID3D12GraphicsCommandList8 *obj);
 ID3D12GraphicsCommandList9 *Unwrap9(ID3D12GraphicsCommandList9 *obj);
+ID3D12GraphicsCommandList10 *Unwrap10(ID3D12GraphicsCommandList10 *obj);
 
 WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList1 *obj);
 WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList2 *obj);
@@ -719,3 +749,4 @@ WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList6 *obj);
 WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList7 *obj);
 WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList8 *obj);
 WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList9 *obj);
+WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList10 *obj);

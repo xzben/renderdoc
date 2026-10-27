@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,6 +25,7 @@
 #include "glsl_shaders.h"
 #include "common/common.h"
 #include "common/formatting.h"
+#include "common/threading.h"
 #include "driver/shaders/spirv/glslang_compile.h"
 #include "glslang/glslang/Public/ResourceLimits.h"
 #include "glslang/glslang/Public/ShaderLang.h"
@@ -37,11 +38,15 @@
   HEADER(gl_texsample)       \
   HEADER(gles_texsample)
 
+#define HLSL_HEADERS(HEADER) HEADER(quadswizzle)
+
 class EmbeddedIncluder : public glslang::TShader::Includer
 {
 #define DECL(header) rdcstr header = GetEmbeddedResource(CONCAT(glsl_, CONCAT(header, _h)));
   GLSL_HEADERS(DECL)
 #undef DECL
+
+  rdcstr quadswizzle = GetEmbeddedResource(hlsl_quadswizzle_hlsl);
 
 public:
   // For the "system" or <>-style includes; search the "system" paths.
@@ -53,6 +58,11 @@ public:
     return new IncludeResult(headerName, header.data(), header.length(), NULL);
     GLSL_HEADERS(GET)
 #undef GET
+
+    if(!strcmp(headerName, "quadswizzle.hlsl"))
+    {
+      return new IncludeResult("quadswizzle.hlsl", quadswizzle.data(), quadswizzle.length(), NULL);
+    }
 
     return NULL;
   }
@@ -136,6 +146,9 @@ rdcstr GenerateGLSLShader(const rdcstr &shader, ShaderType type, int version, co
   bool success;
 
   {
+    static Threading::CriticalSection *lock = new Threading::CriticalSection();
+    SCOPED_LOCK(*lock);
+
     std::string outstr;
     success =
         sh.preprocess(GetDefaultResources(), 100, ENoProfile, false, false, flags, &outstr, incl);
@@ -676,6 +689,8 @@ void main() {
 
       CHECK(refl.debugInfo.compileFlags.flags[1].name == "@spirver");
       CHECK(refl.debugInfo.compileFlags.flags[1].value == "spirv1.0");
+
+      CHECK(refl.debugInfo.sourceDebugInformation);
     }
   };
 

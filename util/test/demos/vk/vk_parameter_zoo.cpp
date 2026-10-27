@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -102,6 +102,28 @@ layout(binding=0) uniform myUniformBuffer
 void main()
 {
 	Color = ubos[7].data;
+}
+
+)EOSHADER";
+
+  const std::string inlineubopixel = R"EOSHADER(
+#version 450 core
+
+layout(location = 0, index = 0) out vec4 Color;
+
+layout(binding=0) uniform ubo_block1
+{
+  vec4 col;
+} ubo1;
+
+layout(binding=1) uniform ubo_block2
+{
+  vec4 col;
+} ubo2;
+
+void main()
+{
+	Color = ubo1.col + ubo2.col;
 }
 
 )EOSHADER";
@@ -263,12 +285,14 @@ void main()
   void Prepare(int argc, char **argv)
   {
     optDevExts.push_back(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
+    optDevExts.push_back(VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME);
     optDevExts.push_back(VK_EXT_TOOLING_INFO_EXTENSION_NAME);
     optDevExts.push_back(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
     optDevExts.push_back(VK_KHR_BIND_MEMORY_2_EXTENSION_NAME);
     optDevExts.push_back(VK_KHR_DESCRIPTOR_UPDATE_TEMPLATE_EXTENSION_NAME);
     optDevExts.push_back(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
-    optDevExts.push_back(VK_KHR_MAINTENANCE2_EXTENSION_NAME);
+    optDevExts.push_back(VK_KHR_MAINTENANCE_2_EXTENSION_NAME);
+    optDevExts.push_back(VK_KHR_MAINTENANCE_6_EXTENSION_NAME);
     optDevExts.push_back(VK_KHR_MULTIVIEW_EXTENSION_NAME);
     optDevExts.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
     optDevExts.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
@@ -276,6 +300,17 @@ void main()
     optDevExts.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
 
     VulkanGraphicsTest::Prepare(argc, argv);
+
+    static VkPhysicalDeviceMaintenance6Features maint6Feats = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES,
+    };
+
+    if(hasExt(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME))
+    {
+      maint6Feats.maintenance6 = VK_TRUE;
+      maint6Feats.pNext = (void *)devInfoNext;
+      devInfoNext = &maint6Feats;
+    }
 
     static VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR,
@@ -363,6 +398,17 @@ void main()
       dyn.pNext = (void *)devInfoNext;
       devInfoNext = &dyn;
     }
+
+    static VkPhysicalDeviceInlineUniformBlockFeaturesEXT inlineFeats = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES_EXT,
+    };
+
+    if(hasExt(VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME))
+    {
+      inlineFeats.inlineUniformBlock = VK_TRUE;
+      inlineFeats.pNext = (void *)devInfoNext;
+      devInfoNext = &inlineFeats;
+    }
   }
 
   int main()
@@ -444,6 +490,7 @@ void main()
     bool KHR_timeline_semaphore =
         std::find(devExts.begin(), devExts.end(), VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) !=
         devExts.end();
+    bool KHR_maintenance6 = hasExt(VK_KHR_MAINTENANCE_6_EXTENSION_NAME);
 
     if(physProperties.apiVersion >= VK_MAKE_VERSION(1, 2, 0))
     {
@@ -566,6 +613,27 @@ void main()
     VkPipelineLayout dynamicarraylayout =
         createPipelineLayout(vkh::PipelineLayoutCreateInfo({dynamicarraysetlayout}));
 
+    VkDescriptorSetLayout inlineubosetlayout = VK_NULL_HANDLE;
+
+    if(hasExt(VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME))
+    {
+      inlineubosetlayout = createDescriptorSetLayout(vkh::DescriptorSetLayoutCreateInfo({
+          {0, VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK, 16, VK_SHADER_STAGE_FRAGMENT_BIT},
+          {1, VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK, 16, VK_SHADER_STAGE_FRAGMENT_BIT},
+      }));
+    }
+    else
+    {
+      // dummy, won't be tested
+      inlineubosetlayout = createDescriptorSetLayout(vkh::DescriptorSetLayoutCreateInfo({
+          {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+          {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+      }));
+    }
+
+    VkPipelineLayout inlineubolayout =
+        createPipelineLayout(vkh::PipelineLayoutCreateInfo({inlineubosetlayout}));
+
     VkDescriptorSet descset2 = allocateDescriptorSet(setlayout2);
 
     VkDescriptorSetLayout asm_setlayout =
@@ -681,6 +749,15 @@ void main()
     };
 
     VkPipeline dynarraypipe = createGraphicsPipeline(pipeCreateInfo);
+
+    pipeCreateInfo.layout = inlineubolayout;
+
+    pipeCreateInfo.stages = {
+        CompileShaderModule(VKDefaultVertex, ShaderLang::glsl, ShaderStage::vert, "main"),
+        CompileShaderModule(inlineubopixel, ShaderLang::glsl, ShaderStage::frag, "main"),
+    };
+
+    VkPipeline inlineubopipe = createGraphicsPipeline(pipeCreateInfo);
 
     pipeCreateInfo.stages = {
         CompileShaderModule(VKDefaultVertex, ShaderLang::glsl, ShaderStage::vert, "main"),
@@ -1201,6 +1278,54 @@ void main()
       vkCreateDescriptorUpdateTemplateKHR(device, &createInfo, NULL, &refpushtempl);
     }
 
+    Vec4f inlinetemplData[2] = {
+        Vec4f(1.0f, 0.0f, 0.0f, 0.0f),
+        Vec4f(0.0f, 0.0f, 1.0f, 1.0f),
+    };
+
+    VkDescriptorUpdateTemplateKHR inlinetempl = VK_NULL_HANDLE;
+    VkDescriptorUpdateTemplateKHR immuttempl = VK_NULL_HANDLE;
+    VkDescriptorSet inlineuboset = allocateDescriptorSet(inlineubosetlayout);
+    VkDescriptorSet inlineuboset_templ = allocateDescriptorSet(inlineubosetlayout);
+    VkDescriptorSet inlineuboset_templ_dyn = allocateDescriptorSet(inlineubosetlayout);
+
+    if(hasExt(VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME))
+    {
+      vkh::updateDescriptorSets(
+          device, {
+                      vkh::WriteDescriptorSet(inlineuboset, 0,
+                                              vkh::WriteDescriptorSetInlineUniformBlockEXT(
+                                                  &inlinetemplData[0], sizeof(Vec4f)),
+                                              vkh::DescriptorBufferInfo(validBuffer)),
+                      vkh::WriteDescriptorSet(inlineuboset, 1,
+                                              vkh::WriteDescriptorSetInlineUniformBlockEXT(
+                                                  &inlinetemplData[1], sizeof(Vec4f)),
+                                              vkh::DescriptorBufferInfo(validBuffer)),
+                  });
+
+      if(KHR_descriptor_update_template)
+      {
+        std::vector<VkDescriptorUpdateTemplateEntryKHR> entries = {
+            {0, 0, sizeof(Vec4f), VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK, 0, sizeof(Vec4f) * 2},
+            {1, 0, sizeof(Vec4f), VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK, sizeof(Vec4f),
+             sizeof(Vec4f) * 2},
+        };
+
+        VkDescriptorUpdateTemplateCreateInfoKHR createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO_KHR;
+        createInfo.descriptorUpdateEntryCount = (uint32_t)entries.size();
+        createInfo.pDescriptorUpdateEntries = entries.data();
+        createInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET_KHR;
+        createInfo.descriptorSetLayout = setlayout;
+        createInfo.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+        vkCreateDescriptorUpdateTemplateKHR(device, &createInfo, NULL, &inlinetempl);
+
+        vkUpdateDescriptorSetWithTemplateKHR(device, inlineuboset_templ, inlinetempl,
+                                             &inlinetemplData);
+      }
+    }
+
     // check that stale views in descriptors don't cause problems if the handle is re-used
 
     VkImageView view1, view2;
@@ -1269,16 +1394,34 @@ void main()
 
     setName(mutableSampler, "mutableSampler");
 
+    VkDescriptorImageInfo immutUpdate =
+        vkh::DescriptorImageInfo(validImgView, VK_IMAGE_LAYOUT_GENERAL, mutableSampler);
+
     // try writing a different sampler to the immutable sampler, it should not be applied
     vkh::updateDescriptorSets(
-        device,
-        {
-            vkh::WriteDescriptorSet(
-                immutdescset, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                {
-                    vkh::DescriptorImageInfo(validImgView, VK_IMAGE_LAYOUT_GENERAL, mutableSampler),
-                }),
-        });
+        device, {
+                    vkh::WriteDescriptorSet(
+                        immutdescset, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, {immutUpdate}),
+                });
+
+    if(KHR_descriptor_update_template)
+    {
+      std::vector<VkDescriptorUpdateTemplateEntryKHR> entries = {
+          {0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 0, sizeof(VkDescriptorImageInfo)},
+      };
+
+      VkDescriptorUpdateTemplateCreateInfoKHR createInfo = {};
+      createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO_KHR;
+      createInfo.descriptorUpdateEntryCount = (uint32_t)entries.size();
+      createInfo.pDescriptorUpdateEntries = entries.data();
+      createInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET_KHR;
+      createInfo.descriptorSetLayout = immutsetlayout;
+      createInfo.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+      vkCreateDescriptorUpdateTemplateKHR(device, &createInfo, NULL, &immuttempl);
+
+      vkUpdateDescriptorSetWithTemplateKHR(device, immutdescset, immuttempl, &immutUpdate);
+    }
 
     refdatastruct resetrefdata = {};
     resetrefdata.sampler.sampler = resetrefdata.combined.sampler = validSampler;
@@ -1547,16 +1690,19 @@ void main()
         Submit(0, 4, {cmd});
       }
 
+      immutUpdate.sampler = invalidSampler;
+
       // try writing with an invalid sampler to the immutable, it should be ignored
       vkh::updateDescriptorSets(
-          device,
-          {
-              vkh::WriteDescriptorSet(
-                  immutdescset, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                  {
-                      vkh::DescriptorImageInfo(validImgView, VK_IMAGE_LAYOUT_GENERAL, invalidSampler),
-                  }),
-          });
+          device, {
+                      vkh::WriteDescriptorSet(
+                          immutdescset, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, {immutUpdate}),
+                  });
+
+      if(KHR_descriptor_update_template)
+      {
+        vkUpdateDescriptorSetWithTemplateKHR(device, immutdescset, immuttempl, &immutUpdate);
+      }
 
       // do a bunch of spinning on fences/semaphores that should not be serialised exhaustively
       VkResult status = VK_SUCCESS;
@@ -1618,6 +1764,10 @@ void main()
 
         if(KHR_descriptor_update_template)
           vkUpdateDescriptorSetWithTemplateKHR(device, reftempldescset, reftempl, &reftempldata);
+
+        if(hasExt(VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME) && KHR_descriptor_update_template)
+          vkUpdateDescriptorSetWithTemplateKHR(device, inlineuboset_templ_dyn, inlinetempl,
+                                               &inlinetemplData);
 
         VkCommandBuffer cmd = GetCommandBuffer();
 
@@ -1727,6 +1877,25 @@ void main()
           vkUpdateDescriptorSetWithTemplateKHR(device, reftempldescset, reftempl, &resetrefdata);
       }
 
+      // make some empty submits
+      setMarker(queue, "before_empty");
+
+      {
+        std::vector<VkCommandBuffer> cmds = {};
+        VkSubmitInfo submit[2] = {vkh::SubmitInfo(cmds), vkh::SubmitInfo(cmds)};
+        CHECK_VKR(vkQueueSubmit(queue, 2, submit, VK_NULL_HANDLE));
+
+        CHECK_VKR(vkQueueSubmit(queue, 0, (const VkSubmitInfo *)0x1234, VK_NULL_HANDLE));
+      }
+      if(hasExt(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME))
+      {
+        VkSubmitInfo2KHR submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO_2_KHR};
+        CHECK_VKR(vkQueueSubmit2KHR(queue, 1, &submit, VK_NULL_HANDLE));
+
+        CHECK_VKR(vkQueueSubmit2KHR(queue, 0, (const VkSubmitInfo2 *)0x4567, VK_NULL_HANDLE));
+      }
+      setMarker(queue, "after_empty");
+
       // check the rendering with our parameter tests is OK
       {
         vkDeviceWaitIdle(device);
@@ -1763,7 +1932,37 @@ void main()
         vkh::cmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, asm_layout, 1,
                                    {empty_descset}, {});
 
-        setMarker(cmd, "ASM Draw");
+        setMarker(cmd, "ASM Draw 1");
+        vkCmdDraw(cmd, 4, 1, 0, 0);
+
+        setMarker(cmd, "ASM Draw 2");
+        if(KHR_maintenance6)
+        {
+          VkBindDescriptorSetsInfoKHR descBindInfo = {
+              VK_STRUCTURE_TYPE_BIND_DESCRIPTOR_SETS_INFO_KHR,
+          };
+          // even if we don't specify fragment bit this still counts as covering all graphics stages
+          descBindInfo.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+          descBindInfo.descriptorSetCount = 1;
+          descBindInfo.dynamicOffsetCount = 0;
+          descBindInfo.firstSet = 0;
+          descBindInfo.pDescriptorSets = &asm_descset;
+          descBindInfo.layout = asm_layout;
+
+          VkPushConstantsInfoKHR pushConstInfo = {
+              VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO_KHR,
+          };
+
+          // even if we don't specify fragment bit this still counts as covering all graphics stages
+          pushConstInfo.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+          pushConstInfo.layout = asm_layout;
+          pushConstInfo.offset = 0;
+          pushConstInfo.size = 4;
+          pushConstInfo.pValues = &idx;
+
+          vkCmdBindDescriptorSets2KHR(cmd, &descBindInfo);
+          vkCmdPushConstants2KHR(cmd, &pushConstInfo);
+        }
         vkCmdDraw(cmd, 4, 1, 0, 0);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
@@ -1780,6 +1979,12 @@ void main()
           vkCmdPushDescriptorSetWithTemplateKHR(cmd, pushtempl, layout, 1, &pushdata);
         vkCmdDraw(cmd, 3, 1, 0, 0);
 
+        if(KHR_push_descriptor)
+          vkCmdPushDescriptorSetKHR(
+              cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1,
+              vkh::WriteDescriptorSet((VkDescriptorSet)0x1234, 20,
+                                      VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, validBufInfos));
+
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, immutpipe);
         vkh::cmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, immutlayout, 0,
                                    {immutdescset}, {});
@@ -1793,6 +1998,33 @@ void main()
 
         setMarker(cmd, "Dynamic Array Draw");
         vkCmdDraw(cmd, 3, 1, 0, 0);
+
+        if(hasExt(VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME))
+        {
+          vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, inlineubopipe);
+          vkh::cmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, inlineubolayout, 0,
+                                     {inlineuboset}, {});
+
+          setMarker(cmd, "Inline UBO Draw");
+          vkCmdDraw(cmd, 3, 1, 0, 0);
+
+          if(KHR_descriptor_update_template)
+          {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, inlineubopipe);
+            vkh::cmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, inlineubolayout, 0,
+                                       {inlineuboset_templ}, {});
+
+            setMarker(cmd, "Inline UBO + Templ Draw");
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, inlineubopipe);
+            vkh::cmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, inlineubolayout, 0,
+                                       {inlineuboset_templ_dyn}, {});
+
+            setMarker(cmd, "Inline UBO + Templ Dyn Draw");
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+          }
+        }
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe2);
         vkh::cmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout2, 0, {descset2}, {});
@@ -1825,6 +2057,8 @@ void main()
         Submit(2, 4, {cmd});
       }
 
+      // make some empty submits
+
       // finish with the backbuffer
       {
         vkDeviceWaitIdle(device);
@@ -1841,18 +2075,21 @@ void main()
       }
 
       // make some empty submits
-
       setMarker(queue, "before_empty");
 
       {
         std::vector<VkCommandBuffer> cmds = {};
-        VkSubmitInfo submit = vkh::SubmitInfo(cmds);
-        CHECK_VKR(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
+        VkSubmitInfo submit[2] = {vkh::SubmitInfo(cmds), vkh::SubmitInfo(cmds)};
+        CHECK_VKR(vkQueueSubmit(queue, 2, submit, VK_NULL_HANDLE));
+
+        CHECK_VKR(vkQueueSubmit(queue, 0, (const VkSubmitInfo *)0x1234, VK_NULL_HANDLE));
       }
       if(hasExt(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME))
       {
         VkSubmitInfo2KHR submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO_2_KHR};
         CHECK_VKR(vkQueueSubmit2KHR(queue, 1, &submit, VK_NULL_HANDLE));
+
+        CHECK_VKR(vkQueueSubmit2KHR(queue, 0, (const VkSubmitInfo2 *)0x4567, VK_NULL_HANDLE));
       }
       setMarker(queue, "after_empty");
 
@@ -1875,7 +2112,14 @@ void main()
     }
 
     if(KHR_descriptor_update_template)
+    {
       vkDestroyDescriptorUpdateTemplateKHR(device, reftempl, NULL);
+
+      vkDestroyDescriptorUpdateTemplateKHR(device, immuttempl, NULL);
+
+      if(hasExt(VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME))
+        vkDestroyDescriptorUpdateTemplateKHR(device, inlinetempl, NULL);
+    }
 
     return 0;
   }

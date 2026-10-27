@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -26,6 +26,7 @@
 #include "dxbc_debug.h"
 #include <algorithm>
 #include "common/formatting.h"
+#include "core/settings.h"
 #include "driver/dxgi/dxgi_common.h"
 #include "maths/formatpacking.h"
 #include "replay/replay_driver.h"
@@ -33,35 +34,10 @@
 #include "dxbc_container.h"
 
 using namespace DXBCBytecode;
+using namespace DXDebug;
 
 namespace DXBCDebug
 {
-static float round_ne(float x)
-{
-  if(!RDCISFINITE(x))
-    return x;
-
-  float rem = remainderf(x, 1.0f);
-
-  return x - rem;
-}
-
-static float flush_denorm(const float f)
-{
-  uint32_t x;
-  memcpy(&x, &f, sizeof(f));
-
-  // if any bit is set in the exponent, it's not denormal
-  if(x & 0x7F800000)
-    return f;
-
-  // keep only the sign bit
-  x &= 0x80000000;
-  float ret;
-  memcpy(&ret, &x, sizeof(ret));
-  return ret;
-}
-
 VarType OperationType(const DXBCBytecode::OpcodeType &op)
 {
   switch(op)
@@ -445,38 +421,6 @@ bool OperationFlushing(const DXBCBytecode::OpcodeType &op)
   return false;
 }
 
-bool OperandSwizzle(const Operation &op, const Operand &oper)
-{
-  switch(op.operation)
-  {
-    case OPCODE_SAMPLE:
-    case OPCODE_SAMPLE_L:
-    case OPCODE_SAMPLE_B:
-    case OPCODE_SAMPLE_D:
-    case OPCODE_SAMPLE_C:
-    case OPCODE_SAMPLE_C_LZ:
-    case OPCODE_LD:
-    case OPCODE_LD_MS:
-    case OPCODE_GATHER4:
-    case OPCODE_GATHER4_C:
-    case OPCODE_GATHER4_PO:
-    case OPCODE_GATHER4_PO_C:
-    case OPCODE_LOD:
-    {
-      // Per HLSL docs, "the swizzle on srcResource determines how to swizzle the 4-component result
-      // coming back from the texture sample/filter". That swizzle should not be handled when
-      // fetching the src operand
-      if(oper.type == TYPE_RESOURCE)
-        return false;
-    }
-    break;
-
-    default: break;
-  }
-
-  return true;
-}
-
 void DoubleSet(ShaderVariable &var, const double in[2])
 {
   var.value.f64v[0] = in[0];
@@ -776,54 +720,6 @@ ShaderVariable TypedUAVLoad(GlobalState::ViewFmt &fmt, const byte *d)
   }
 
   return result;
-}
-
-// "NaN has special handling. If one source operand is NaN, then the other source operand is
-// returned and the choice is made per-component. If both are NaN, any NaN representation is
-// returned."
-
-float dxbc_min(float a, float b)
-{
-  if(RDCISNAN(a))
-    return b;
-
-  if(RDCISNAN(b))
-    return a;
-
-  return a < b ? a : b;
-}
-
-double dxbc_min(double a, double b)
-{
-  if(RDCISNAN(a))
-    return b;
-
-  if(RDCISNAN(b))
-    return a;
-
-  return a < b ? a : b;
-}
-
-float dxbc_max(float a, float b)
-{
-  if(RDCISNAN(a))
-    return b;
-
-  if(RDCISNAN(b))
-    return a;
-
-  return a >= b ? a : b;
-}
-
-double dxbc_max(double a, double b)
-{
-  if(RDCISNAN(a))
-    return b;
-
-  if(RDCISNAN(b))
-    return a;
-
-  return a >= b ? a : b;
 }
 
 ShaderVariable sat(const ShaderVariable &v, const VarType type)
@@ -1316,6 +1212,122 @@ void ThreadState::SetDst(ShaderDebugState *state, const Operand &dstoper, const 
   }
 }
 
+void ThreadState::GetGroupsharedSrc(uint32_t gsmIndex, const uint32_t byteOffset,
+                                    const uint32_t countBytes, uint32_t *data) const
+{
+  const uint32_t gsmStride = global.groupshared[gsmIndex].bytestride;
+
+  const uint32_t regIndex = byteOffset / gsmStride;
+  const uint32_t component = AlignUp4(byteOffset % gsmStride) / 4;
+
+  uint32_t idx = program->GetRegisterIndex(TYPE_THREAD_GROUP_SHARED_MEMORY, gsmIndex);
+  if(idx < variables.size())
+  {
+    if(regIndex >= variables[idx].members.size())
+    {
+      RDCERR("Out of bounds GSM read from %u:%u", gsmIndex, regIndex);
+      data[0] = 0U;
+      data[1] = 0U;
+      data[2] = 0U;
+      data[3] = 0U;
+      return;
+    }
+    const ShaderVariable &var = variables[idx].members[regIndex];
+    const uint32_t countComps = countBytes / sizeof(uint32_t);
+    if(gsmStride <= 16)
+    {
+      RDCASSERT((component + countComps) <= 4, component, countBytes, countComps);
+      // if the stride is less than a float4, the groupshared storage is a simple array of N
+      // float4 registers so we can just assign
+      for(uint32_t i = 0; i < countComps; i++)
+        data[i] = var.value.u32v[component + i];
+    }
+    else
+    {
+      if(component + countComps > var.members.size())
+      {
+        RDCERR("Out of bounds GSM read from %u:%u:%u", gsmIndex, regIndex, component);
+        data[0] = 0U;
+        data[1] = 0U;
+        data[2] = 0U;
+        data[3] = 0U;
+        return;
+      }
+      // otherwise each entry in the groupshared storage array is a series of N component-sized registers
+      for(uint32_t i = 0; i < countComps; i++)
+        data[i] = var.members[component + i].value.u32v[0];
+    }
+  }
+  else
+  {
+    RDCERR("Couldn't find groupshared register %u", gsmIndex);
+    data[0] = 0U;
+    data[1] = 0U;
+    data[2] = 0U;
+    data[3] = 0U;
+  }
+}
+
+void ThreadState::SetGroupsharedDst(ShaderDebugState *state, uint32_t gsmIndex,
+                                    const uint32_t byteOffset, ShaderVariable &val)
+{
+  const uint32_t gsmStride = global.groupshared[gsmIndex].bytestride;
+
+  const uint32_t regIndex = byteOffset / gsmStride;
+  const uint32_t component = AlignUp4(byteOffset % gsmStride) / 4;
+
+  ShaderVariable *v = NULL;
+
+  uint32_t idx = program->GetRegisterIndex(TYPE_THREAD_GROUP_SHARED_MEMORY, gsmIndex);
+
+  if(idx < variables.size())
+    v = &variables[idx];
+
+  if(!v)
+  {
+    RDCERR("Couldn't find groupshared register %u", gsmIndex);
+  }
+  else
+  {
+    ShaderVariable *changeVar = v;
+
+    if(regIndex >= v->members.size())
+    {
+      RDCERR("Out of bounds GSM write to %u:%u", gsmIndex, regIndex);
+      return;
+    }
+
+    v = &v->members[regIndex];
+
+    ShaderVariableChange change = {*changeVar};
+
+    if(gsmStride <= 16)
+    {
+      // if the stride is less than a float4, the groupshared storage is a simple array of N
+      // float4 registers so we can just assign
+      for(uint32_t i = 0; i < val.columns; i++)
+        v->value.u32v[component + i] = val.value.u32v[i];
+    }
+    else
+    {
+      if(component + val.columns > v->members.size())
+      {
+        RDCERR("Out of bounds GSM write to %u:%u:%u", gsmIndex, regIndex, component);
+        return;
+      }
+      // otherwise each entry in the groupshared storage array is a series of N
+      // component-sized registers so unroll that here and assign to the first component
+      RDCASSERT(component + val.columns <= v->members.size(), component + val.columns,
+                v->members.size());
+      for(uint32_t i = 0; i < val.columns; i++)
+        v->members[component + i].value.u32v[0] = val.value.u32v[i];
+    }
+
+    change.after = *changeVar;
+    state->changes.push_back(change);
+  }
+}
+
 ShaderVariable ThreadState::DDX(bool fine, const rdcarray<ThreadState> &quad,
                                 const DXBCBytecode::Operand &oper,
                                 const DXBCBytecode::Operation &op) const
@@ -1602,6 +1614,7 @@ ShaderVariable ThreadState::GetSrc(const Operand &oper, const Operation &op, boo
           numthreads[0] = decl.groupSize[0];
           numthreads[1] = decl.groupSize[1];
           numthreads[2] = decl.groupSize[2];
+          break;
         }
       }
 
@@ -1672,26 +1685,26 @@ ShaderVariable ThreadState::GetSrc(const Operand &oper, const Operation &op, boo
     }
   }
 
-  if(OperandSwizzle(op, oper))
-  {
-    ShaderValue s = v.value;
-
-    // perform swizzling
-    v.value.u32v[0] = s.u32v[oper.comps[0] == 0xff ? 0 : oper.comps[0]];
-    v.value.u32v[1] = s.u32v[oper.comps[1] == 0xff ? 1 : oper.comps[1]];
-    v.value.u32v[2] = s.u32v[oper.comps[2] == 0xff ? 2 : oper.comps[2]];
-    v.value.u32v[3] = s.u32v[oper.comps[3] == 0xff ? 3 : oper.comps[3]];
-
-    if(oper.comps[0] != 0xff && oper.comps[1] == 0xff && oper.comps[2] == 0xff &&
-       oper.comps[3] == 0xff)
-      v.columns = 1;
-    else
-      v.columns = 4;
-  }
-  else
+  // Resource accces does not need to apply swizzle, abs, neg, flushing
+  if((oper.type == TYPE_RESOURCE) || (oper.type == TYPE_SAMPLER) ||
+     (oper.type == TYPE_UNORDERED_ACCESS_VIEW))
   {
     v.columns = 4;
+    return v;
   }
+
+  ShaderValue s = v.value;
+
+  // perform swizzling
+  v.value.u32v[0] = s.u32v[oper.comps[0] == 0xff ? 0 : oper.comps[0]];
+  v.value.u32v[1] = s.u32v[oper.comps[1] == 0xff ? 1 : oper.comps[1]];
+  v.value.u32v[2] = s.u32v[oper.comps[2] == 0xff ? 2 : oper.comps[2]];
+  v.value.u32v[3] = s.u32v[oper.comps[3] == 0xff ? 3 : oper.comps[3]];
+
+  if(oper.comps[0] != 0xff && oper.comps[1] == 0xff && oper.comps[2] == 0xff && oper.comps[3] == 0xff)
+    v.columns = 1;
+  else
+    v.columns = 4;
 
   if(oper.flags & Operand::FLAG_ABS)
   {
@@ -1712,23 +1725,56 @@ ShaderVariable ThreadState::GetSrc(const Operand &oper, const Operation &op, boo
   return v;
 }
 
-static uint32_t BitwiseReverseLSB16(uint32_t x)
+BindingSlot ThreadState::GetBindingSlotFromDeclaration(const Declaration &decl, const Operand &oper,
+                                                       const Operation &op) const
 {
-  // Reverse the bits in x, then discard the lower half
-  // https://graphics.stanford.edu/~seander/bithacks.html#ReverseParallel
-  x = ((x >> 1) & 0x55555555) | ((x & 0x55555555) << 1);
-  x = ((x >> 2) & 0x33333333) | ((x & 0x33333333) << 2);
-  x = ((x >> 4) & 0x0F0F0F0F) | ((x & 0x0F0F0F0F) << 4);
-  x = ((x >> 8) & 0x00FF00FF) | ((x & 0x00FF00FF) << 8);
-  return x << 16;
+  BindingSlot slot = GetBindingSlotForDeclaration(*program, decl);
+
+  // With SM5.1, resource arrays need to offset the shader register by the array index
+  if(program->IsShaderModel51())
+  {
+    ShaderVariable v = GetSrc(oper, op, false);
+    slot.shaderRegister = v.value.u32v[1];
+  }
+  return slot;
 }
 
-static uint32_t PopCount(uint32_t x)
+// A note on matching declarations: with SM 5.0 or lower, the declaration will have a single
+// operand index, which corresponds to the bound slot (e.g., t0 for a SRV). With SM 5.1, the
+// declaration has three operand indices: the logical binding slot, the start register, and
+// the end register. In addition, the register space is specified.
+
+// In order to match a declaration, we use the logical binding slot. This is identical for
+// all cases - with SM 5.1 the compiler translates each binding from shader register(s) &
+// register space into a unique identifier that is used to reference it in other instructions.
+// For example, an SRV specified with (t0, space2) could be given T1 as its identifier.
+
+// When matching declarations, use operand index 0 to match with the instruction operand.
+// When fetching data for a resource, with SM 5.0 or lower, use operand 0 as the shader
+// register, and decl.space (which will always be 0) for the register space. With SM 5.1,
+// use operand index 1 and 2 to get the shader register and use decl.space for the
+// register space (which can be any value, as specified in HLSL and the root signature).
+
+BindingSlot ThreadState::GetBindingSlotForIdentifier(const DXBCBytecode::Operand &oper,
+                                                     const DXBCBytecode::Operation &op) const
 {
-  // https://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
-  x = x - ((x >> 1) & 0x55555555);
-  x = (x & 0x33333333) + ((x >> 2) & 0x33333333);
-  return (((x + (x >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
+  const uint32_t resIndex = oper.indices[0].index & 0xffffffff;
+  BindingSlot slot;
+  RDCASSERT(oper.indices[0].absolute);
+  if(program->IsShaderModel51())
+  {
+    const Declaration *pDecl = program->FindDeclaration(oper.type, resIndex);
+    if(pDecl)
+      return GetBindingSlotFromDeclaration(*pDecl, oper, op);
+
+    RDCERR("Unable to find matching declaration for identifier %u", resIndex);
+  }
+  else
+  {
+    slot = BindingSlot(resIndex, 0);
+  }
+
+  return slot;
 }
 
 void FlattenSingleVariable(const rdcstr &cbufferName, uint32_t byteOffset, const rdcstr &basename,
@@ -1749,6 +1795,11 @@ void FlattenSingleVariable(const rdcstr &cbufferName, uint32_t byteOffset, const
     // source mapping.
     // We should not overlap into the next register as that's not allowed.
     memcpy(&outvars[outIdx].value.u32v[outComp], &v.value.u32v[0], sizeof(uint32_t) * v.columns);
+    uint32_t oldColumns = outvars[outIdx].columns;
+    uint32_t newColumns = (uint32_t)(outComp + v.columns);
+    uint32_t numColumns = RDCMAX(oldColumns, newColumns);
+    numColumns = RDCMIN(4U, numColumns);
+    outvars[outIdx].columns = (uint8_t)numColumns;
 
     SourceVariableMapping mapping;
     mapping.name = basename;
@@ -1774,14 +1825,14 @@ void FlattenSingleVariable(const rdcstr &cbufferName, uint32_t byteOffset, const
     {
       outvars[outIdx + reg].rows = 1;
       outvars[outIdx + reg].type = VarType::Unknown;
-      outvars[outIdx + reg].columns = v.columns;
+      outvars[outIdx + reg].columns = v.columns + (uint8_t)outComp;
       outvars[outIdx + reg].flags = v.flags;
     }
 
     if(v.RowMajor())
     {
       for(size_t ri = 0; ri < v.rows; ri++)
-        memcpy(&outvars[outIdx + ri].value.u32v[0], &v.value.u32v[ri * v.columns],
+        memcpy(&outvars[outIdx + ri].value.u32v[outComp], &v.value.u32v[ri * v.columns],
                sizeof(uint32_t) * v.columns);
     }
     else
@@ -2641,13 +2692,72 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       /////////////////////////////////////////////////////////////////////////////////////////////////////
       // Misc
 
+    case OPCODE_SYNC:
+    {
+      // fully refresh all groupshared registers from backing store
+      if(state)
+      {
+        for(uint32_t gsmIndex = 0; gsmIndex < global.groupshared.size(); gsmIndex++)
+        {
+          const uint32_t gsmStride = global.groupshared[gsmIndex].bytestride;
+
+          uint32_t idx = program->GetRegisterIndex(TYPE_THREAD_GROUP_SHARED_MEMORY, gsmIndex);
+
+          ShaderVariable *v = NULL;
+          if(idx < variables.size())
+            v = &variables[idx];
+
+          if(!v)
+          {
+            RDCERR("Couldn't find groupshared register %u", gsmIndex);
+            continue;
+          }
+
+          ShaderVariable *changeVar = v;
+
+          ShaderVariableChange change = {*changeVar};
+
+          byte *data = global.groupshared[gsmIndex].data.data();
+          RDCASSERT(global.groupshared[gsmIndex].count <= v->members.size(),
+                    global.groupshared[gsmIndex].count, v->members.size());
+          for(uint32_t i = 0; i < global.groupshared[gsmIndex].count; i++)
+          {
+            if(gsmStride <= 16)
+            {
+              // if the stride is less than a float4, the groupshared storage is a simple array of N
+              // float4 registers so we can just memcpy
+              memcpy(v->members[i].value.u32v.data(), data, gsmStride);
+              data += gsmStride;
+            }
+            else
+            {
+              // otherwise each entry in the groupshared storage array is a series of N
+              // component-sized registers so unroll that here and copy into each's first component
+              uint32_t countElems = gsmStride / sizeof(uint32_t);
+              RDCASSERT(countElems <= v->members[i].members.size(), countElems,
+                        v->members[i].members.size());
+              for(uint32_t c = 0; c < countElems; ++c)
+              {
+                memcpy(v->members[i].members[c].value.u32v.data(), data, sizeof(uint32_t));
+
+                data += sizeof(uint32_t);
+              }
+            }
+          }
+
+          RDCASSERTEQUAL(data, global.groupshared[gsmIndex].data.end());
+
+          change.after = *changeVar;
+          state->changes.push_back(change);
+        }
+      }
+      break;
+    }
     case OPCODE_NOP:
     case OPCODE_CUSTOMDATA:
     case OPCODE_OPAQUE_CUSTOMDATA:
     case OPCODE_SHADER_MESSAGE:
     case OPCODE_DCL_IMMEDIATE_CONSTANT_BUFFER: break;
-    case OPCODE_SYNC:    // might never need to implement this. Who knows!
-      break;
     case OPCODE_DMOV:
     case OPCODE_MOV: SetDst(state, op.operands[0], op, srcOpers[0]); break;
     case OPCODE_DMOVC:
@@ -2938,8 +3048,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
 
     case OPCODE_IMM_ATOMIC_ALLOC:
     {
-      BindingSlot slot = GetBindingSlotForIdentifier(*program, TYPE_UNORDERED_ACCESS_VIEW,
-                                                     srcOpers[0].value.u32v[0]);
+      BindingSlot slot = GetBindingSlotForIdentifier(op.operands[0], op);
       GlobalState::UAVIterator uav = global.uavs.find(slot);
       if(uav == global.uavs.end())
       {
@@ -2958,8 +3067,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
 
     case OPCODE_IMM_ATOMIC_CONSUME:
     {
-      BindingSlot slot = GetBindingSlotForIdentifier(*program, TYPE_UNORDERED_ACCESS_VIEW,
-                                                     srcOpers[0].value.u32v[0]);
+      BindingSlot slot = GetBindingSlotForIdentifier(op.operands[0], op);
       GlobalState::UAVIterator uav = global.uavs.find(slot);
       if(uav == global.uavs.end())
       {
@@ -3003,9 +3111,6 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
                DDY(op.operation == OPCODE_DERIV_RTY_FINE, prevWorkgroup, op.operands[1], op));
       break;
 
-    /////////////////////////////////////////////////////////////////////////////////////////////////////
-    // Buffer/Texture load and store
-
     // handle atomic operations all together
     case OPCODE_ATOMIC_IADD:
     case OPCODE_ATOMIC_IMAX:
@@ -3027,12 +3132,11 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
     case OPCODE_IMM_ATOMIC_UMAX:
     case OPCODE_IMM_ATOMIC_UMIN:
     {
+      Operand resourceOperand;
       Operand beforeResult;
-      uint32_t resIndex = 0;
       ShaderVariable *dstAddress = NULL;
       ShaderVariable *src0 = NULL;
       ShaderVariable *src1 = NULL;
-      bool gsm = false;
 
       if(op.operation == OPCODE_IMM_ATOMIC_IADD || op.operation == OPCODE_IMM_ATOMIC_IMAX ||
          op.operation == OPCODE_IMM_ATOMIC_IMIN || op.operation == OPCODE_IMM_ATOMIC_AND ||
@@ -3041,8 +3145,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
          op.operation == OPCODE_IMM_ATOMIC_UMAX || op.operation == OPCODE_IMM_ATOMIC_UMIN)
       {
         beforeResult = op.operands[0];
-        resIndex = (uint32_t)op.operands[1].indices[0].index;
-        gsm = (op.operands[1].type == TYPE_THREAD_GROUP_SHARED_MEMORY);
+        resourceOperand = op.operands[1];
         dstAddress = &srcOpers[1];
         src0 = &srcOpers[2];
         if(srcOpers.size() > 3)
@@ -3051,13 +3154,14 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       else
       {
         beforeResult.type = TYPE_NULL;
-        resIndex = (uint32_t)op.operands[0].indices[0].index;
-        gsm = (op.operands[0].type == TYPE_THREAD_GROUP_SHARED_MEMORY);
+        resourceOperand = op.operands[0];
         dstAddress = &srcOpers[0];
         src0 = &srcOpers[1];
         if(srcOpers.size() > 2)
           src1 = &srcOpers[2];
       }
+      uint32_t resIndex = (resourceOperand.indices[0].index & 0xffffffff);
+      bool gsm = (resourceOperand.type == TYPE_THREAD_GROUP_SHARED_MEMORY);
 
       uint32_t stride = 4;
       uint32_t offset = 0;
@@ -3065,6 +3169,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       bool structured = false;
 
       byte *data = NULL;
+      byte *gsm_base = NULL;
 
       if(gsm)
       {
@@ -3079,14 +3184,13 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
         {
           numElems = global.groupshared[resIndex].count;
           stride = global.groupshared[resIndex].bytestride;
-          data = &global.groupshared[resIndex].data[0];
+          gsm_base = data = &global.groupshared[resIndex].data[0];
           structured = global.groupshared[resIndex].structured;
         }
       }
       else
       {
-        BindingSlot slot =
-            GetBindingSlotForIdentifier(*program, TYPE_UNORDERED_ACCESS_VIEW, resIndex);
+        BindingSlot slot = GetBindingSlotForIdentifier(resourceOperand, op);
         GlobalState::UAVIterator uav = global.uavs.find(slot);
         if(uav == global.uavs.end())
         {
@@ -3180,10 +3284,22 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
           case OPCODE_ATOMIC_UMIN: *udst = RDCMIN(*udst, *usrc0); break;
           default: break;
         }
+
+        if(gsm && state)
+        {
+          // only one uint
+          ShaderVariable val = ShaderVariable(rdcstr(), *udst, *udst, *udst, *udst);
+          val.columns = 1;
+
+          SetGroupsharedDst(state, resIndex, uint32_t(data - gsm_base), val);
+        }
       }
 
       break;
     }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Buffer/Texture load and store
 
     // store and load paths are mostly identical
     case OPCODE_STORE_UAV_TYPED:
@@ -3194,6 +3310,8 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
     case OPCODE_LD_UAV_TYPED:
     case OPCODE_LD_STRUCTURED:
     {
+      Operand resourceOperand;
+      BindingSlot slot;
       uint32_t resIndex = 0;
       uint32_t structOffset = 0;
       uint32_t elemIdx = 0;
@@ -3222,18 +3340,20 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       {
         if(load)
         {
-          resIndex = (uint32_t)op.operands[3].indices[0].index;
-          srv = (op.operands[3].type == TYPE_RESOURCE);
-          gsm = (op.operands[3].type == TYPE_THREAD_GROUP_SHARED_MEMORY);
-          memcpy(resComps, op.operands[3].comps, sizeof(resComps));
+          resourceOperand = op.operands[3];
+          resIndex = (uint32_t)resourceOperand.indices[0].index;
+          srv = (resourceOperand.type == TYPE_RESOURCE);
+          gsm = (resourceOperand.type == TYPE_THREAD_GROUP_SHARED_MEMORY);
+          memcpy(resComps, resourceOperand.comps, sizeof(resComps));
 
           stride = op.stride;
         }
         else
         {
-          resIndex = (uint32_t)op.operands[0].indices[0].index;
+          resourceOperand = op.operands[0];
+          resIndex = (uint32_t)resourceOperand.indices[0].index;
           srv = false;
-          gsm = (op.operands[0].type == TYPE_THREAD_GROUP_SHARED_MEMORY);
+          gsm = (resourceOperand.type == TYPE_THREAD_GROUP_SHARED_MEMORY);
         }
 
         if(stride == 0)
@@ -3260,14 +3380,17 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       {
         if(load)
         {
-          resIndex = (uint32_t)op.operands[2].indices[0].index;
-          gsm = (op.operands[2].type == TYPE_THREAD_GROUP_SHARED_MEMORY);
-          memcpy(resComps, op.operands[2].comps, sizeof(resComps));
+          resourceOperand = op.operands[2];
+          resIndex = (uint32_t)resourceOperand.indices[0].index;
+          slot = GetBindingSlotForIdentifier(resourceOperand, op);
+          gsm = (resourceOperand.type == TYPE_THREAD_GROUP_SHARED_MEMORY);
+          memcpy(resComps, resourceOperand.comps, sizeof(resComps));
         }
         else
         {
-          resIndex = (uint32_t)op.operands[0].indices[0].index;
-          gsm = (op.operands[0].type == TYPE_THREAD_GROUP_SHARED_MEMORY);
+          resourceOperand = op.operands[0];
+          resIndex = (uint32_t)resourceOperand.indices[0].index;
+          gsm = (resourceOperand.type == TYPE_THREAD_GROUP_SHARED_MEMORY);
         }
 
         elemIdx = srcOpers[0].value.u32v[0];
@@ -3284,16 +3407,18 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       {
         if(load)
         {
-          resIndex = (uint32_t)op.operands[2].indices[0].index;
-          srv = (op.operands[2].type == TYPE_RESOURCE);
-          gsm = (op.operands[2].type == TYPE_THREAD_GROUP_SHARED_MEMORY);
-          memcpy(resComps, op.operands[2].comps, sizeof(resComps));
+          resourceOperand = op.operands[2];
+          resIndex = (uint32_t)resourceOperand.indices[0].index;
+          srv = (resourceOperand.type == TYPE_RESOURCE);
+          gsm = (resourceOperand.type == TYPE_THREAD_GROUP_SHARED_MEMORY);
+          memcpy(resComps, resourceOperand.comps, sizeof(resComps));
         }
         else
         {
-          resIndex = (uint32_t)op.operands[0].indices[0].index;
+          resourceOperand = op.operands[0];
+          resIndex = (uint32_t)resourceOperand.indices[0].index;
           srv = false;
-          gsm = (op.operands[0].type == TYPE_THREAD_GROUP_SHARED_MEMORY);
+          gsm = (resourceOperand.type == TYPE_THREAD_GROUP_SHARED_MEMORY);
         }
 
         // the index is supposed to be a multiple of 4 but the behaviour seems to be to round down
@@ -3304,6 +3429,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       RDCASSERT(stride != 0);
 
       byte *data = NULL;
+      byte *gsm_base = NULL;
       size_t dataSize = 0;
       bool texData = false;
       uint32_t rowPitch = 0;
@@ -3317,6 +3443,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
         firstElem = 0;
         if(resIndex > global.groupshared.size())
         {
+          RDCERR("Invalid dxbc bytecode - garbage groupshared register being referenced");
           numElems = 0;
           stride = 4;
           data = NULL;
@@ -3325,7 +3452,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
         {
           numElems = global.groupshared[resIndex].count;
           stride = global.groupshared[resIndex].bytestride;
-          data = global.groupshared[resIndex].data.data();
+          gsm_base = data = global.groupshared[resIndex].data.data();
           dataSize = global.groupshared[resIndex].data.size();
           fmt.fmt = CompType::UInt;
           fmt.byteWidth = 4;
@@ -3333,11 +3460,13 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
           fmt.stride = 0;
         }
         texData = false;
+
+        if(op.operation == OPCODE_LD_RAW || op.operation == OPCODE_STORE_RAW)
+          stride = 1;
       }
       else
       {
-        BindingSlot slot = GetBindingSlotForIdentifier(
-            *program, srv ? TYPE_RESOURCE : TYPE_UNORDERED_ACCESS_VIEW, resIndex);
+        slot = GetBindingSlotForIdentifier(resourceOperand, op);
 
         if(srv)
         {
@@ -3405,7 +3534,8 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
         dataOffset += structOffset;
       }
 
-      if(!data || (!texData && elemIdx >= numElems) || (texData && dataOffset >= dataSize))
+      if(!data || (!texData && elemIdx >= numElems) || (texData && dataOffset >= dataSize) ||
+         (gsm && dataOffset >= dataSize))
       {
         if(load)
           SetDst(state, op.operands[0], op, ShaderVariable(rdcstr(), 0U, 0U, 0U, 0U));
@@ -3414,44 +3544,120 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       {
         data += dataOffset;
 
-        int maxIndex = fmt.numComps;
+        int boundsClampedComps = 4;
 
         uint32_t srcIdx = 1;
-        if(op.operation == OPCODE_STORE_STRUCTURED || op.operation == OPCODE_LD_STRUCTURED)
+        if(op.operation == OPCODE_LD_STRUCTURED)
         {
           srcIdx = 2;
-          maxIndex = (stride - structOffset) / sizeof(uint32_t);
           fmt.byteWidth = 4;
+
           fmt.numComps = 4;
+          boundsClampedComps =
+              RDCMIN(boundsClampedComps, int((stride - structOffset) / sizeof(uint32_t)));
+          fmt.numComps = RDCMIN(fmt.numComps, boundsClampedComps);
+
           if(op.operands[0].comps[0] != 0xff && op.operands[0].comps[1] == 0xff &&
              op.operands[0].comps[2] == 0xff && op.operands[0].comps[3] == 0xff)
             fmt.numComps = 1;
+        }
+        else if(op.operation == OPCODE_STORE_STRUCTURED)
+        {
+          srcIdx = 2;
+          fmt.byteWidth = 4;
+
+          // set number of components based on output register write mask
+          if(op.operands[0].comps[1] == 0xff)
+            fmt.numComps = 1;
+          else if(op.operands[0].comps[2] == 0xff)
+            fmt.numComps = 2;
+          else if(op.operands[0].comps[3] == 0xff)
+            fmt.numComps = 3;
+          else
+            fmt.numComps = 4;
+
+          // do not allow writing beyond the stride (we don't expect fxc to emit writes like this anyway)
+          boundsClampedComps =
+              RDCMIN(boundsClampedComps, int((stride - structOffset) / sizeof(uint32_t)));
+          fmt.numComps = RDCMIN(fmt.numComps, boundsClampedComps);
+
+          for(int c = 0; c < 4; c++)
+          {
+            if(c < fmt.numComps)
+              RDCASSERTEQUAL(op.operands[0].comps[c], c);
+            else
+              RDCASSERT(op.operands[0].comps[c] == 0xff, c, op.operands[0].comps[c]);
+          }
+
           fmt.fmt = CompType::UInt;
         }
         // raw loads/stores can come from any component (as long as it's within range of the data!)
-        if(op.operation == OPCODE_LD_RAW || op.operation == OPCODE_STORE_RAW)
+        else if(op.operation == OPCODE_LD_RAW)
         {
           fmt.byteWidth = 4;
 
           // normally we can read 4 elements
           fmt.numComps = 4;
+
           // clamp to out of bounds based on numElems
-          fmt.numComps = RDCMIN(fmt.numComps, int(numElems - elemIdx) / 4);
-          maxIndex = fmt.numComps;
+          boundsClampedComps = RDCMIN(boundsClampedComps, int(numElems - elemIdx) / 4);
+          fmt.numComps = RDCMIN(fmt.numComps, boundsClampedComps);
 
           if(op.operands[0].comps[0] != 0xff && op.operands[0].comps[1] == 0xff &&
              op.operands[0].comps[2] == 0xff && op.operands[0].comps[3] == 0xff)
             fmt.numComps = 1;
+        }
+        else if(op.operation == OPCODE_STORE_RAW)
+        {
+          fmt.byteWidth = 4;
+
+          // set number of components based on output register write mask
+          if(op.operands[0].comps[1] == 0xff)
+            fmt.numComps = 1;
+          else if(op.operands[0].comps[2] == 0xff)
+            fmt.numComps = 2;
+          else if(op.operands[0].comps[3] == 0xff)
+            fmt.numComps = 3;
+          else
+            fmt.numComps = 4;
+
+          // clamp to out of bounds based on numElems
+          boundsClampedComps = RDCMIN(boundsClampedComps, int(numElems - elemIdx) / 4);
+          fmt.numComps = RDCMIN(fmt.numComps, boundsClampedComps);
+
+          for(int c = 0; c < boundsClampedComps; c++)
+          {
+            if(c < fmt.numComps)
+              RDCASSERTEQUAL(op.operands[0].comps[c], c);
+            else
+              RDCASSERT(op.operands[0].comps[c] == 0xff, c, op.operands[0].comps[c]);
+          }
+
           fmt.fmt = CompType::UInt;
         }
 
         if(load)
         {
+          uint32_t gsmData[4];
+          if(gsm && state)
+          {
+            // The active thread reads GSM data from the local GSM cache
+            GetGroupsharedSrc(resIndex, uint32_t(data - gsm_base), fmt.numComps * fmt.byteWidth,
+                              gsmData);
+            data = (byte *)gsmData;
+          }
           ShaderVariable result = TypedUAVLoad(fmt, data);
+
+          // clamp the result to any out of bounds loads so that we don't fill in with w=1
+          for(int c = boundsClampedComps; c < 4; c++)
+            result.value.u32v[c] = 0;
 
           // apply the swizzle on the resource operand
           ShaderVariable fetch("", 0U, 0U, 0U, 0U);
 
+          // always process all 4 components, as this is applying a swizzle to the returned resource
+          // data, and we could swizzle a 1-component texture result into .y with .yxzw if we then
+          // go on to scalar-assign it to .y of the output
           for(int c = 0; c < 4; c++)
           {
             uint8_t comp = resComps[c];
@@ -3475,14 +3681,24 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
         }
         else if(!Finished())    // helper/inactive pixels can't modify UAVs
         {
-          for(int i = 0; i < 4; i++)
-          {
-            uint8_t comp = op.operands[0].comps[i];
-            // masks must be contiguous from x, if we reach the 'end' we're done
-            if(comp == 0xff || comp >= maxIndex)
-              break;
+          // from the spec on a typed UAV store:
+          // dstUAV always has a .xyzw write mask.
+          // All components must be written.
+          //
+          // for raw/structured stores, we've already set the format to be the right number of
+          // components
+          //
+          // so we can ignore op.operands[0].comps[] entirely and just write the data
+          TypedUAVStore(fmt, data, srcOpers[srcIdx]);
 
-            TypedUAVStore(fmt, data, srcOpers[srcIdx]);
+          if(gsm && state)
+          {
+            // read the variable
+            ShaderVariable val = srcOpers[srcIdx];
+            // adjust the number of components
+            val.columns = fmt.numComps & 0xff;
+
+            SetGroupsharedDst(state, resIndex, uint32_t(data - gsm_base), val);
           }
         }
       }
@@ -3497,7 +3713,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       // opcodes only seem to be supported for regular inputs
       RDCASSERT(op.operands[1].type == TYPE_INPUT);
 
-      GlobalState::SampleEvalCacheKey key;
+      DXDebug::SampleEvalCacheKey key;
 
       RDCASSERT(program->GetShaderType() == DXBC::ShaderType::Pixel);
 
@@ -3575,9 +3791,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       BindingSlot slot;
       if(op.operands[1].type != TYPE_RASTERIZER)
       {
-        UINT identifier = (UINT)(op.operands[1].indices[0].index & 0xffffffff);
-        slot = GetBindingSlotForIdentifier(*program, op.operands[1].type, identifier);
-
+        slot = GetBindingSlotForIdentifier(op.operands[1], op);
         MarkResourceAccess(state, op.operands[1].type, slot);
       }
       ShaderVariable result =
@@ -3589,104 +3803,20 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       if(op.operation == OPCODE_SAMPLE_POS && result.value.u32v[0] > 0 &&
          (op.operands[2].type == TYPE_IMMEDIATE32 || op.operands[2].type == TYPE_TEMP))
       {
-        // assume standard sample pattern - this might not hold in all cases
-        // http://msdn.microsoft.com/en-us/library/windows/desktop/ff476218(v=vs.85).aspx
-
         uint32_t sampleIndex = srcOpers[1].value.u32v[0];
         uint32_t sampleCount = result.value.u32v[0];
 
-        if(sampleIndex >= sampleCount)
+        if(sampleCount == 1)
         {
-          // Per HLSL docs, if sampleIndex is out of bounds a zero vector is returned
-          RDCWARN("sample index %u is out of bounds on resource bound to sample_pos (%u samples)",
-                  sampleIndex, sampleCount);
-          result.value.f32v[0] = 0.0f;
-          result.value.f32v[1] = 0.0f;
-          result.value.f32v[2] = 0.0f;
-          result.value.f32v[3] = 0.0f;
+          RDCWARN("Non-multisampled texture being passed to sample_pos");
+
+          apiWrapper->AddDebugMessage(
+              MessageCategory::Shaders, MessageSeverity::Medium, MessageSource::RuntimeWarning,
+              StringFormat::Fmt(
+                  "Shader debugging %d: %s\nNon-multisampled texture being passed to sample_pos",
+                  nextInstruction - 1, op.str.c_str()));
         }
-        else
-        {
-          const float *sample_pattern = NULL;
-
-// co-ordinates are given as (i,j) in 16ths of a pixel
-#define _SMP(c) ((c) / 16.0f)
-
-          if(sampleCount == 1)
-          {
-            RDCWARN("Non-multisampled texture being passed to sample_pos");
-
-            apiWrapper->AddDebugMessage(
-                MessageCategory::Shaders, MessageSeverity::Medium, MessageSource::RuntimeWarning,
-                StringFormat::Fmt(
-                    "Shader debugging %d: %s\nNon-multisampled texture being passed to sample_pos",
-                    nextInstruction - 1, op.str.c_str()));
-
-            sample_pattern = NULL;
-          }
-          else if(sampleCount == 2)
-          {
-            static const float pattern_2x[] = {
-                _SMP(4.0f),
-                _SMP(4.0f),
-                _SMP(-4.0f),
-                _SMP(-4.0f),
-            };
-
-            sample_pattern = &pattern_2x[0];
-          }
-          else if(sampleCount == 4)
-          {
-            static const float pattern_4x[] = {
-                _SMP(-2.0f), _SMP(-6.0f), _SMP(6.0f), _SMP(-2.0f),
-                _SMP(-6.0f), _SMP(2.0f),  _SMP(2.0f), _SMP(6.0f),
-            };
-
-            sample_pattern = &pattern_4x[0];
-          }
-          else if(sampleCount == 8)
-          {
-            static const float pattern_8x[] = {
-                _SMP(1.0f),  _SMP(-3.0f), _SMP(-1.0f), _SMP(3.0f),  _SMP(5.0f),  _SMP(1.0f),
-                _SMP(-3.0f), _SMP(-5.0f), _SMP(-5.0f), _SMP(5.0f),  _SMP(-7.0f), _SMP(-1.0f),
-                _SMP(3.0f),  _SMP(7.0f),  _SMP(7.0f),  _SMP(-7.0f),
-            };
-
-            sample_pattern = &pattern_8x[0];
-          }
-          else if(sampleCount == 16)
-          {
-            static const float pattern_16x[] = {
-                _SMP(1.0f),  _SMP(1.0f),  _SMP(-1.0f), _SMP(-3.0f), _SMP(-3.0f), _SMP(2.0f),
-                _SMP(4.0f),  _SMP(-1.0f), _SMP(-5.0f), _SMP(-2.0f), _SMP(2.0f),  _SMP(5.0f),
-                _SMP(5.0f),  _SMP(3.0f),  _SMP(3.0f),  _SMP(-5.0f), _SMP(-2.0f), _SMP(6.0f),
-                _SMP(0.0f),  _SMP(-7.0f), _SMP(-4.0f), _SMP(-6.0f), _SMP(-6.0f), _SMP(4.0f),
-                _SMP(-8.0f), _SMP(0.0f),  _SMP(7.0f),  _SMP(-4.0f), _SMP(6.0f),  _SMP(7.0f),
-                _SMP(-7.0f), _SMP(-8.0f),
-            };
-
-            sample_pattern = &pattern_16x[0];
-          }
-          else    // unsupported sample count
-          {
-            RDCERR("Unsupported sample count on resource for sample_pos: %u", result.value.u32v[0]);
-
-            sample_pattern = NULL;
-          }
-
-          if(sample_pattern == NULL)
-          {
-            result.value.f32v[0] = 0.0f;
-            result.value.f32v[1] = 0.0f;
-          }
-          else
-          {
-            result.value.f32v[0] = sample_pattern[sampleIndex * 2 + 0];
-            result.value.f32v[1] = sample_pattern[sampleIndex * 2 + 1];
-          }
-        }
-
-#undef _SMP
+        DXDebug::get_sample_position(sampleIndex, sampleCount, result.value.f32v.data());
       }
 
       // apply swizzle
@@ -3738,8 +3868,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       if(op.operands[1].indices.size() == numIndices && op.operands[1].indices[0].absolute &&
          !op.operands[1].indices[0].relative)
       {
-        UINT identifier = (UINT)(op.operands[1].indices[0].index & 0xffffffff);
-        BindingSlot slot = GetBindingSlotForIdentifier(*program, op.operands[1].type, identifier);
+        BindingSlot slot = GetBindingSlotForIdentifier(op.operands[1], op);
         ShaderVariable result = apiWrapper->GetBufferInfo(op.operands[1].type, slot, op.str.c_str());
 
         MarkResourceAccess(state, op.operands[1].type, slot);
@@ -3786,8 +3915,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
          !op.operands[2].indices[0].relative)
       {
         int dim = 0;
-        UINT identifier = (UINT)(op.operands[2].indices[0].index & 0xffffffff);
-        BindingSlot slot = GetBindingSlotForIdentifier(*program, op.operands[2].type, identifier);
+        BindingSlot slot = GetBindingSlotForIdentifier(op.operands[2], op);
         ShaderVariable result = apiWrapper->GetResourceInfo(op.operands[2].type, slot, mipLevel, dim);
 
         MarkResourceAccess(state, op.operands[2].type, slot);
@@ -3930,7 +4058,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
         if(decl.declaration == OPCODE_DCL_SAMPLER && decl.operand.sameResource(samplerOperand))
         {
           samplerMode = decl.samplerMode;
-          samplerBinding = GetBindingSlotForDeclaration(*program, decl);
+          samplerBinding = GetBindingSlotFromDeclaration(decl, samplerOperand, op);
         }
         if(op.operation == OPCODE_LD && decl.declaration == OPCODE_DCL_RESOURCE &&
            decl.resource.dim == RESOURCE_DIMENSION_BUFFER &&
@@ -3938,7 +4066,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
         {
           resourceDim = decl.resource.dim;
 
-          resourceBinding = GetBindingSlotForDeclaration(*program, decl);
+          resourceBinding = GetBindingSlotFromDeclaration(decl, resourceOperand, op);
           GlobalState::SRVIterator srv = global.srvs.find(resourceBinding);
           if(srv == global.srvs.end())
           {
@@ -3994,11 +4122,8 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
           resourceRetType = decl.resource.resType[0];
           sampleCount = decl.resource.sampleCount;
 
-          resourceBinding = GetBindingSlotForDeclaration(*program, decl);
-
-          // With SM5.1, resource arrays need to offset the shader register by the array index
-          if(program->IsShaderModel51())
-            resourceBinding.shaderRegister = srcOpers[1].value.u32v[1];
+          resourceBinding = GetBindingSlotFromDeclaration(decl, resourceOperand, op);
+          // resourceBinding.shaderRegister = srcOpers[1].value.u32v[1];
 
           // doesn't seem like these are ever less than four components, even if the texture is
           // declared <float3> for example.
@@ -4104,7 +4229,8 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
                                            op.str.c_str(), lookupResult))
       {
         // should be a better way of doing this
-        if(destOperand.comps[1] == 0xff)
+        // LOD result is already in result.x
+        if((destOperand.comps[1] == 0xff) && (op.operation != OPCODE_LOD))
           lookupResult.value.s32v[0] = lookupResult.value.s32v[destOperand.comps[0]];
 
         SetDst(state, destOperand, op, lookupResult);
@@ -4373,7 +4499,6 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
     {
       VendorAtomicOp atomicOp = (VendorAtomicOp)op.preciseValues;
 
-      uint32_t resIndex = (uint32_t)op.operands[2].indices[0].index;
       ShaderVariable dstAddress, compare, value;
 
       int param = 2;
@@ -4430,7 +4555,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
         break;
       }
 
-      BindingSlot slot = GetBindingSlotForIdentifier(*program, TYPE_UNORDERED_ACCESS_VIEW, resIndex);
+      BindingSlot slot = GetBindingSlotForIdentifier(op.operands[2], op);
       GlobalState::UAVIterator uav = global.uavs.find(slot);
       if(uav == global.uavs.end())
       {
@@ -4511,39 +4636,6 @@ BindingSlot GetBindingSlotForDeclaration(const Program &program, const DXBCBytec
   return BindingSlot(baseRegister, decl.space);
 }
 
-BindingSlot GetBindingSlotForIdentifier(const Program &program, OperandType declType,
-                                        uint32_t identifier)
-{
-  // A note on matching declarations: with SM 5.0 or lower, the declaration will have a single
-  // operand index, which corresponds to the bound slot (e.g., t0 for a SRV). With SM 5.1, the
-  // declaration has three operand indices: the logical binding slot, the start register, and
-  // the end register. In addition, the register space is specified.
-
-  // In order to match a declaration, we use the logical binding slot. This is identical for
-  // all cases - with SM 5.1 the compiler translates each binding from shader register(s) &
-  // register space into a unique identifier that is used to reference it in other instructions.
-  // For example, an SRV specified with (t0, space2) could be given T1 as its identifier.
-
-  // When matching declarations, use operand index 0 to match with the instruction operand.
-  // When fetching data for a resource, with SM 5.0 or lower, use operand 0 as the shader
-  // register, and decl.space (which will always be 0) for the register space. With SM 5.1,
-  // use operand index 1 and 2 to get the shader register and use decl.space for the
-  // register space (which can be any value, as specified in HLSL and the root signature).
-
-  // TODO: Need to test resource arrays to ensure correct behavior with SM 5.1 here
-
-  if(program.IsShaderModel51())
-  {
-    const Declaration *pDecl = program.FindDeclaration(declType, identifier);
-    if(pDecl)
-      return GetBindingSlotForDeclaration(program, *pDecl);
-
-    RDCERR("Unable to find matching declaration for identifier %u", identifier);
-  }
-
-  return BindingSlot(identifier, 0);
-}
-
 void GlobalState::PopulateGroupshared(const DXBCBytecode::Program *pBytecode)
 {
   for(size_t i = 0; i < pBytecode->GetNumDeclarations(); i++)
@@ -4571,8 +4663,8 @@ void GlobalState::PopulateGroupshared(const DXBCBytecode::Program *pBytecode)
         }
         else
         {
-          mem.count = decl.tgsmCount;
-          mem.bytestride = 4;    // raw groupshared is implicitly uint32s
+          mem.count = decl.tgsmCount / 4;    // convert from bytes to elements
+          mem.bytestride = 4;                // raw groupshared is implicitly uint32s
         }
 
         mem.data.resize(mem.bytestride * mem.count);
@@ -4674,174 +4766,6 @@ void AddCBufferToGlobalState(const DXBCBytecode::Program &program, GlobalState &
   }
 }
 
-void ApplyDerivatives(GlobalState &global, rdcarray<ThreadState> &quad, int reg, int element,
-                      int numWords, float *data, float signmul, int32_t quadIdxA, int32_t quadIdxB)
-{
-  for(int w = 0; w < numWords; w++)
-  {
-    quad[quadIdxA].inputs[reg].value.f32v[element + w] += signmul * data[w];
-    if(quadIdxB >= 0)
-      quad[quadIdxB].inputs[reg].value.f32v[element + w] += signmul * data[w];
-  }
-
-  // quick check to see if this register was evaluated
-  if(global.sampleEvalRegisterMask & (1ULL << reg))
-  {
-    // apply derivative to any cached sample evaluations on these quad indices
-    for(auto it = global.sampleEvalCache.begin(); it != global.sampleEvalCache.end(); ++it)
-    {
-      if((it->first.quadIndex == quadIdxA || it->first.quadIndex == quadIdxB) &&
-         reg == it->first.inputRegisterIndex)
-      {
-        for(int w = 0; w < numWords; w++)
-          it->second.value.f32v[element + w] += data[w];
-      }
-    }
-  }
-}
-
-void ApplyAllDerivatives(GlobalState &global, rdcarray<ThreadState> &quad, int destIdx,
-                         const rdcarray<PSInputElement> &initialValues, float *data)
-{
-  // We make the assumption that the coarse derivatives are generated from (0,0) in the quad, and
-  // fine derivatives are generated from the destination index and its neighbours in X and Y.
-  // This isn't spec'd but we must assume something and this will hopefully get us closest to
-  // reproducing actual results.
-  //
-  // For debugging, we need members of the quad to be able to generate coarse and fine
-  // derivatives.
-  //
-  // For (0,0) we only need the coarse derivatives to get our neighbours (1,0) and (0,1) which
-  // will give us coarse and fine derivatives being identical.
-  //
-  // For the others we will need to use a combination of coarse and fine derivatives to get the
-  // diagonal element in the quad. In the examples below, remember that the quad indices are:
-  //
-  // +---+---+
-  // | 0 | 1 |
-  // +---+---+
-  // | 2 | 3 |
-  // +---+---+
-  //
-  // And that we have definitions of the derivatives:
-  //
-  // ddx_coarse = (1,0) - (0,0)
-  // ddy_coarse = (0,1) - (0,0)
-  //
-  // i.e. the same for all members of the quad
-  //
-  // ddx_fine   = (x,y) - (1-x,y)
-  // ddy_fine   = (x,y) - (x,1-y)
-  //
-  // i.e. the difference to the neighbour of our desired invocation (the one we have the actual
-  // inputs for, from gathering above).
-  //
-  // So e.g. if our thread is at (1,1) destIdx = 3
-  //
-  // (1,0) = (1,1) - ddx_fine
-  // (0,1) = (1,1) - ddy_fine
-  // (0,0) = (1,1) - ddy_fine - ddx_coarse
-  //
-  // and ddy_coarse is unused. For (1,0) destIdx = 1:
-  //
-  // (1,1) = (1,0) + ddy_fine
-  // (0,1) = (1,0) - ddx_coarse + ddy_coarse
-  // (0,0) = (1,0) - ddx_coarse
-  //
-  // and ddx_fine is unused (it's identical to ddx_coarse anyway)
-
-  // this is the value of input[1] - input[0]
-  float *ddx_coarse = (float *)data;
-
-  for(size_t i = 0; i < initialValues.size(); i++)
-  {
-    if(!initialValues[i].included)
-      continue;
-
-    if(initialValues[i].reg >= 0)
-    {
-      if(destIdx == 0)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddx_coarse, 1.0f, 1, 3);
-      else if(destIdx == 1)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddx_coarse, -1.0f, 0, 2);
-      else if(destIdx == 2)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddx_coarse, 1.0f, 1, -1);
-      else if(destIdx == 3)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddx_coarse, -1.0f, 0, -1);
-    }
-
-    ddx_coarse += initialValues[i].numwords;
-  }
-
-  // this is the value of input[2] - input[0]
-  float *ddy_coarse = ddx_coarse;
-
-  for(size_t i = 0; i < initialValues.size(); i++)
-  {
-    if(!initialValues[i].included)
-      continue;
-
-    if(initialValues[i].reg >= 0)
-    {
-      if(destIdx == 0)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddy_coarse, 1.0f, 2, 3);
-      else if(destIdx == 1)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddy_coarse, 1.0f, 2, -1);
-      else if(destIdx == 2)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddy_coarse, -1.0f, 0, 1);
-    }
-
-    ddy_coarse += initialValues[i].numwords;
-  }
-
-  float *ddxfine = ddy_coarse;
-
-  for(size_t i = 0; i < initialValues.size(); i++)
-  {
-    if(!initialValues[i].included)
-      continue;
-
-    if(initialValues[i].reg >= 0)
-    {
-      if(destIdx == 2)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddxfine, 1.0f, 3, -1);
-      else if(destIdx == 3)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddxfine, -1.0f, 2, -1);
-    }
-
-    ddxfine += initialValues[i].numwords;
-  }
-
-  float *ddyfine = ddxfine;
-
-  for(size_t i = 0; i < initialValues.size(); i++)
-  {
-    if(!initialValues[i].included)
-      continue;
-
-    if(initialValues[i].reg >= 0)
-    {
-      if(destIdx == 1)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddyfine, 1.0f, 3, -1);
-      else if(destIdx == 3)
-        ApplyDerivatives(global, quad, initialValues[i].reg, initialValues[i].elem,
-                         initialValues[i].numwords, ddyfine, -1.0f, 0, 1);
-    }
-
-    ddyfine += initialValues[i].numwords;
-  }
-}
-
 void FillViewFmt(DXGI_FORMAT format, GlobalState::ViewFmt &viewFmt)
 {
   if(format != DXGI_FORMAT_UNKNOWN)
@@ -4887,24 +4811,24 @@ void LookupSRVFormatFromShaderReflection(const DXBC::Reflection &reflection,
   }
 }
 
-DXBCBytecode::InterpolationMode GetInterpolationModeForInputParam(const SigParameter &sig,
-                                                                  const DXBC::Reflection &psDxbc,
-                                                                  const DXBCBytecode::Program *program)
+DXBC::InterpolationMode GetInterpolationModeForInputParam(const SigParameter &sig,
+                                                          const rdcarray<SigParameter> &stageInputSig,
+                                                          const DXBCBytecode::Program *program)
 {
   if(sig.varType == VarType::SInt || sig.varType == VarType::UInt)
-    return DXBCBytecode::InterpolationMode::INTERPOLATION_CONSTANT;
+    return DXBC::InterpolationMode::INTERPOLATION_CONSTANT;
 
   if(sig.varType == VarType::Float)
   {
     // if we're packed with ints on either side, we must be nointerpolation
-    size_t numInputs = psDxbc.InputSig.size();
+    size_t numInputs = stageInputSig.size();
     for(size_t j = 0; j < numInputs; j++)
     {
-      if(sig.regIndex == psDxbc.InputSig[j].regIndex && psDxbc.InputSig[j].varType != VarType::Float)
-        return DXBCBytecode::InterpolationMode::INTERPOLATION_CONSTANT;
+      if(sig.regIndex == stageInputSig[j].regIndex && stageInputSig[j].varType != VarType::Float)
+        return DXBC::InterpolationMode::INTERPOLATION_CONSTANT;
     }
 
-    DXBCBytecode::InterpolationMode interpolation = DXBCBytecode::INTERPOLATION_UNDEFINED;
+    DXBC::InterpolationMode interpolation = DXBC::InterpolationMode::INTERPOLATION_UNDEFINED;
 
     if(program)
     {
@@ -4925,312 +4849,20 @@ DXBCBytecode::InterpolationMode GetInterpolationModeForInputParam(const SigParam
   }
 
   RDCERR("Unexpected input signature type: %s", ToStr(sig.varType).c_str());
-  return DXBCBytecode::InterpolationMode::INTERPOLATION_UNDEFINED;
+  return DXBC::InterpolationMode::INTERPOLATION_UNDEFINED;
 }
 
-void GatherPSInputDataForInitialValues(const DXBC::DXBCContainer *dxbc,
-                                       const DXBC::Reflection &prevStageDxbc,
-                                       rdcarray<PSInputElement> &initialValues,
-                                       rdcarray<rdcstr> &floatInputs, rdcarray<rdcstr> &inputVarNames,
-                                       rdcstr &psInputDefinition, int &structureStride)
+void GetInterpolationModeForInputParams(const rdcarray<SigParameter> &inputSig,
+                                        const DXBCBytecode::Program *program,
+                                        rdcarray<DXBC::InterpolationMode> &interpModes)
 {
-  const DXBC::Reflection &psDxbc = *dxbc->GetReflection();
-  const DXBCBytecode::Program *program = dxbc->GetDXBCByteCode();
-
-  // When debugging a pixel shader, we need to get the initial values of each pixel shader
-  // input for the pixel that we are debugging, from whichever the previous shader stage was
-  // configured in the pipeline. This function returns the input element definitions, other
-  // associated data, the HLSL definition to use when gathering pixel shader initial values,
-  // and the stride of that HLSL structure.
-
-  // This function does not provide any HLSL definitions for additional metadata that may be
-  // needed for gathering initial values, such as primitive ID, and also does not provide the
-  // shader function body.
-
-  initialValues.clear();
-  floatInputs.clear();
-  inputVarNames.clear();
-  psInputDefinition = "struct PSInput\n{\n";
-  structureStride = 0;
-
-  if(psDxbc.InputSig.empty())
-  {
-    psInputDefinition += "float4 input_dummy : SV_Position;\n";
-
-    initialValues.push_back(PSInputElement(-1, 0, 4, ShaderBuiltin::Undefined, true));
-
-    structureStride += 4;
-  }
-
-  // name, pair<start semantic index, end semantic index>
-  rdcarray<rdcpair<rdcstr, rdcpair<uint32_t, uint32_t>>> arrays;
-
-  uint32_t nextreg = 0;
-
-  size_t numInputs = psDxbc.InputSig.size();
-  inputVarNames.resize(numInputs);
-
+  size_t numInputs = inputSig.size();
+  interpModes.resize(numInputs);
   for(size_t i = 0; i < numInputs; i++)
   {
-    const SigParameter &sig = psDxbc.InputSig[i];
-
-    psInputDefinition += "  ";
-
-    bool included = true;
-
-    // handled specially to account for SV_ ordering
-    if(sig.systemValue == ShaderBuiltin::MSAACoverage ||
-       sig.systemValue == ShaderBuiltin::IsFrontFace ||
-       sig.systemValue == ShaderBuiltin::MSAASampleIndex)
-    {
-      psInputDefinition += "//";
-      included = false;
-    }
-
-    // it seems sometimes primitive ID can be included within inputs and isn't subject to the SV_
-    // ordering restrictions - possibly to allow for geometry shaders to output the primitive ID as
-    // an interpolant. Only comment it out if it's the last input.
-    if(i + 1 == numInputs && sig.systemValue == ShaderBuiltin::PrimitiveIndex)
-    {
-      psInputDefinition += "//";
-      included = false;
-    }
-
-    int arrayIndex = -1;
-
-    for(size_t a = 0; a < arrays.size(); a++)
-    {
-      if(sig.semanticName == arrays[a].first && arrays[a].second.first <= sig.semanticIndex &&
-         arrays[a].second.second >= sig.semanticIndex)
-      {
-        psInputDefinition += "//";
-        included = false;
-        arrayIndex = sig.semanticIndex - arrays[a].second.first;
-      }
-    }
-
-    int missingreg = int(sig.regIndex) - int(nextreg);
-
-    // fill in holes from output sig of previous shader if possible, to try and
-    // ensure the same register order
-    for(int dummy = 0; dummy < missingreg; dummy++)
-    {
-      bool filled = false;
-
-      size_t numPrevOutputs = prevStageDxbc.OutputSig.size();
-      for(size_t os = 0; os < numPrevOutputs; os++)
-      {
-        if(prevStageDxbc.OutputSig[os].regIndex == nextreg + dummy)
-        {
-          filled = true;
-
-          if(prevStageDxbc.OutputSig[os].varType == VarType::Float)
-            psInputDefinition += "float";
-          else if(prevStageDxbc.OutputSig[os].varType == VarType::SInt)
-            psInputDefinition += "int";
-          else if(prevStageDxbc.OutputSig[os].varType == VarType::UInt)
-            psInputDefinition += "uint";
-          else
-            RDCERR("Unexpected input signature type: %s",
-                   ToStr(prevStageDxbc.OutputSig[os].varType).c_str());
-
-          int numCols = (prevStageDxbc.OutputSig[os].regChannelMask & 0x1 ? 1 : 0) +
-                        (prevStageDxbc.OutputSig[os].regChannelMask & 0x2 ? 1 : 0) +
-                        (prevStageDxbc.OutputSig[os].regChannelMask & 0x4 ? 1 : 0) +
-                        (prevStageDxbc.OutputSig[os].regChannelMask & 0x8 ? 1 : 0);
-
-          structureStride += 4 * numCols;
-
-          initialValues.push_back(PSInputElement(-1, 0, numCols, ShaderBuiltin::Undefined, true));
-
-          rdcstr name = prevStageDxbc.OutputSig[os].semanticIdxName;
-
-          psInputDefinition += ToStr((uint32_t)numCols) + " input_" + name + " : " + name + ";\n";
-        }
-      }
-
-      if(!filled)
-      {
-        rdcstr dummy_reg = "dummy_register";
-        dummy_reg += ToStr((uint32_t)nextreg + dummy);
-        psInputDefinition += "float4 var_" + dummy_reg + " : semantic_" + dummy_reg + ";\n";
-
-        initialValues.push_back(PSInputElement(-1, 0, 4, ShaderBuiltin::Undefined, true));
-
-        structureStride += 4 * sizeof(float);
-      }
-    }
-
-    nextreg = sig.regIndex + 1;
-
-    DXBCBytecode::InterpolationMode interpolation =
-        GetInterpolationModeForInputParam(sig, psDxbc, program);
-    if(interpolation != DXBCBytecode::INTERPOLATION_UNDEFINED)
-      psInputDefinition += ToStr(interpolation) + " ";
-    psInputDefinition += ToStr(sig.varType);
-
-    int numCols = (sig.regChannelMask & 0x1 ? 1 : 0) + (sig.regChannelMask & 0x2 ? 1 : 0) +
-                  (sig.regChannelMask & 0x4 ? 1 : 0) + (sig.regChannelMask & 0x8 ? 1 : 0);
-
-    rdcstr name = sig.semanticIdxName;
-
-    // arrays of interpolators are handled really weirdly. They use cbuffer
-    // packing rules where each new value is in a new register (rather than
-    // e.g. 2 x float2 in a single register), but that's pointless because
-    // you can't dynamically index into input registers.
-    // If we declare those elements as a non-array, the float2s or floats
-    // will be packed into registers and won't match up to the previous
-    // shader.
-    // HOWEVER to add an extra bit of fun, fxc will happily pack other
-    // parameters not in the array into spare parts of the registers.
-    //
-    // So I think the upshot is that we can detect arrays reliably by
-    // whenever we encounter a float or float2 at the start of a register,
-    // search forward to see if the next register has an element that is the
-    // same semantic name and one higher semantic index. If so, there's an
-    // array, so keep searching to enumerate its length.
-    // I think this should be safe if the packing just happens to place those
-    // registers together.
-
-    int arrayLength = 0;
-
-    if(included && numCols <= 2 && (sig.regChannelMask & 0x1))
-    {
-      uint32_t nextIdx = sig.semanticIndex + 1;
-
-      for(size_t j = i + 1; j < numInputs; j++)
-      {
-        const SigParameter &jSig = psDxbc.InputSig[j];
-
-        // if we've found the 'next' semantic
-        if(sig.semanticName == jSig.semanticName && nextIdx == jSig.semanticIndex)
-        {
-          int jNumCols = (jSig.regChannelMask & 0x1 ? 1 : 0) + (jSig.regChannelMask & 0x2 ? 1 : 0) +
-                         (jSig.regChannelMask & 0x4 ? 1 : 0) + (jSig.regChannelMask & 0x8 ? 1 : 0);
-
-          DXBCBytecode::InterpolationMode jInterp =
-              GetInterpolationModeForInputParam(jSig, psDxbc, program);
-
-          // if it's the same size, type, and interpolation mode, then it could potentially be
-          // packed into an array. Check if it's using the first channel component to tell whether
-          // it's tightly packed with another semantic.
-          if(jNumCols == numCols && interpolation == jInterp && sig.varType == jSig.varType &&
-             jSig.regChannelMask & 0x1)
-          {
-            if(arrayLength == 0)
-              arrayLength = 2;
-            else
-              arrayLength++;
-
-            // continue searching now
-            nextIdx++;
-            j = i + 1;
-            continue;
-          }
-        }
-      }
-
-      if(arrayLength > 0)
-        arrays.push_back(
-            make_rdcpair(sig.semanticName, make_rdcpair((uint32_t)sig.semanticIndex, nextIdx - 1)));
-    }
-
-    if(included)
-    {
-      // in UAV structs, arrays are packed tightly, so just multiply by arrayLength
-      structureStride += 4 * numCols * RDCMAX(1, arrayLength);
-    }
-
-    // as another side effect of the above, an element declared as a 1-length array won't be
-    // detected but it WILL be put in its own register (not packed together), so detect this
-    // case too.
-    // Note we have to search *backwards* because we need to know if this register should have
-    // been packed into the previous register, but wasn't. float/float2/float3 can be packed after
-    // an array just fine, so long as the sum of their components doesn't exceed a register width
-    if(included && i > 0 && arrayLength == 0)
-    {
-      const SigParameter &prev = psDxbc.InputSig[i - 1];
-
-      if(prev.regIndex != sig.regIndex && prev.compCount + sig.compCount <= 4)
-        arrayLength = 1;
-    }
-
-    // The compiler is also really annoying and will go to great lengths to rearrange elements
-    // and screw up our declaration, to pack things together. E.g.:
-    // float2 a : TEXCOORD1;
-    // float4 b : TEXCOORD2;
-    // float4 c : TEXCOORD3;
-    // float2 d : TEXCOORD4;
-    // the compiler will move d up and pack it into the last two components of a.
-    // To prevent this, we look forward and backward to check that we aren't expecting to pack
-    // with anything, and if not then we just make it a 1-length array to ensure no packing.
-    // Note the regChannelMask & 0x1 means it is using .x, so it's not the tail-end of a pack
-    if(included && arrayLength == 0 && numCols <= 2 && (sig.regChannelMask & 0x1))
-    {
-      if(i == numInputs - 1)
-      {
-        // the last element is never packed
-        arrayLength = 1;
-      }
-      else
-      {
-        // if the next reg is using .x, it wasn't packed with us
-        if(psDxbc.InputSig[i + 1].regChannelMask & 0x1)
-          arrayLength = 1;
-      }
-    }
-
-    psInputDefinition += ToStr((uint32_t)numCols) + " input_" + name;
-    if(arrayLength > 0)
-      psInputDefinition += "[" + ToStr(arrayLength) + "]";
-    psInputDefinition += " : " + name;
-
-    inputVarNames[i] = "input_" + name;
-    if(arrayLength > 0)
-      inputVarNames[i] += StringFormat::Fmt("[%d]", RDCMAX(0, arrayIndex));
-
-    if(included && sig.varType == VarType::Float)
-    {
-      if(arrayLength == 0)
-      {
-        floatInputs.push_back("input_" + name);
-      }
-      else
-      {
-        for(int a = 0; a < arrayLength; a++)
-          floatInputs.push_back("input_" + name + "[" + ToStr(a) + "]");
-      }
-    }
-
-    psInputDefinition += ";\n";
-
-    int firstElem = sig.regChannelMask & 0x1   ? 0
-                    : sig.regChannelMask & 0x2 ? 1
-                    : sig.regChannelMask & 0x4 ? 2
-                    : sig.regChannelMask & 0x8 ? 3
-                                               : -1;
-
-    // arrays get added all at once (because in the struct data, they are contiguous even if
-    // in the input signature they're not).
-    if(arrayIndex < 0)
-    {
-      if(arrayLength == 0)
-      {
-        initialValues.push_back(
-            PSInputElement(sig.regIndex, firstElem, numCols, sig.systemValue, included));
-      }
-      else
-      {
-        for(int a = 0; a < arrayLength; a++)
-        {
-          initialValues.push_back(
-              PSInputElement(sig.regIndex + a, firstElem, numCols, sig.systemValue, included));
-        }
-      }
-    }
+    const SigParameter &sig = inputSig[i];
+    interpModes[i] = DXBCDebug::GetInterpolationModeForInputParam(sig, inputSig, program);
   }
-
-  psInputDefinition += "};\n\n";
 }
 
 ShaderDebugTrace *InterpretDebugger::BeginDebug(const DXBC::DXBCContainer *dxbcContainer,
@@ -5243,9 +4875,40 @@ ShaderDebugTrace *InterpretDebugger::BeginDebug(const DXBC::DXBCContainer *dxbcC
   this->dxbc = dxbcContainer;
   this->activeLaneIndex = activeIndex;
 
+  uint32_t numthreads[3] = {0, 0, 0};
+
+  for(size_t i = 0; i < dxbcContainer->GetDXBCByteCode()->GetNumDeclarations(); i++)
+  {
+    const Declaration &decl = dxbcContainer->GetDXBCByteCode()->GetDeclaration(i);
+
+    if(decl.declaration == OPCODE_DCL_THREAD_GROUP)
+    {
+      numthreads[0] = decl.groupSize[0];
+      numthreads[1] = decl.groupSize[1];
+      numthreads[2] = decl.groupSize[2];
+      break;
+    }
+  }
+
   int workgroupSize = dxbc->m_Type == DXBC::ShaderType::Pixel ? 4 : 1;
+
+  if(dxbc->m_Type == DXBC::ShaderType::Compute &&
+     dxbcContainer->GetThreadScope() == DXBC::ThreadScope::Workgroup)
+  {
+    workgroupSize = numthreads[0] * numthreads[1] * numthreads[2];
+  }
+
   for(int i = 0; i < workgroupSize; i++)
+  {
     workgroup.push_back(ThreadState(i, global, dxbc));
+
+    if(dxbc->m_Type == DXBC::ShaderType::Compute && workgroupSize > 1)
+    {
+      workgroup[i].semantics.ThreadID[0] = (i) % numthreads[0];
+      workgroup[i].semantics.ThreadID[1] = (i / numthreads[0]) % numthreads[1];
+      workgroup[i].semantics.ThreadID[2] = (i / numthreads[0] / numthreads[1]) % numthreads[2];
+    }
+  }
 
   if(dxbc->m_Type == DXBC::ShaderType::Compute)
     global.PopulateGroupshared(dxbc->GetDXBCByteCode());
@@ -5588,7 +5251,54 @@ void InterpretDebugger::CalcActiveMask(rdcarray<bool> &activeMask)
   for(bool &active : activeMask)
     active = true;
 
-  // only pixel shaders automatically converge workgroups, compute shaders need explicit sync
+  // only compute and pixel need any divergence/convergence info
+  if(dxbc->m_Type != DXBC::ShaderType::Pixel && dxbc->m_Type != DXBC::ShaderType::Compute)
+    return;
+
+  // see if we've diverged
+  bool differentNext = false;
+  for(size_t i = 1; i < workgroup.size(); i++)
+    differentNext |= (workgroup[0].nextInstruction != workgroup[i].nextInstruction);
+
+  // if we're all in lockstep, return!
+  if(!differentNext)
+    return;
+
+  // for compute shaders, we hold up any threads that are behind if one thread is on a SYNC opcode
+  if(dxbc->m_Type == DXBC::ShaderType::Compute)
+  {
+    bool anySync = false;
+    uint32_t minInst = workgroup[0].nextInstruction, syncPoint = ~0U;
+    for(size_t i = 0; i < workgroup.size(); i++)
+    {
+      DXBCBytecode::OpcodeType op =
+          dxbc->GetDXBCByteCode()->GetInstruction(workgroup[i].nextInstruction).operation;
+
+      if(op == DXBCBytecode::OPCODE_SYNC)
+      {
+        anySync = true;
+        RDCASSERT(syncPoint == ~0U || syncPoint == workgroup[i].nextInstruction);
+        syncPoint = workgroup[i].nextInstruction;
+      }
+      minInst = RDCMIN(minInst, workgroup[i].nextInstruction);
+    }
+
+    // we've diverged, and at least one thread is on a sync. Only threads before that sync are
+    // active. Check that we're not about to deadlock and that some threads are behind. We should
+    // never be in the situation where threads are on different sync operations provided that sync
+    // operations only exist in uniform control flow, and similarly it should not be possible to get
+    // diverged ahead of the sync point
+    RDCASSERT(!anySync || minInst < syncPoint);
+
+    if(anySync)
+    {
+      for(size_t i = 0; i < workgroup.size(); i++)
+        if(workgroup[i].nextInstruction == syncPoint)
+          activeMask[i] = false;
+    }
+  }
+
+  // only pixel shaders automatically converge workgroups, compute shaders are handled above
   if(dxbc->m_Type != DXBC::ShaderType::Pixel)
     return;
 
@@ -5615,60 +5325,52 @@ void InterpretDebugger::CalcActiveMask(rdcarray<bool> &activeMask)
   // all threads as active.
   // if we've converged, or we were never diverged, this keeps everything ticking
 
-  // see if we've diverged
-  bool differentNext = false;
-  for(size_t i = 1; i < workgroup.size(); i++)
-    differentNext |= (workgroup[0].nextInstruction != workgroup[i].nextInstruction);
+  // this isn't *perfect* but it will still eventually continue. We look for the most advanced
+  // thread, and check to see if it's just finished a control flow. If it has then we assume it's
+  // at the convergence point and wait for every other thread to catch up, pausing any threads
+  // that reach the convergence point before others.
 
-  if(differentNext)
+  // Note this might mean we don't have any threads paused even within divergent flow. This is
+  // fine and all we care about is pausing to make sure threads don't run ahead into code that
+  // should be lockstep. We don't care at all about what they do within the code that is
+  // divergent.
+
+  // The reason this isn't perfect is that the most advanced thread could be on an inner loop or
+  // inner if, not the convergence point, and we could be pausing it fruitlessly. Worse still - it
+  // could be on a branch none of the other threads will take so they will never reach that exact
+  // instruction.
+  // But we know that all threads will eventually go through the convergence point, so even in
+  // that worst case if we didn't pick the right waiting point, another thread will overtake and
+  // become the new most advanced thread and the previous waiting thread will resume. So in this
+  // case we caused a thread to wait more than it should have but that's not a big deal as it's
+  // within divergent flow so they don't have to stay in lockstep. Also if all threads will
+  // eventually pass that point we picked, we just waited to converge even in technically
+  // divergent code which is also harmless.
+
+  // Phew!
+
+  uint32_t convergencePoint = 0;
+
+  // find which thread is most advanced
+  for(size_t i = 0; i < workgroup.size(); i++)
+    if(workgroup[i].nextInstruction > convergencePoint)
+      convergencePoint = workgroup[i].nextInstruction;
+
+  if(convergencePoint > 0)
   {
-    // this isn't *perfect* but it will still eventually continue. We look for the most advanced
-    // thread, and check to see if it's just finished a control flow. If it has then we assume it's
-    // at the convergence point and wait for every other thread to catch up, pausing any threads
-    // that reach the convergence point before others.
+    DXBCBytecode::OpcodeType op =
+        dxbc->GetDXBCByteCode()->GetInstruction(convergencePoint - 1).operation;
 
-    // Note this might mean we don't have any threads paused even within divergent flow. This is
-    // fine and all we care about is pausing to make sure threads don't run ahead into code that
-    // should be lockstep. We don't care at all about what they do within the code that is
-    // divergent.
-
-    // The reason this isn't perfect is that the most advanced thread could be on an inner loop or
-    // inner if, not the convergence point, and we could be pausing it fruitlessly. Worse still - it
-    // could be on a branch none of the other threads will take so they will never reach that exact
-    // instruction.
-    // But we know that all threads will eventually go through the convergence point, so even in
-    // that worst case if we didn't pick the right waiting point, another thread will overtake and
-    // become the new most advanced thread and the previous waiting thread will resume. So in this
-    // case we caused a thread to wait more than it should have but that's not a big deal as it's
-    // within divergent flow so they don't have to stay in lockstep. Also if all threads will
-    // eventually pass that point we picked, we just waited to converge even in technically
-    // divergent code which is also harmless.
-
-    // Phew!
-
-    uint32_t convergencePoint = 0;
-
-    // find which thread is most advanced
-    for(size_t i = 0; i < workgroup.size(); i++)
-      if(workgroup[i].nextInstruction > convergencePoint)
-        convergencePoint = workgroup[i].nextInstruction;
-
-    if(convergencePoint > 0)
-    {
-      DXBCBytecode::OpcodeType op =
-          dxbc->GetDXBCByteCode()->GetInstruction(convergencePoint - 1).operation;
-
-      // if the most advnaced thread hasn't just finished control flow, then all
-      // threads are still running, so don't converge
-      if(op != OPCODE_ENDIF && op != OPCODE_ENDLOOP && op != OPCODE_ENDSWITCH)
-        convergencePoint = 0;
-    }
-
-    // pause any threads at that instruction (could be none)
-    for(size_t i = 0; i < workgroup.size(); i++)
-      if(workgroup[i].nextInstruction == convergencePoint)
-        activeMask[i] = false;
+    // if the most advnaced thread hasn't just finished control flow, then all
+    // threads are still running, so don't converge
+    if(op != OPCODE_ENDIF && op != OPCODE_ENDLOOP && op != OPCODE_ENDSWITCH)
+      convergencePoint = 0;
   }
+
+  // pause any threads at that instruction (could be none)
+  for(size_t i = 0; i < workgroup.size(); i++)
+    if(workgroup[i].nextInstruction == convergencePoint)
+      activeMask[i] = false;
 }
 
 rdcarray<ShaderDebugState> InterpretDebugger::ContinueDebug(DXBCDebug::DebugAPIWrapper *apiWrapper)
@@ -5693,7 +5395,10 @@ rdcarray<ShaderDebugState> InterpretDebugger::ContinueDebug(DXBCDebug::DebugAPIW
     steps++;
   }
 
-  rdcarray<DXBCDebug::ThreadState> oldworkgroup = workgroup;
+  rdcarray<DXBCDebug::ThreadState> oldworkgroup;
+
+  if(active.GetType() == DXBC::ShaderType::Pixel)
+    oldworkgroup = workgroup;
 
   rdcarray<bool> activeMask;
 
@@ -5707,8 +5412,11 @@ rdcarray<ShaderDebugState> InterpretDebugger::ContinueDebug(DXBCDebug::DebugAPIW
     // set up the old workgroup so that cross-workgroup/cross-quad operations (e.g. DDX/DDY) get
     // consistent results even when we step the quad out of order. Otherwise if an operation reads
     // and writes from the same register we'd trash data needed for other workgroup elements.
-    for(size_t i = 0; i < oldworkgroup.size(); i++)
-      oldworkgroup[i].variables = workgroup[i].variables;
+    if(active.GetType() == DXBC::ShaderType::Pixel)
+    {
+      for(size_t i = 0; i < oldworkgroup.size(); i++)
+        oldworkgroup[i].variables = workgroup[i].variables;
+    }
 
     // calculate the current mask of which threads are active
     CalcActiveMask(activeMask);
@@ -5820,37 +5528,6 @@ TEST_CASE("DXBC debugging helpers", "[program]")
     CHECK(RDCISNAN(v2.value.f32v[1]));
     CHECK(v2.value.f32v[2] == posinf);
     CHECK(v2.value.f32v[3] == posinf);
-  };
-
-  SECTION("test denorm flushing")
-  {
-    float foo = 3.141f;
-
-    // check normal values
-    CHECK(flush_denorm(0.0f) == 0.0f);
-    CHECK(flush_denorm(foo) == foo);
-    CHECK(flush_denorm(-foo) == -foo);
-
-    // check NaN/inf values
-    CHECK(RDCISNAN(flush_denorm(nan)));
-    CHECK(flush_denorm(neginf) == neginf);
-    CHECK(flush_denorm(posinf) == posinf);
-
-    // check zero sign bit - bit more complex
-    uint32_t negzero = 0x80000000U;
-    float negzerof;
-    memcpy(&negzerof, &negzero, sizeof(negzero));
-
-    float flushed = flush_denorm(negzerof);
-    CHECK(memcmp(&flushed, &negzerof, sizeof(negzerof)) == 0);
-
-    // check that denormal values are flushed, preserving sign
-    foo = 1.12104e-44f;
-    CHECK(flush_denorm(foo) != foo);
-    CHECK(flush_denorm(-foo) != -foo);
-    CHECK(flush_denorm(foo) == 0.0f);
-    flushed = flush_denorm(-foo);
-    CHECK(memcmp(&flushed, &negzerof, sizeof(negzerof)) == 0);
   };
 };
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -59,12 +59,14 @@ void ResumeProcess(pid_t childPid, uint32_t delay = 0);
 #define PRELOAD_ENV_VAR "DYLD_INSERT_LIBRARIES"
 #define LIB_PATH_ENV_VAR "DYLD_LIBRARY_PATH"
 #define LIB_SUFFIX ".dylib"
+#define RD_EXECVPE execve
 
 #else
 
 #define PRELOAD_ENV_VAR "LD_PRELOAD"
 #define LIB_PATH_ENV_VAR "LD_LIBRARY_PATH"
 #define LIB_SUFFIX ".so"
+#define RD_EXECVPE execvpe
 
 #endif
 
@@ -407,9 +409,26 @@ void ApplySingleEnvMod(EnvironmentModification &m, rdcstr &value)
 
 void ApplyEnvironmentModifications(rdcarray<EnvironmentModification> &modifications)
 {
-  // turn environment string to a UTF-8 map
-  char **currentEnvironment = GetCurrentEnvironment();
-  std::map<rdcstr, rdcstr> currentEnv = EnvStringToEnvMap(currentEnvironment);
+  bool needOldEnv = false;
+
+  for(const EnvironmentModification &env : modifications)
+  {
+    if(env.mod != EnvMod::Set)
+    {
+      needOldEnv = true;
+      break;
+    }
+  }
+
+  std::map<rdcstr, rdcstr> currentEnv;
+
+  // turn environment string to a UTF-8 map, but only if we actually need to. Environment variables
+  // are garbage 70s tier tech and so are not thread safe, minimise interaction with them as much as possible
+  if(needOldEnv)
+  {
+    char **currentEnvironment = GetCurrentEnvironment();
+    currentEnv = EnvStringToEnvMap(currentEnvironment);
+  }
 
   for(size_t i = 0; i < modifications.size(); i++)
   {
@@ -626,8 +645,8 @@ static pid_t RunProcess(rdcstr appName, rdcstr workDir, const rdcstr &cmdLine, c
       }
 
       chdir(workDir.c_str());
-      execve(appPath.c_str(), argv, envp);
-      fprintf(stderr, "exec failed\n");
+      RD_EXECVPE(appPath.c_str(), argv, envp);
+      fprintf(stderr, "exec failed %s\n", strerror(errno));
       _exit(1);
     }
     else
@@ -674,7 +693,7 @@ rdcpair<RDResult, uint32_t> Process::InjectIntoProcess(uint32_t pid,
   RDCUNIMPLEMENTED("Injecting into already running processes on linux");
   return {
       RDResult(ResultCode::InjectionFailed,
-               "Injecting into already running processes is not supported on non-Windows systems"),
+               "Injecting into already running processes is not supported on non-Windows systems."),
       0};
 }
 
@@ -795,11 +814,11 @@ void GetHookingEnvMods(rdcarray<EnvironmentModification> &modifications, const C
                                                   "RENDERDOC_ORIGPRELOAD",
                                                   Process::GetEnvVariable(PRELOAD_ENV_VAR)));
   modifications.push_back(
+      EnvironmentModification(EnvMod::Append, EnvSep::Platform, LIB_PATH_ENV_VAR, ownlibpath));
+  modifications.push_back(
       EnvironmentModification(EnvMod::Append, EnvSep::Platform, LIB_PATH_ENV_VAR, binpath));
   modifications.push_back(
       EnvironmentModification(EnvMod::Append, EnvSep::Platform, LIB_PATH_ENV_VAR, libpath));
-  modifications.push_back(
-      EnvironmentModification(EnvMod::Append, EnvSep::Platform, LIB_PATH_ENV_VAR, ownlibpath));
   modifications.push_back(
       EnvironmentModification(EnvMod::Append, EnvSep::Platform, PRELOAD_ENV_VAR, libfile));
   modifications.push_back(

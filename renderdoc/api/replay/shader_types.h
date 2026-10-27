@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -33,7 +33,12 @@
 #include "resourceid.h"
 #include "stringise.h"
 
-DOCUMENT("A 64-bit pointer value with optional type information.")
+DOCUMENT(R"(
+PointerVal()
+PointerVal(other: PointerVal)
+
+A 64-bit pointer value with optional type information.
+)")
 struct PointerVal
 {
   DOCUMENT("");
@@ -41,13 +46,22 @@ struct PointerVal
   PointerVal(const PointerVal &) = default;
   PointerVal &operator=(const PointerVal &) = default;
 
-  DOCUMENT("The actual pointer value itself.");
+  DOCUMENT(R"(The actual pointer value itself.
+
+:type: int
+)");
   uint64_t pointer;
 
-  DOCUMENT("An optional :class:`ResourceId` identifying the shader containing the type info.");
+  DOCUMENT(R"(An optional :class:`ResourceId` identifying the shader containing the type info.
+
+:type: ResourceId
+)");
   ResourceId shader;
 
-  DOCUMENT("The index into :data:`ShaderReflection.pointerTypes` of the pointed type.");
+  DOCUMENT(R"(The index into :data:`ShaderReflection.pointerTypes` of the pointed type.
+
+:type: int
+)");
   uint32_t pointerTypeID;
 };
 
@@ -55,7 +69,14 @@ DECLARE_STRINGISE_TYPE(PointerVal);
 
 struct DescriptorAccess;
 
-DOCUMENT(R"(References a particular individual binding element in a shader interface.
+DOCUMENT(R"(
+ShaderBindIndex()
+ShaderBindIndex(other: ShaderBindIndex)
+ShaderBindIndex(category: DescriptorCategory, index: int)
+ShaderBindIndex(category: DescriptorCategory, index: int, arrayElement: int)
+ShaderBindIndex(access: DescriptorAccess)
+
+References a particular individual binding element in a shader interface.
 
 This is the shader interface side of a :class:`DescriptorAccess` and so can be compared to one to
 check if an access refers to a given index or not.
@@ -128,6 +149,75 @@ identifies the particular array index being referred to.
 
 DECLARE_REFLECTION_STRUCT(ShaderBindIndex);
 
+DOCUMENT(R"(
+ShaderDirectAccess()
+ShaderDirectAccess(other: ShaderDirectAccess)
+ShaderDirectAccess(category: DescriptorCategory, index: int)
+ShaderDirectAccess(type: DescriptorType, descriptorStore: ResourceId, byteOffset: int, byteSize: int)
+
+References a particular resource accessed via the shader using direct heap access (as opposed to a direct binding).
+)");
+struct ShaderDirectAccess
+{
+  DOCUMENT("");
+  ShaderDirectAccess()
+  {
+    type = DescriptorType::Unknown;
+    descriptorStore = ResourceId();
+    byteOffset = 0;
+    byteSize = 0;
+  }
+  ShaderDirectAccess(const ShaderDirectAccess &) = default;
+  ShaderDirectAccess &operator=(const ShaderDirectAccess &) = default;
+
+  ShaderDirectAccess(DescriptorType type, ResourceId descriptorStore, uint32_t byteOffset,
+                     uint32_t byteSize)
+      : type(type), descriptorStore(descriptorStore), byteOffset(byteOffset), byteSize(byteSize)
+  {
+  }
+  ShaderDirectAccess(const DescriptorAccess &access);
+
+  bool operator<(const ShaderDirectAccess &o) const
+  {
+    if(type != o.type)
+      return type < o.type;
+    if(descriptorStore != o.descriptorStore)
+      return descriptorStore < o.descriptorStore;
+    if(byteOffset != o.byteOffset)
+      return byteOffset < o.byteOffset;
+    return byteSize < o.byteSize;
+  }
+  bool operator==(const ShaderDirectAccess &o) const
+  {
+    return type == o.type && descriptorStore == o.descriptorStore && byteOffset == o.byteOffset &&
+           byteSize == o.byteSize;
+  }
+
+  DOCUMENT(R"(The type of the resource being accessed.
+
+:type: DescriptorType
+)");
+  DescriptorType type;
+
+  DOCUMENT(R"(The backing storage of the descriptor.
+
+:type: ResourceId
+)");
+  ResourceId descriptorStore;
+  DOCUMENT(R"(The offset in bytes to the descriptor in the descriptor store.
+
+:type: int
+)");
+  uint32_t byteOffset = 0;
+  DOCUMENT(R"(The size in bytes of the descriptor.
+
+:type: int
+)");
+  uint32_t byteSize = 0;
+};
+
+DECLARE_REFLECTION_STRUCT(ShaderDirectAccess);
+
 #if !defined(SWIG)
 // similarly these need to be pre-declared for use in rdhalf
 extern "C" RENDERDOC_API float RENDERDOC_CC RENDERDOC_HalfToFloat(uint16_t half);
@@ -159,7 +249,12 @@ private:
 };
 DECLARE_STRINGISE_TYPE(rdhalf);
 
-DOCUMENT("A C union that holds 16 values, with each different basic variable type.");
+DOCUMENT(R"(
+ShaderValue()
+ShaderValue(other: ShaderValue)
+
+A C union that holds 16 values, with each different basic variable type.
+)");
 union ShaderValue
 {
   DOCUMENT(R"(16-tuple of ``float`` values.
@@ -229,7 +324,13 @@ union ShaderValue
   rdcfixedarray<int8_t, 16> s8v;
 };
 
-DOCUMENT(R"(Holds a single named shader variable. It contains either a primitive type (up to a 4x4
+DOCUMENT(R"(
+ShaderVariable()
+ShaderVariable(other: ShaderVariable)
+ShaderVariable(name: str, x: float, y: float, z: float, w: float)
+ShaderVariable(name: str, x: int, y: int, z: int, w: int)
+
+Holds a single named shader variable. It contains either a primitive type (up to a 4x4
 matrix of a :class:`basic type <VarType>`) or a list of members, which can either be struct or array
 members of this parent variable.
 
@@ -311,15 +412,27 @@ struct ShaderVariable
     return false;
   }
 
-  DOCUMENT("The name of this variable.");
+  DOCUMENT(R"(The name of this variable.
+
+:type: str
+)");
   rdcstr name;
 
-  DOCUMENT("The number of rows in this matrix.");
+  DOCUMENT(R"(The number of rows in this matrix.
+
+:type: int
+)");
   uint8_t rows;
-  DOCUMENT("The number of columns in this matrix.");
+  DOCUMENT(R"(The number of columns in this matrix.
+
+:type: int
+)");
   uint8_t columns;
 
-  DOCUMENT("The :class:`basic type <VarType>` of this variable.");
+  DOCUMENT(R"(The :class:`basic type <VarType>` of this variable.
+
+:type: VarType
+)");
   VarType type;
 
   DOCUMENT(R"(The flags controlling how this constant is interpreted and displayed.
@@ -417,6 +530,8 @@ an arrayed binding.
     value.u32v[0] = (uint32_t)idx.category;
     value.u32v[1] = idx.index;
     value.u32v[2] = idx.arrayElement;
+    // This marks the variable as ShaderBindIndex and not ShaderDirectAccess
+    value.u32v[3] = 0;
   }
 
   DOCUMENT(R"(Utility function for getting a shader binding referenced by this variable.
@@ -432,12 +547,58 @@ an arrayed binding.
   {
     return ShaderBindIndex((DescriptorCategory)value.u32v[0], value.u32v[1], value.u32v[2]);
   }
+  DOCUMENT(R"(Utility function for setting a resource which is accessed directly from a shader without using bindings.
+
+The :class:`ShaderDirectAccess` uniquely refers to a resource descriptor.
+
+:param ShaderDirectAccess access: The resource descriptor being referenced.
+)");
+  inline void SetDirectAccess(const ShaderDirectAccess &access)
+  {
+    value.u32v[0] = (uint32_t)access.type;
+    value.u32v[1] = access.byteOffset;
+    value.u32v[2] = access.byteSize;
+    // This marks the variable as ShaderDirectAccess and not ShaderBindIndex
+    value.u32v[3] = 1;
+    static_assert(sizeof(access.descriptorStore) == sizeof(value.u64v[2]),
+                  "ResourceId can't be packed");
+    memcpy(&value.u64v[2], &access.descriptorStore, sizeof(access.descriptorStore));
+  }
+
+  DOCUMENT(R"(Utility function for getting the resource which is accessed directly from a shader without using bindings.
+
+.. note::
+
+  The return value is undefined if this variable is not a resource referenced directly by a shader.
+
+:return: A :class:`ShaderDirectAccess` containing the resource reference.
+:rtype: ShaderDirectAccess
+)");
+  inline ShaderDirectAccess GetDirectAccess() const
+  {
+    ResourceId descriptorStore;
+    memcpy(&descriptorStore, &value.u64v[2], sizeof(descriptorStore));
+    return ShaderDirectAccess((DescriptorType)value.u64v[0], descriptorStore, value.u32v[1],
+                              value.u32v[2]);
+  }
+
+  DOCUMENT(R"(Utility function to check if this variable stores a resource reference directly accessed by a shader.
+
+:return: If the variable represents a :class:`ShaderDirectAccess`.
+:rtype: bool
+)");
+  inline bool IsDirectAccess() const { return (value.u32v[3] == 1); }
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderVariable);
 
-DOCUMENT(
-    "A particular component of a debugging variable that a high-level variable component maps to");
+DOCUMENT(R"(
+DebugVariableReference()
+DebugVariableReference(other: DebugVariableReference)
+DebugVariableReference(type: DebugVariableType, name: str, component: int)
+
+A particular component of a debugging variable that a high-level variable component maps to
+)");
 struct DebugVariableReference
 {
   DOCUMENT("");
@@ -467,25 +628,38 @@ struct DebugVariableReference
     return false;
   }
 
-  DOCUMENT("The name of the base debug variable.");
+  DOCUMENT(R"(The name of the base debug variable.
+
+:type: str
+)");
   rdcstr name;
 
-  DOCUMENT("The type of variable this is referring to.");
+  DOCUMENT(R"(The type of variable this is referring to.
+
+:type: DebugVariableType
+)");
   DebugVariableType type = DebugVariableType::Undefined;
 
-  DOCUMENT("The component within the variable.");
+  DOCUMENT(R"(The component within the variable.
+
+:type: int
+)");
   uint32_t component = 0;
 };
 
 DECLARE_REFLECTION_STRUCT(DebugVariableReference);
 
-DOCUMENT(R"(Maps the contents of a high-level source variable to one or more shader variables in a
+DOCUMENT(R"(
+SourceVariableMapping()
+SourceVariableMapping(other: SourceVariableMapping)
+
+Maps the contents of a high-level source variable to one or more shader variables in a
 :class:`ShaderDebugState`, with type information.
 
 A single high-level variable may be represented by multiple mappings but only along regular
 boundaries, typically whole vectors. For example an array may have each element in a different
 mapping, or a matrix may have a mapping per row. The properties such as :data:`rows` and
-:data:`elements` reflect the *parent* object.
+:data:`columns` reflect the *parent* object.
 
 .. note::
 
@@ -527,19 +701,41 @@ struct SourceVariableMapping
     return false;
   }
 
-  DOCUMENT("The name and member of this source variable that's being mapped from.");
+  DOCUMENT(R"(The name and member of this source variable that's being mapped from.
+
+:type: str
+)");
   rdcstr name;
 
-  DOCUMENT("The variable type of the source being mapped from, if the debug variable is untyped.");
+  DOCUMENT(R"(The variable type of the source being mapped from, if the debug variable is untyped.
+
+:type: VarType
+)");
   VarType type = VarType::Unknown;
 
-  DOCUMENT("The number of rows in this variable - 1 for vectors, >1 for matrices.");
+  DOCUMENT(R"(A flag indicating if this mapping indicates an undefined value - the meaning of which
+is compiler defined but may mean either uninitialised data, unassigned values, or optimised away values.
+
+:type: bool
+)");
+  bool undefinedValue = false;
+
+  DOCUMENT(R"(The number of rows in this variable - 1 for vectors, >1 for matrices.
+
+:type: int
+)");
   uint32_t rows = 0;
 
-  DOCUMENT("The number of columns in this variable.");
+  DOCUMENT(R"(The number of columns in this variable.
+
+:type: int
+)");
   uint32_t columns = 0;
 
-  DOCUMENT("The offset in the parent source variable, for struct members. Useful for sorting.");
+  DOCUMENT(R"(The offset in the parent source variable, for struct members. Useful for sorting.
+
+:type: int
+)");
   uint32_t offset;
 
   DOCUMENT(R"(The index in the input or output signature of the shader that this variable represents.
@@ -548,6 +744,8 @@ The type of signature can be disambiguated by the debug variables referenced - i
 separately.
 
 This will be set to -1 if the variable is not part of either signature.
+
+:type: int
 )");
   int32_t signatureIndex = -1;
 
@@ -562,7 +760,12 @@ space.
 };
 DECLARE_REFLECTION_STRUCT(SourceVariableMapping);
 
-DOCUMENT("Details the current region of code that an instruction maps to");
+DOCUMENT(R"(
+LineColumnInfo()
+LineColumnInfo(other: LineColumnInfo)
+
+Details the current region of code that an instruction maps to.
+)");
 struct LineColumnInfo
 {
   DOCUMENT("");
@@ -605,36 +808,55 @@ struct LineColumnInfo
            colStart == o.colStart && colEnd == o.colEnd;
   }
 
-  DOCUMENT("The line (starting from 1) in the disassembly where this instruction is located.");
+  DOCUMENT(R"(The line (starting from 1) in the disassembly where this instruction is located.
+
+:type: int
+)");
   uint32_t disassemblyLine = 0;
 
   DOCUMENT(R"(The current file, as an index into the list of files for this shader.
 
 If this is negative, no source mapping is available and only :data:`disassemblyLine` is valid.
+
+:type: int
 )");
   int32_t fileIndex = -1;
 
-  DOCUMENT("The starting line-number (starting from 1) of the source code.");
+  DOCUMENT(R"(The starting line-number (starting from 1) of the source code.
+
+:type: int
+)");
   uint32_t lineStart = 0;
 
-  DOCUMENT("The ending line-number (starting from 1) of the source code.");
+  DOCUMENT(R"(The ending line-number (starting from 1) of the source code.
+
+:type: int
+)");
   uint32_t lineEnd = 0;
 
   DOCUMENT(R"(The column number (starting from 1) of the start of the code on the line specified by
 :data:`lineStart`. If set to 0, no column information is available and the whole lines should be
 treated as covering the code.
+
+:type: int
 )");
   uint32_t colStart = 0;
 
   DOCUMENT(R"(The column number (starting from 1) of the end of the code on the line specified by
 :data:`lineEnd`. If set to 0, no column information is available and the whole lines should be
 treated as covering the code.
+
+:type: int
 )");
   uint32_t colEnd = 0;
 };
 DECLARE_REFLECTION_STRUCT(LineColumnInfo);
 
-DOCUMENT(R"(Gives per-instruction source code mapping information, including what line(s) correspond
+DOCUMENT(R"(
+InstructionSourceInfo()
+InstructionSourceInfo(other: InstructionSourceInfo)
+
+Gives per-instruction source code mapping information, including what line(s) correspond
 to this instruction and which source variables exist
 )");
 struct InstructionSourceInfo
@@ -646,7 +868,10 @@ struct InstructionSourceInfo
 
   bool operator==(const InstructionSourceInfo &o) const { return instruction == o.instruction; }
   bool operator<(const InstructionSourceInfo &o) const { return instruction < o.instruction; }
-  DOCUMENT("The instruction that this information is for.");
+  DOCUMENT(R"(The instruction that this information is for.
+
+:type: int
+)");
   uint32_t instruction;
 
   DOCUMENT(R"(The source location that this instruction corresponds to
@@ -668,7 +893,12 @@ instruction.
 };
 DECLARE_REFLECTION_STRUCT(InstructionSourceInfo);
 
-DOCUMENT("This stores the before and after state of a :class:`ShaderVariable`.");
+DOCUMENT(R"(
+ShaderVariableChange()
+ShaderVariableChange(other: ShaderVariableChange)
+
+This stores the before and after state of a :class:`ShaderVariable`.
+)");
 struct ShaderVariableChange
 {
   DOCUMENT("");
@@ -694,7 +924,7 @@ struct ShaderVariableChange
   }
 
   DOCUMENT(R"(The value of the variable before the change. If this variable is uninitialised that
-means the variable came into existance on this step.
+means the variable came into existence on this step.
 
 :type: ShaderVariable
 )");
@@ -709,7 +939,11 @@ means the variable stopped existing on this step.
 };
 DECLARE_REFLECTION_STRUCT(ShaderVariableChange);
 
-DOCUMENT(R"(This stores the current state of shader debugging at one particular step in the shader,
+DOCUMENT(R"(
+ShaderDebugState()
+ShaderDebugState(other: ShaderDebugState)
+
+This stores the current state of shader debugging at one particular step in the shader,
 with all mutable variable contents.
 )");
 struct ShaderDebugState
@@ -743,15 +977,22 @@ struct ShaderDebugState
 
   DOCUMENT(R"(The next instruction to be executed after this state. The initial state before any
 shader execution happened will have ``nextInstruction == 0``.
+
+:type: int
 )");
   uint32_t nextInstruction = 0;
 
   DOCUMENT(R"(The program counter within the debug trace. The initial state will be index 0, and it
 will increment linearly after that regardless of loops or branching.
+
+:type: int
 )");
   uint32_t stepIndex = 0;
 
-  DOCUMENT("A set of :class:`ShaderEvents` flags that indicate what events happened on this step.");
+  DOCUMENT(R"(A set of :class:`ShaderEvents` flags that indicate what events happened on this step.
+
+:type: ShaderEvents
+)");
   ShaderEvents flags = ShaderEvents::NoEvent;
 
   DOCUMENT(R"(The changes in mutable variables for this shader. The change documents the
@@ -788,18 +1029,32 @@ public:
 
 DECLARE_REFLECTION_STRUCT(ShaderDebugger);
 
-DOCUMENT(R"(This stores the whole state of a shader's execution from start to finish, with each
+DOCUMENT(R"(
+This stores the whole state of a shader's execution from start to finish, with each
 individual debugging step along the way, as well as the immutable global constant values that do not
 change with shader execution.
 )");
 struct ShaderDebugTrace
 {
+  // do not allow swig to create/copy traces
+#if defined(SWIG)
+protected:
   DOCUMENT("");
   ShaderDebugTrace() = default;
   ShaderDebugTrace(const ShaderDebugTrace &) = default;
   ShaderDebugTrace &operator=(const ShaderDebugTrace &) = default;
 
-  DOCUMENT("The shader stage being debugged in this trace");
+public:
+#else
+  ShaderDebugTrace() = default;
+  ShaderDebugTrace(const ShaderDebugTrace &) = default;
+  ShaderDebugTrace &operator=(const ShaderDebugTrace &) = default;
+#endif
+
+  DOCUMENT(R"(The shader stage being debugged in this trace
+
+:type: ShaderStage
+)");
   ShaderStage stage;
 
   DOCUMENT(R"(The input variables for this shader.
@@ -865,7 +1120,7 @@ shader and generate new debug states.
 
 If this is ``None`` then the trace is invalid.
 
-:type: ShaderDebugger
+:type: Optional[ShaderDebugger]
 )");
   ShaderDebugger *debugger = NULL;
 
@@ -888,7 +1143,11 @@ per-instruction information such as source line mapping, and source variables.
 
 DECLARE_REFLECTION_STRUCT(ShaderDebugTrace);
 
-DOCUMENT(R"(The information describing an input or output signature element describing the interface
+DOCUMENT(R"(
+SigParameter()
+SigParameter(other: SigParameter)
+
+The information describing an input or output signature element describing the interface
 between shader stages.
 
 .. data:: NoIndex
@@ -940,48 +1199,81 @@ struct SigParameter
     return false;
   }
 
-  DOCUMENT("The name of this variable - may not be present in the metadata for all APIs.");
+  DOCUMENT(R"(The name of this variable - may not be present in the metadata for all APIs.
+
+:type: str
+)");
   rdcstr varName;
-  DOCUMENT("The semantic name of this variable, if the API uses semantic matching for bindings.");
+  DOCUMENT(R"(The semantic name of this variable, if the API uses semantic matching for bindings.
+
+:type: str
+)");
   rdcstr semanticName;
-  DOCUMENT("The combined semantic name and index.");
+  DOCUMENT(R"(The combined semantic name and index.
+
+:type: str
+)");
   rdcstr semanticIdxName;
-  DOCUMENT("The semantic index of this variable - see :data:`semanticName`.");
+  DOCUMENT(R"(The semantic index of this variable - see :data:`semanticName`.
+
+:type: int
+)");
   uint16_t semanticIndex = 0;
 
-  DOCUMENT(
-      "A flag indicating if this parameter is output at per-primitive rate rather than "
-      "per-vertex.");
+  DOCUMENT(R"(A flag indicating if this parameter is output at per-primitive rate rather than per-vertex.
+
+:type: bool
+)");
   bool perPrimitiveRate = false;
 
   DOCUMENT(R"(The index of the shader register/binding used to store this signature element.
 
 This may be :data:`NoIndex` if the element is system-generated and not consumed by another shader
 stage. See :data:`systemValue`.
+
+:type: int
 )");
   uint32_t regIndex = 0;
-  DOCUMENT("The :class:`ShaderBuiltin` value that this element contains.");
+  DOCUMENT(R"(The :class:`ShaderBuiltin` value that this element contains.
+
+:type: ShaderBuiltin
+)");
   ShaderBuiltin systemValue = ShaderBuiltin::Undefined;
 
-  DOCUMENT("The :class:`variable type <VarType>` of data that this element stores.");
+  DOCUMENT(R"(The :class:`variable type <VarType>` of data that this element stores.
+
+:type: VarType
+)");
   VarType varType = VarType::Float;
 
   DOCUMENT(R"(A bitmask indicating which components in the shader register are stored, for APIs that
 pack signatures together.
+
+:type: int
 )");
   uint8_t regChannelMask = 0;
   DOCUMENT(R"(A bitmask indicating which components in the shader register are actually used by the
 shader itself, for APIs that pack signatures together.
+
+:type: int
 )");
   uint8_t channelUsedMask = 0;
 
-  DOCUMENT("A convenience flag - ``True`` if the semantic name is unique and no index is needed.");
+  DOCUMENT(R"(A convenience flag - ``True`` if the semantic name is unique and no index is needed.
+
+:type: bool
+)");
   bool needSemanticIndex = false;
 
-  DOCUMENT("The number of components used to store this element. See :data:`varType`.");
+  DOCUMENT(R"(The number of components used to store this element. See :data:`varType`.
+
+:type: int
+)");
   uint32_t compCount = 0;
-  DOCUMENT(
-      "Selects a stream for APIs that provide multiple output streams for the same named output.");
+  DOCUMENT(R"(Selects a stream for APIs that provide multiple output streams for the same named output.
+
+:type: int
+)");
   uint32_t stream = 0;
 
   static const uint32_t NoIndex = ~0U;
@@ -991,7 +1283,12 @@ DECLARE_REFLECTION_STRUCT(SigParameter);
 
 struct ShaderConstant;
 
-DOCUMENT("Describes the type and members of a :class:`ShaderConstant`.");
+DOCUMENT(R"(
+ShaderConstantType()
+ShaderConstantType(other: ShaderConstantType)
+
+Describes the type and members of a :class:`ShaderConstant`.
+)");
 struct ShaderConstantType
 {
   DOCUMENT("");
@@ -1028,7 +1325,11 @@ struct ShaderConstantType
       return members < o.members;
     return false;
   }
-  DOCUMENT("The name of the type of this constant, e.g. a ``struct`` name.");
+
+  DOCUMENT(R"(The name of the type of this constant, e.g. a ``struct`` name.
+
+:type: str
+)");
   rdcstr name;
   DOCUMENT(R"(Any members that this constant may contain.
 
@@ -1040,19 +1341,40 @@ struct ShaderConstantType
 :type: ShaderVariableFlags
 )");
   ShaderVariableFlags flags = ShaderVariableFlags::NoFlags;
-  DOCUMENT("The index in :data:`ShaderReflection.pointerTypes` of the pointee type.");
+  DOCUMENT(R"(The index in :data:`ShaderReflection.pointerTypes` of the pointee type.
+
+:type: int
+)");
   uint32_t pointerTypeID = ~0U;
-  DOCUMENT("The number of elements in the array, or 1 if it's not an array.");
+  DOCUMENT(R"(The number of elements in the array, or 1 if it's not an array.
+
+:type: int
+)");
   uint32_t elements = 1;
-  DOCUMENT("The number of bytes between the start of one element in the array and the next.");
+  DOCUMENT(R"(The number of bytes between the start of one element in the array and the next.
+
+:type: int
+)");
   uint32_t arrayByteStride = 0;
-  DOCUMENT("The base :class:`VarType` of this constant.");
+  DOCUMENT(R"(The base :class:`VarType` of this constant.
+
+:type: VarType
+)");
   VarType baseType = VarType::Unknown;
-  DOCUMENT("The number of rows in this matrix.");
+  DOCUMENT(R"(The number of rows in this matrix.
+
+:type: int
+)");
   uint8_t rows = 1;
-  DOCUMENT("The number of columns in this matrix.");
+  DOCUMENT(R"(The number of columns in this matrix.
+
+:type: int
+)");
   uint8_t columns = 1;
-  DOCUMENT("The number of bytes between the start of one column/row in a matrix and the next.");
+  DOCUMENT(R"(The number of bytes between the start of one column/row in a matrix and the next.
+
+:type: int
+)");
   uint8_t matrixByteStride = 0;
 
   DOCUMENT(R"(Helper function for checking if :data:`flags` has
@@ -1066,6 +1388,7 @@ manually, but since it is common this helper is provided.
 :rtype: bool
 )");
   inline bool RowMajor() const { return bool(flags & ShaderVariableFlags::RowMajorMatrix); }
+
   DOCUMENT(R"(Helper function for checking if :data:`flags` *does not* have
 :data:`ShaderVariableFlags.RowMajorMatrix` set. This is entirely equivalent to checking that flag
 manually, but since it is common this helper is provided.
@@ -1081,7 +1404,11 @@ manually, but since it is common this helper is provided.
 
 DECLARE_REFLECTION_STRUCT(ShaderConstantType);
 
-DOCUMENT(R"(Contains the detail of a constant within a struct, such as a :class:`ConstantBlock`,
+DOCUMENT(R"(
+ShaderConstant()
+ShaderConstant(other: ShaderConstant)
+
+Contains the detail of a constant within a struct, such as a :class:`ConstantBlock`,
 with its type and relative location in memory.
 )");
 struct ShaderConstant
@@ -1108,10 +1435,19 @@ struct ShaderConstant
       return type < o.type;
     return false;
   }
-  DOCUMENT("The name of this constant");
+
+  DOCUMENT(R"(The name of this constant
+
+:type: str
+)");
   rdcstr name;
-  DOCUMENT("The byte offset of this constant relative to the parent structure");
+
+  DOCUMENT(R"(The byte offset of this constant relative to the parent structure
+
+:type: int
+)");
   uint32_t byteOffset = 0;
+
   DOCUMENT(R"(If the variable is bitfield packed, the bit offset from :data:`byteOffset` above where
 this variable starts.
 
@@ -1126,17 +1462,27 @@ packing.
    offsets may range from 0 to 31 and the sum of offset and size will be no more than 32. If the
    variable is an 8-bit integer, similarly the offset will be 0 to 7 and the sum will be no more
    than 8.
+
+:type: int
 )");
   uint16_t bitFieldOffset = 0;
+
   DOCUMENT(R"(If the variable is bitfield packed, the number of bits this variable spans starting
 from :data:`bitFieldOffset` into memory.
 
 If the variable is not a bitfield, this value will be 0. Only integer scalars will have bitfield
 packing.
+
+:type: int
 )");
   uint16_t bitFieldSize = 0;
-  DOCUMENT("If this constant is no larger than a 64-bit constant, gives a default value for it.");
+
+  DOCUMENT(R"(If this constant is no larger than a 64-bit constant, gives a default value for it.
+
+:type: int
+)");
   uint64_t defaultValue = 0;
+
   DOCUMENT(R"(The type information for this constant.
 
 :type: ShaderConstantType
@@ -1146,7 +1492,11 @@ packing.
 
 DECLARE_REFLECTION_STRUCT(ShaderConstant);
 
-DOCUMENT(R"(Contains the information for a block of constant values. The values are not present,
+DOCUMENT(R"(
+ConstantBlock()
+ConstantBlock(other: ConstantBlock)
+
+Contains the information for a block of constant values. The values are not present,
 only the metadata about how the variables are stored in memory itself and their type/name
 information.
 )");
@@ -1184,7 +1534,11 @@ struct ConstantBlock
       return variables < o.variables;
     return false;
   }
-  DOCUMENT("The name of this constant block, may be empty on some APIs.");
+
+  DOCUMENT(R"(The name of this constant block, may be empty on some APIs.
+
+:type: str
+)");
   rdcstr name;
   DOCUMENT(R"(The constants contained within this block.
 
@@ -1233,22 +1587,37 @@ This value may be set to a very large number if the array is unbounded in the sh
 )");
   uint32_t bindArraySize = 1;
 
-  DOCUMENT("The total number of bytes consumed by all of the constants contained in this block.");
+  DOCUMENT(R"(The total number of bytes consumed by all of the constants contained in this block.
+
+:type: int
+)");
   uint32_t byteSize = 0;
   DOCUMENT(R"(``True`` if the contents are stored in a buffer of memory. If not then they are set by
 some other API-specific method, such as direct function calls or they may be compile-time
 specialisation constants.
+
+:type: bool
 )");
   bool bufferBacked = true;
-  DOCUMENT("``True`` if this is backed by in-line data bytes rather than a specific buffer.");
+  DOCUMENT(R"(``True`` if this is backed by in-line data bytes rather than a specific buffer.
+
+:type: bool
+)");
   bool inlineDataBytes = false;
-  DOCUMENT("``True`` if this is a virtual buffer listing compile-time specialisation constants.");
+  DOCUMENT(R"(``True`` if this is a virtual buffer listing compile-time specialisation constants.
+
+:type: bool
+)");
   bool compileConstants = false;
 };
 
 DECLARE_REFLECTION_STRUCT(ConstantBlock);
 
-DOCUMENT(R"(Contains the information for a separate sampler in a shader. If the API doesn't have
+DOCUMENT(R"(
+ShaderSampler()
+ShaderSampler(other: ShaderSampler)
+
+Contains the information for a separate sampler in a shader. If the API doesn't have
 the concept of separate samplers, this struct will be unused and only :class:`ShaderResource` is
 relevant.
 
@@ -1278,7 +1647,10 @@ struct ShaderSampler
       return bindArraySize < o.bindArraySize;
     return false;
   }
-  DOCUMENT("The name of this sampler.");
+  DOCUMENT(R"(The name of this sampler.
+
+:type: str
+)");
   rdcstr name;
 
   DOCUMENT(R"(The fixed binding number for this binding. The interpretation of this is API-specific
@@ -1325,7 +1697,11 @@ This value may be set to a very large number if the array is unbounded in the sh
 
 DECLARE_REFLECTION_STRUCT(ShaderSampler);
 
-DOCUMENT(R"(Contains the information for a shader resource that is made accessible to shaders
+DOCUMENT(R"(
+ShaderResource()
+ShaderResource(other: ShaderResource)
+
+Contains the information for a shader resource that is made accessible to shaders
 directly by means of the API resource binding system.
 
 .. note:: that constant blocks and samplers will not have a shader resource entry, see
@@ -1378,7 +1754,10 @@ struct ShaderResource
 )");
   DescriptorType descriptorType;
 
-  DOCUMENT("The name of this resource.");
+  DOCUMENT(R"(The name of this resource.
+
+:type: str
+)");
   rdcstr name;
 
   DOCUMENT(R"(The type of each element of this resource.
@@ -1428,21 +1807,38 @@ This value may be set to a very large number if the array is unbounded in the sh
 )");
   uint32_t bindArraySize = 1;
 
-  DOCUMENT("``True`` if this resource is a texture, otherwise it is a buffer.");
+  DOCUMENT(R"(``True`` if this resource is a texture, otherwise it is a buffer.
+
+:type: bool
+)");
   bool isTexture;
-  DOCUMENT("``True`` if this texture resource has a sampler as well.");
+  DOCUMENT(R"(``True`` if this texture resource has a sampler as well.
+
+:type: bool
+)");
   bool hasSampler = false;
-  DOCUMENT("``True`` if this texture resource is a subpass input attachment.");
+  DOCUMENT(R"(``True`` if this texture resource is a subpass input attachment.
+
+:type: bool
+)");
   bool isInputAttachment = false;
   DOCUMENT(R"(``True`` if this resource is available to the shader for reading only, otherwise it is
 able to be read from and written to arbitrarily.
+
+:type: bool
 )");
   bool isReadOnly;
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderResource);
 
-DOCUMENT("Describes an entry point in a shader.");
+DOCUMENT(R"(
+ShaderEntryPoint()
+ShaderEntryPoint(other: ShaderEntryPoint)
+ShaderEntryPoint(name: str, stage: ShaderStage)
+
+Describes an entry point in a shader.
+)");
 struct ShaderEntryPoint
 {
   ShaderEntryPoint() = default;
@@ -1459,16 +1855,27 @@ struct ShaderEntryPoint
       return stage < o.stage;
     return false;
   }
-  DOCUMENT("The name of the entry point.");
+  DOCUMENT(R"(The name of the entry point.
+
+:type: str
+)");
   rdcstr name;
 
-  DOCUMENT("The :class:`ShaderStage` for this entry point .");
+  DOCUMENT(R"(The :class:`ShaderStage` for this entry point .
+
+:type: ShaderStage
+)");
   ShaderStage stage;
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderEntryPoint);
 
-DOCUMENT("Contains a single flag used at compile-time on a shader.");
+DOCUMENT(R"(
+ShaderCompileFlag()
+ShaderCompileFlag(other: ShaderCompileFlag)
+
+Contains a single flag used at compile-time on a shader.
+)");
 struct ShaderCompileFlag
 {
   DOCUMENT("");
@@ -1485,16 +1892,27 @@ struct ShaderCompileFlag
       return value < o.value;
     return false;
   }
-  DOCUMENT("The name of the compile flag.");
+  DOCUMENT(R"(The name of the compile flag.
+
+:type: str
+)");
   rdcstr name;
 
-  DOCUMENT("The value of the compile flag.");
+  DOCUMENT(R"(The value of the compile flag.
+
+:type: str
+)");
   rdcstr value;
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderCompileFlag);
 
-DOCUMENT("Contains the information about the compilation environment of a shader");
+DOCUMENT(R"(
+ShaderCompileFlags()
+ShaderCompileFlags(other: ShaderCompileFlags)
+
+Contains the information about the compilation environment of a shader
+)");
 struct ShaderCompileFlags
 {
   DOCUMENT("");
@@ -1511,7 +1929,12 @@ struct ShaderCompileFlags
 
 DECLARE_REFLECTION_STRUCT(ShaderCompileFlags);
 
-DOCUMENT("Contains the source prefix to add to a given type of shader source");
+DOCUMENT(R"(
+ShaderSourcePrefix()
+ShaderSourcePrefix(other: ShaderSourcePrefix)
+
+Contains the source prefix to add to a given type of shader source
+)");
 struct ShaderSourcePrefix
 {
   DOCUMENT("");
@@ -1531,16 +1954,27 @@ struct ShaderSourcePrefix
       return prefix < o.prefix;
     return false;
   }
-  DOCUMENT("The encoding of the language this prefix applies to.");
+  DOCUMENT(R"(The encoding of the language this prefix applies to.
+
+:type: ShaderEncoding
+)");
   ShaderEncoding encoding;
 
-  DOCUMENT("The source prefix to add.");
+  DOCUMENT(R"(The source prefix to add.
+
+:type: str
+)");
   rdcstr prefix;
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderSourcePrefix);
 
-DOCUMENT("Contains a source file available in a debug-compiled shader.");
+DOCUMENT(R"(
+ShaderSourceFile()
+ShaderSourceFile(other: ShaderSourceFile)
+
+Contains a source file available in a debug-compiled shader.
+)");
 struct ShaderSourceFile
 {
   DOCUMENT("");
@@ -1560,16 +1994,26 @@ struct ShaderSourceFile
       return contents < o.contents;
     return false;
   }
-  DOCUMENT("The filename of this source file.");
+  DOCUMENT(R"(The filename of this source file.
+
+:type: str
+)");
   rdcstr filename;
 
-  DOCUMENT("The actual contents of the file.");
+  DOCUMENT(R"(The actual contents of the file.
+
+:type: str
+)");
   rdcstr contents;
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderSourceFile);
 
-DOCUMENT(R"(Contains the information about a shader contained within API-specific debugging
+DOCUMENT(R"(
+ShaderDebugInfo()
+ShaderDebugInfo(other: ShaderDebugInfo)
+
+Contains the information about a shader contained within API-specific debugging
 information attached to the shader.
 
 Primarily this means the embedded original source files.
@@ -1616,6 +2060,8 @@ entry point name exported to the API.
 
 This is an optional value, and if set to ``-1`` you should fall back to using the file specified
 in :data:`entryLocation`, and if no file is specified there then use the first file listed.
+
+:type: int
 )");
   int32_t editBaseFile = -1;
 
@@ -1634,17 +2080,29 @@ in :data:`entryLocation`, and if no file is specified there then use the first f
   DOCUMENT(R"(Indicates whether this particular shader can be debugged. In some cases even if the
 API can debug shaders in general, specific shaders cannot be debugged because they use unsupported
 functionality
+
+:type: bool
 )");
   bool debuggable = true;
 
   DOCUMENT(R"(Indicates whether this shader has debug information to allow source-level debugging.
+
+:type: bool
 )");
   bool sourceDebugInformation = false;
 
   DOCUMENT(R"(If :data:`debuggable` is false then this contains a simple explanation of why the
 shader is not supported for debugging
+
+:type: str
 )");
   rdcstr debugStatus;
+
+  DOCUMENT(R"(Contains a log of the debug shader loading process i.e. searching for shader PDB.
+
+:type: str
+)");
+  rdcstr debugInfoLoadingLog;
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderDebugInfo);
@@ -1655,19 +2113,38 @@ The information in this structure is API agnostic.
 )");
 struct ShaderReflection
 {
+  // do not allow swig to create/copy shader reflections
+#if defined(SWIG)
+protected:
+  DOCUMENT("");
+  ShaderDebugTrace() = default;
+  ShaderDebugTrace(const ShaderDebugTrace &) = default;
+  ShaderDebugTrace &operator=(const ShaderDebugTrace &) = default;
+
+public:
+#else
   DOCUMENT("");
   ShaderReflection() = default;
   ShaderReflection(const ShaderReflection &) = default;
   ShaderReflection &operator=(const ShaderReflection &) = default;
+#endif
 
-  DOCUMENT("The :class:`ResourceId` of this shader.");
+  DOCUMENT(R"(The :class:`ResourceId` of this shader.
+
+:type: ResourceId
+)");
   ResourceId resourceId;
 
-  DOCUMENT("The entry point in the shader for this reflection, if multiple entry points exist.");
+  DOCUMENT(R"(The entry point in the shader for this reflection, if multiple entry points exist.
+
+:type: str
+)");
   rdcstr entryPoint;
 
-  DOCUMENT(
-      "The :class:`ShaderStage` that this shader corresponds to, if multiple entry points exist.");
+  DOCUMENT(R"(The :class:`ShaderStage` that this shader corresponds to, if multiple entry points exist.
+
+:type: ShaderStage
+)");
   ShaderStage stage;
 
   DOCUMENT(R"(The embedded debugging information.
@@ -1676,11 +2153,16 @@ struct ShaderReflection
 )");
   ShaderDebugInfo debugInfo;
 
-  DOCUMENT("The :class:`ShaderEncoding` of this shader. See :data:`rawBytes`.");
+  DOCUMENT(R"(The :class:`ShaderEncoding` of this shader. See :data:`rawBytes`.
+
+:type: ShaderEncoding
+)");
   ShaderEncoding encoding = ShaderEncoding::Unknown;
 
   DOCUMENT(R"(A raw ``bytes`` dump of the original shader, encoded in the form denoted by
 :data:`encoding`.
+
+:type: bytes
 )");
   bytebuf rawBytes;
 

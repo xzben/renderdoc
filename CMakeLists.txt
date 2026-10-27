@@ -1,4 +1,8 @@
-cmake_minimum_required(VERSION 2.8.12)
+if (NOT CMAKE_VERSION VERSION_LESS "4.0")
+  cmake_minimum_required(VERSION 3.5)
+else()
+  cmake_minimum_required(VERSION 2.8.12)
+endif()
 
 if(APPLE)
   # Building for Apple requires at least CMake 3.23.0
@@ -102,6 +106,8 @@ set(RENDERDOC_APK_PATH "" CACHE STRING "Path to RenderDoc .apk files after insta
 set(LIB_SUFFIX "" CACHE STRING "Suffix for 'lib' folder in target directory structure. E.g. set to '64' to use /usr/local/lib64 instead of /usr/local/lib.")
 set(LIB_SUBFOLDER "" CACHE STRING "Subfolder under the 'lib' folder in target directory structure. E.g. set to 'renderdoc' to use /usr/local/lib/renderdoc instead of /usr/local/lib.")
 set(VULKAN_JSON_SUFFIX "" CACHE STRING "Suffix for the vulkan implicit_layer json file. E.g. set to '.x86_64' to use renderdoc_capture.x86_64.json instead of renderdoc_capture.json")
+
+SET(FORCE_PY_VERSION "" CACHE STRING "Force a particular version of python to be searched for")
 
 option(INTERNAL_SELF_CAPTURE "Internal option: enable self-capture" OFF)
 
@@ -208,7 +214,6 @@ option(ENABLE_PYRENDERDOC "Enable renderdoc python modules" ON)
 option(ENABLE_XLIB "Enable xlib windowing support" ON)
 option(ENABLE_XCB "Enable xcb windowing support" ON)
 option(ENABLE_UNSUPPORTED_EXPERIMENTAL_POSSIBLY_BROKEN_WAYLAND "Enable EXPERIMENTAL, POSSIBLY BROKEN, UNSUPPORTED wayland windowing support" OFF)
-option(ENABLE_GGP "Enable GGP support" OFF)
 
 option(ENABLE_ASAN "Enable address sanitizer" OFF)
 option(ENABLE_TSAN "Enable thread sanitizer" OFF)
@@ -307,20 +312,6 @@ if(ANDROID)
     message(STATUS "Using Android native API level ${ANDROID_NATIVE_API_LEVEL}")
 endif()
 
-if(ENABLE_GGP)
-    message(STATUS "Disabling GL, GLES driver on ggp")
-    set(ENABLE_GL OFF CACHE BOOL "" FORCE)
-    set(ENABLE_GLES OFF CACHE BOOL "" FORCE)
-    set(ENABLE_EGL OFF CACHE BOOL "" FORCE)
-
-    # GGP doesn't support the Qt UI
-    message(STATUS "Disabling qrenderdoc for ggp build")
-    set(ENABLE_QRENDERDOC OFF CACHE BOOL "" FORCE)
-
-    message(STATUS "Disabling renderdoc python modules for ggp build")
-    set(ENABLE_PYRENDERDOC OFF CACHE BOOL "" FORCE)
-endif()
-
 if(ENABLE_GLES AND NOT ENABLE_EGL)
     message(FATAL_ERROR "EGL is required for GLES")
 endif()
@@ -397,9 +388,6 @@ endif ()
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-strict-aliasing")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden -fvisibility-inlines-hidden")
-    if(ENABLE_GGP)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -gline-tables-only -fno-omit-frame-pointer")
-    endif()
 
     set(warning_flags
         -Wall
@@ -419,9 +407,19 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 7.0)
             list(APPEND warning_flags -Wimplicit-fallthrough=2)
         endif()
+
+        # False positives due to function inlining decisions
+        # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=103993
+        if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 11.0.9)
+            list(APPEND warning_flags -Wno-mismatched-new-delete)
+        endif()
         
         if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 11.9)
             list(APPEND warning_flags -Wno-unused-value)
+        endif()
+        
+        if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 13.9)
+            list(APPEND warning_flags -Wno-cast-user-defined)
         endif()
     endif()
 
@@ -438,16 +436,21 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         list(APPEND warning_flags -Wshorten-64-to-32)
     endif()
 
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.0 AND NOT APPLE)
-        list(APPEND warning_flags -Wno-unused-lambda-capture)
-    endif()
-
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13.0 AND NOT APPLE)
         list(APPEND warning_flags -Wno-unused-but-set-variable -Wno-deprecated-copy)
     endif()
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13.1 AND APPLE)
         list(APPEND warning_flags -Wno-unused-but-set-variable -Wno-deprecated-copy)
+    endif()
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.1)
+        list(APPEND warning_flags -Wno-deprecated-literal-operator)
+    endif()
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17 AND APPLE)
+        # See related https://github.com/swig/swig/issues/1259
+        list(APPEND warning_flags -Wno-cast-function-type-mismatch)
     endif()
 
     if(NOT RELEASE_MODE)
@@ -462,9 +465,6 @@ if(ANDROID)
     add_definitions(-DRENDERDOC_PLATFORM_ANDROID)
 elseif(APPLE)
     add_definitions(-DRENDERDOC_PLATFORM_APPLE)
-elseif(ENABLE_GGP)
-    add_definitions(-DRENDERDOC_PLATFORM_GGP)
-    add_definitions(-DRENDERDOC_WINDOWING_GGP)
 elseif(UNIX)
     add_definitions(-DRENDERDOC_PLATFORM_LINUX)
 
@@ -488,9 +488,17 @@ add_subdirectory(renderdoc)
 # are handled in common
 if(ENABLE_QRENDERDOC OR ENABLE_PYRENDERDOC)
     # Make sure Python 3 is found
-    set(Python_ADDITIONAL_VERSIONS 3.12 3.11 3.10 3.9 3.8 3.7 3.6 3.5 3.4)
+    set(Python_ADDITIONAL_VERSIONS 3.18 3.17 3.16 3.15 3.14 3.13 3.12 3.11 3.10 3.9 3.8 3.7 3.6 3.5 3.4)
     if(NOT ${CMAKE_VERSION} VERSION_LESS "3.12")
-        find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+
+        if(NOT FORCE_PY_VERSION STREQUAL "")
+            message(STATUS "Searching for python version ${FORCE_PY_VERSION}")
+            find_package(Python3 ${FORCE_PY_VERSION} EXACT COMPONENTS Interpreter Development REQUIRED)
+        else()
+            message(STATUS "Searching for any version of python")
+            find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+        endif()
+
         set(PYTHON_EXECUTABLE ${Python3_EXECUTABLE})
         set(PYTHON_LIBRARY ${Python3_LIBRARIES})
         set(PYTHON_INCLUDE_DIR ${Python3_INCLUDE_DIRS})
@@ -540,7 +548,7 @@ if(ENABLE_METAL)
     message(STATUS "  - Metal")
 endif()
 
-if(UNIX AND NOT ANDROID AND NOT APPLE AND NOT ENABLE_GGP)
+if(UNIX AND NOT ANDROID AND NOT APPLE)
     message(STATUS "Enabled Window System Support:")
 
     if(ENABLE_XLIB)

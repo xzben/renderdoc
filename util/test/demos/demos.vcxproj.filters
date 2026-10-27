@@ -451,9 +451,6 @@
     <ClCompile Include="d3d12\d3d12_rendertarget_binds.cpp">
       <Filter>D3D12\demos</Filter>
     </ClCompile>
-    <ClCompile Include="d3d11\d3d11_pixel_history_zoo.cpp">
-      <Filter>D3D11\demos</Filter>
-    </ClCompile>
     <ClCompile Include="gl\gl_large_buffer.cpp">
       <Filter>OpenGL\demos</Filter>
     </ClCompile>
@@ -688,6 +685,96 @@
     <ClCompile Include="vk\vk_multi_view.cpp">
       <Filter>Vulkan\demos</Filter>
     </ClCompile>
+    <ClCompile Include="d3d12\d3d12_mesh_shader.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_rtas_zoo.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_ray_query.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_subgroup_zoo.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_groupshared.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_mesh_shader.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_groupshared.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d11\d3d11_groupshared.cpp">
+      <Filter>D3D11\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_descriptor_buffer.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_shader_debugdata_zoo.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_subgroup_zoo.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_workgroup_zoo.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_workgroup_zoo.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d11\d3d11_workgroup_zoo.cpp">
+      <Filter>D3D11\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_descriptor_buffer_analyse.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_blend.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_memory_overlap.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d11\d3d11_pixel_history.cpp">
+      <Filter>D3D11\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="gl\gl_shader_debug_zoo.cpp">
+      <Filter>OpenGL\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_annotations.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="gl\gl_annotations.cpp">
+      <Filter>OpenGL\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_annotations.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d11\d3d11_annotations.cpp">
+      <Filter>D3D11\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_predication.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_custom_resolve.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_resource_usage.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_vrs.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_device_address_commands.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_stripped_shaders.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_stripped_shaders.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="D3D11">
@@ -734,9 +821,6 @@
     </Filter>
     <Filter Include="3rdparty\nuklear">
       <UniqueIdentifier>{06e64450-43b4-42d5-bbf3-290c721ae555}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="3rdparty\shaderc">
-      <UniqueIdentifier>{e641fa6b-a639-49af-9bc3-387b87bdb066}</UniqueIdentifier>
     </Filter>
     <Filter Include="3rdparty\glad">
       <UniqueIdentifier>{526cfb18-bd0f-41b7-ac73-30a2fc90f449}</UniqueIdentifier>
@@ -890,9 +974,6 @@
     </ClInclude>
     <ClInclude Include="3rdparty\nuklear\nuklear_xlib.h">
       <Filter>3rdparty\nuklear</Filter>
-    </ClInclude>
-    <ClInclude Include="3rdparty\shaderc\shaderc.h">
-      <Filter>3rdparty\shaderc</Filter>
     </ClInclude>
     <ClInclude Include="3rdparty\glad\khrplatform.h">
       <Filter>3rdparty\glad</Filter>

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -162,6 +162,11 @@ void cmdPushDescriptorSets(VkCommandBuffer cmd, VkPipelineBindPoint pipelineBind
 {
   vkCmdPushDescriptorSetKHR(cmd, pipelineBindPoint, layout, set, (uint32_t)writes.size(),
                             writes.data());
+}
+
+void cmdSetViewport(VkCommandBuffer cmd, VkViewport viewport)
+{
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
 }
 
 GraphicsPipelineCreateInfo::GraphicsPipelineCreateInfo()

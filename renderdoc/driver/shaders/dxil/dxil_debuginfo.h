@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2020-2024 Baldur Karlsson
+ * Copyright (c) 2020-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -710,6 +710,21 @@ struct DILexicalBlock : public DIBase
   virtual rdcstr toString(bool dxcStyleFormatting) const;
 };
 
+struct DILexicalBlockFile : public DIBase
+{
+  static const DIBase::Type DIType = DIBase::LexicalBlockFile;
+  DILexicalBlockFile(const Metadata *scope, const Metadata *file, uint64_t discriminator)
+      : DIBase(DIType), scope(scope), file(file), discriminator(discriminator)
+  {
+  }
+
+  const Metadata *scope;
+  const Metadata *file;
+  uint64_t discriminator;
+
+  virtual rdcstr toString(bool dxcStyleFormatting) const;
+};
+
 struct DISubrange : public DIBase
 {
   static const DIBase::Type DIType = DIBase::Subrange;
@@ -760,3 +775,4 @@ struct DIImportedEntity : public DIBase
 };    // namespace DXIL
 
 DECLARE_REFLECTION_ENUM(DXIL::DW_LANG);
+DECLARE_STRINGISE_TYPE(DXIL::DW_OP);

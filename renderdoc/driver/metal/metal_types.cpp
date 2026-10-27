@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022-2024 Baldur Karlsson
+ * Copyright (c) 2022-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -40,12 +40,18 @@ RDCCOMPILE_ASSERT(sizeof(NS::Integer) == sizeof(std::intptr_t), "NS::Integer siz
 RDCCOMPILE_ASSERT(sizeof(NS::UInteger) == sizeof(std::uintptr_t),
                   "NS::UInteger size does not match");
 
+#define calcoffset(TYPE, ELEMENT) ((size_t) & (((TYPE *)0)->ELEMENT))
+
 #define DEFINE_OBJC_HELPERS(CPPTYPE)                                                              \
   void AllocateObjCBridge(WrappedMTL##CPPTYPE *wrappedCPP)                                        \
   {                                                                                               \
-    RDCCOMPILE_ASSERT((offsetof(WrappedMTL##CPPTYPE, m_ObjcBridge) == 0),                         \
-                      "m_ObjcBridge must be at offsetof 0");                                      \
     const char *const className = "ObjCBridgeMTL" #CPPTYPE;                                       \
+    static size_t offset = calcoffset(WrappedMTL##CPPTYPE, m_ObjcBridge);                         \
+    if(offset != 0)                                                                               \
+    {                                                                                             \
+      RDCFATAL("'%s' m_ObjcBridge must be at offset of 0 %lu", className, offset,                 \
+               "m_ObjcBridge must be at offsetof 0");                                             \
+    }                                                                                             \
     static Class klass = objc_lookUpClass(className);                                             \
     static size_t classSize = class_getInstanceSize(klass);                                       \
     if(classSize != sizeof(wrappedCPP->m_ObjcBridge))                                             \

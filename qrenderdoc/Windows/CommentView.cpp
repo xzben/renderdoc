@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -41,6 +41,7 @@ CommentView::CommentView(ICaptureContext &ctx, QWidget *parent)
   m_commentsEditor = new ScintillaEdit(this);
 
   m_commentsEditor->styleSetFont(STYLE_DEFAULT, Formatter::FixedFont().family().toUtf8().data());
+  m_commentsEditor->styleSetSize(STYLE_DEFAULT, Formatter::FixedFont().pointSize());
   m_commentsEditor->setTabWidth(4);
 
   m_commentsEditor->setWrapMode(SC_WRAP_WORD);

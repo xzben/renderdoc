@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022-2024 Baldur Karlsson
+ * Copyright (c) 2022-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -74,4 +74,12 @@ inline WrappedMTLResource *GetWrapped(id<MTLResource> objC)
 
 #ifndef __MAC_14_4
 #define __MAC_14_4 140400
+#endif
+
+#ifndef __MAC_26_0
+#define __MAC_26_0 260000
+#endif
+
+#ifndef __MAC_27_0
+#define __MAC_27_0 270000
 #endif

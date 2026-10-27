@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -93,6 +93,9 @@ void main()
 
 #pragma warning(push)
 #pragma warning(disable : 4127)
+#pragma warning(disable : 4189)
+#pragma warning(disable : 4324)
+#pragma warning(disable : 4505)
 
 #include "vk_headers.h"
 
@@ -117,6 +120,9 @@ static VkBool32 VKAPI_PTR vulkanCallback(VkDebugUtilsMessageSeverityFlagBitsEXT 
                                          const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
                                          void *pUserData)
 {
+  if(strstr(pCallbackData->pMessageIdName, "-01779"))
+    return false;
+
   TEST_WARN("Vulkan message: [%s] %s", pCallbackData->pMessageIdName, pCallbackData->pMessage);
 
   return false;
@@ -170,7 +176,12 @@ void VulkanGraphicsTest::Prepare(int argc, char **argv)
 
       X11Window::Init();
 #elif defined(__APPLE__)
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+      enabledInstExts.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
+#endif
+#if defined(VK_USE_PLATFORM_MACOS_MVK)
       enabledInstExts.push_back(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
+#endif
 
       AppleWindow::Init();
 #else
@@ -184,6 +195,9 @@ void VulkanGraphicsTest::Prepare(int argc, char **argv)
 
       // enable debug utils when possible
       optInstExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+      // ditto validation features
+      optInstExts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
 
       CHECK_VKR(vkh::enumerateInstanceLayerProperties(availInstLayers));
 
@@ -285,6 +299,30 @@ void VulkanGraphicsTest::Prepare(int argc, char **argv)
           enabledInstExts.push_back(search);
       }
 
+      VkValidationFeaturesEXT featuresEXT = {VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT};
+      VkValidationFeatureEnableEXT enableFeatures[] = {
+          VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+          VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+      };
+      featuresEXT.enabledValidationFeatureCount = ARRAY_COUNT(enableFeatures);
+      featuresEXT.pEnabledValidationFeatures = enableFeatures;
+
+      // allow command line override
+      for(int i = 0; i < argc; i++)
+      {
+        if(!strcmp(argv[i], "--gpuva"))
+        {
+          for(const char *a : enabledInstExts)
+          {
+            if(std::string(a) == VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME)
+            {
+              featuresEXT.pNext = instInfoNext;
+              instInfoNext = &featuresEXT;
+            }
+          }
+        }
+      }
+
       vulkanVersion = volkGetInstanceVersion();
 
       vkh::ApplicationInfo app("RenderDoc autotesting", VK_MAKE_VERSION(1, 0, 0),
@@ -368,9 +406,9 @@ void VulkanGraphicsTest::Prepare(int argc, char **argv)
   if(!volk)
     Avail = "volk did not initialise - vulkan library is not available";
   else if(!spv)
-    Avail = InternalSpvCompiler() ? "Internal SPIR-V compiler did not initialise"
-                                  : "Couldn't find 'glslc' or 'glslangValidator' in PATH - "
-                                    "required for SPIR-V compilation";
+    Avail =
+        "Couldn't find 'glslc' or 'glslangValidator' in PATH - "
+        "required for SPIR-V compilation";
   else if(instance == VK_NULL_HANDLE)
     Avail = "Vulkan instance did not initialise";
   else if(phys == VK_NULL_HANDLE)
@@ -698,8 +736,7 @@ bool VulkanGraphicsTest::Init()
     queueCreates.push_back(vkh::DeviceQueueCreateInfo(transferQueueFamilyIndex, 1, priorities));
 
   CHECK_VKR(vkCreateDevice(
-      phys, vkh::DeviceCreateInfo(queueCreates, enabledLayers, devExts, features).next(devInfoNext),
-      NULL, &device));
+      phys, vkh::DeviceCreateInfo(queueCreates, devExts, features).next(devInfoNext), NULL, &device));
 
   volkLoadDevice(device);
 
@@ -707,7 +744,7 @@ bool VulkanGraphicsTest::Init()
 
   if(!headless)
   {
-    mainWindow = MakeWindow(screenWidth, screenHeight, "Autotesting");
+    mainWindow = MakeWindow(screenWidth, screenHeight, screenTitle);
 
     if(!mainWindow->Initialised())
     {
@@ -717,6 +754,8 @@ bool VulkanGraphicsTest::Init()
   }
 
   VmaVulkanFunctions funcs = {
+      vkGetInstanceProcAddr,
+      vkGetDeviceProcAddr,
       vkGetPhysicalDeviceProperties,
       vkGetPhysicalDeviceMemoryProperties,
       vkAllocateMemory,
@@ -733,17 +772,27 @@ bool VulkanGraphicsTest::Init()
       vkDestroyBuffer,
       vkCreateImage,
       vkDestroyImage,
+      vkCmdCopyBuffer,
       vkGetBufferMemoryRequirements2KHR,
       vkGetImageMemoryRequirements2KHR,
+      vkBindBufferMemory2KHR,
+      vkBindImageMemory2KHR,
+      vkGetPhysicalDeviceMemoryProperties2KHR,
+      vkGetDeviceBufferMemoryRequirements,
+      vkGetDeviceImageMemoryRequirements,
   };
 
   VmaAllocatorCreateInfo allocInfo = {};
+  allocInfo.instance = instance;
   allocInfo.physicalDevice = phys;
   allocInfo.device = device;
-  allocInfo.frameInUseCount = 4;
   allocInfo.pVulkanFunctions = &funcs;
+  allocInfo.vulkanApiVersion = devVersion;
   if(hasExt(VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME) && vmaDedicated)
     allocInfo.flags |= VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT;
+  if((hasExt(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) || devVersion >= VK_MAKE_VERSION(1, 2, 0)) &&
+     vmaBDA)
+    allocInfo.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
   vmaCreateAllocator(&allocInfo, &allocator);
 
@@ -921,14 +970,23 @@ void VulkanGraphicsTest::Present()
   mainWindow->Present(queue);
 }
 
-VkPipelineShaderStageCreateInfo VulkanGraphicsTest::CompileShaderModule(
-    const std::string &source_text, ShaderLang lang, ShaderStage stage, const char *entry_point,
-    const std::map<std::string, std::string> &macros, SPIRVTarget target)
+VkPipelineShaderStageCreateInfo VulkanGraphicsTest::LoadShaderModule(const std::string &filename,
+                                                                     ShaderStage stage,
+                                                                     const char *entry_point)
 {
   VkShaderModule ret = VK_NULL_HANDLE;
 
-  std::vector<uint32_t> spirv =
-      ::CompileShaderToSpv(source_text, target, lang, stage, entry_point, macros);
+  std::vector<uint32_t> spirv;
+
+  FILE *f = fopen(filename.c_str(), "rb");
+  if(f)
+  {
+    fseek(f, 0, SEEK_END);
+    spirv.resize(ftell(f) / sizeof(uint32_t));
+    fseek(f, 0, SEEK_SET);
+    fread(spirv.data(), sizeof(uint32_t), spirv.size(), f);
+    fclose(f);
+  }
 
   if(spirv.empty())
     return {};
@@ -944,6 +1002,81 @@ VkPipelineShaderStageCreateInfo VulkanGraphicsTest::CompileShaderModule(
       VK_SHADER_STAGE_GEOMETRY_BIT,
       VK_SHADER_STAGE_FRAGMENT_BIT,
       VK_SHADER_STAGE_COMPUTE_BIT,
+  };
+
+  return vkh::PipelineShaderStageCreateInfo(ret, vkstage[(int)stage], entry_point);
+}
+
+VkPipelineShaderStageCreateInfo VulkanGraphicsTest::CompileShaderModule(
+    const std::string &source_text, ShaderLang lang, ShaderStage stage, const char *entry_point,
+    const std::map<std::string, std::string> &macros, SPIRVTarget target, uint32_t compileOptions)
+{
+  VkShaderModule ret = VK_NULL_HANDLE;
+
+  const bool separateDebug = ((compileOptions & CompileOptionFlags::SeparateDebug) != 0);
+  const bool relativeDebugName = ((compileOptions & CompileOptionFlags::RelativeDebugName) != 0);
+
+  std::vector<uint32_t> spirv =
+      ::CompileShaderToSpv(demoName, source_text, target, lang, stage, entry_point, macros);
+
+  if(spirv.empty())
+    return {};
+
+  std::string path;
+  if(separateDebug)
+  {
+    path = tmpPath + "/";
+
+    std::string filenames[] = {
+        "shader_vs.dbg", "shader_hs.dbg", "shader_ds.dbg", "shader_gs.dbg",
+        "shader_ps.dbg", "shader_cs.dbg", "shader_ms.dbg", "shader_as.dbg",
+    };
+
+    path += filenames[(int)stage];
+
+    FILE *f = fopen(path.c_str(), "wb");
+    if(f)
+    {
+      fwrite(spirv.data(), 1, spirv.size() * sizeof(uint32_t), f);
+      fclose(f);
+    }
+
+    spirv =
+        ::CompileShaderToSpv(demoName, source_text, target, lang, stage, entry_point, macros, false);
+  }
+
+  CHECK_VKR(vkCreateShaderModule(device, vkh::ShaderModuleCreateInfo(spirv), NULL, &ret));
+
+  if(relativeDebugName)
+  {
+    path.erase(0, path.find_last_of("/\\") + 1);
+    // keep the demo name so we don't have to set up tons of search paths
+    path = std::string(demoName) + "/" + path;
+  }
+
+  if(vkSetDebugUtilsObjectTagEXT)
+  {
+    VkDebugUtilsObjectTagInfoEXT info = {};
+    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_TAG_INFO_EXT;
+    info.objectType = VK_OBJECT_TYPE_SHADER_MODULE;
+    info.objectHandle = (uint64_t)ret;
+    info.pTag = path.c_str();
+    info.tagSize = path.size();
+    info.tagName = RENDERDOC_ShaderDebugMagicValue_truncated;
+    vkSetDebugUtilsObjectTagEXT(device, &info);
+  }
+
+  shaders.push_back(ret);
+
+  VkShaderStageFlagBits vkstage[] = {
+      VK_SHADER_STAGE_VERTEX_BIT,
+      VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
+      VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
+      VK_SHADER_STAGE_GEOMETRY_BIT,
+      VK_SHADER_STAGE_FRAGMENT_BIT,
+      VK_SHADER_STAGE_COMPUTE_BIT,
+      VK_SHADER_STAGE_MESH_BIT_EXT,
+      VK_SHADER_STAGE_TASK_BIT_EXT,
   };
 
   return vkh::PipelineShaderStageCreateInfo(ret, vkstage[(int)stage], entry_point);
@@ -967,6 +1100,12 @@ void VulkanGraphicsTest::setName(VkPipeline obj, const std::string &name)
 }
 
 template <>
+void VulkanGraphicsTest::setName(VkPipelineLayout obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_PIPELINE_LAYOUT, (uint64_t)obj, name);
+}
+
+template <>
 void VulkanGraphicsTest::setName(VkFramebuffer obj, const std::string &name)
 {
   setName(VK_OBJECT_TYPE_FRAMEBUFFER, (uint64_t)obj, name);
@@ -976,6 +1115,12 @@ template <>
 void VulkanGraphicsTest::setName(VkImage obj, const std::string &name)
 {
   setName(VK_OBJECT_TYPE_IMAGE, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkImageView obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_IMAGE_VIEW, (uint64_t)obj, name);
 }
 
 template <>
@@ -991,9 +1136,69 @@ void VulkanGraphicsTest::setName(VkBuffer obj, const std::string &name)
 }
 
 template <>
+void VulkanGraphicsTest::setName(VkBufferView obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_BUFFER_VIEW, (uint64_t)obj, name);
+}
+
+template <>
 void VulkanGraphicsTest::setName(VkSemaphore obj, const std::string &name)
 {
   setName(VK_OBJECT_TYPE_SEMAPHORE, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkFence obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_FENCE, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkAccelerationStructureKHR obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkDescriptorSetLayout obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkDescriptorSet obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_DESCRIPTOR_SET, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkRenderPass obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_RENDER_PASS, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkCommandBuffer obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_COMMAND_BUFFER, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkCommandPool obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_COMMAND_POOL, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkQueue obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_QUEUE, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkShaderModule obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_SHADER_MODULE, (uint64_t)obj, name);
 }
 
 void VulkanGraphicsTest::setName(VkObjectType objType, uint64_t obj, const std::string &name)
@@ -1158,6 +1363,11 @@ VkDescriptorSet VulkanGraphicsTest::allocateDescriptorSet(VkDescriptorSetLayout 
 
       inlineCreateInfo.maxInlineUniformBlockBindings = 1024;
       next = &inlineCreateInfo;
+    }
+
+    if(hasExt(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME))
+    {
+      poolSizes.push_back({VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1024});
     }
 
     CHECK_VKR(vkCreateDescriptorPool(
@@ -1363,17 +1573,6 @@ VulkanWindow::VulkanWindow(VulkanGraphicsTest *test, GraphicsWindow *win)
   {
     std::lock_guard<std::mutex> lock(m_Test->mutex);
 
-    for(size_t i = 0; i < ARRAY_COUNT(renderStartSemaphore); i++)
-    {
-      CHECK_VKR(vkCreateSemaphore(m_Test->device, vkh::SemaphoreCreateInfo(), NULL,
-                                  &renderStartSemaphore[i]));
-      CHECK_VKR(vkCreateSemaphore(m_Test->device, vkh::SemaphoreCreateInfo(), NULL,
-                                  &renderEndSemaphore[i]));
-
-      test->setName(renderStartSemaphore[i], title + " renderStartSemaphore" + std::to_string(i));
-      test->setName(renderEndSemaphore[i], title + " renderEndSemaphore" + std::to_string(i));
-    }
-
 #if defined(WIN32)
     VkWin32SurfaceCreateInfoKHR createInfo;
 
@@ -1404,6 +1603,15 @@ VulkanWindow::VulkanWindow(VulkanGraphicsTest *test, GraphicsWindow *win)
 
     vkCreateXcbSurfaceKHR(m_Test->instance, &createInfo, NULL, &surface);
 #elif defined(__APPLE__)
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+    VkMetalSurfaceCreateInfoEXT mtlCreateInfo;
+    mtlCreateInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
+    mtlCreateInfo.pNext = NULL;
+    mtlCreateInfo.flags = 0;
+    mtlCreateInfo.pLayer = ((AppleWindow *)win)->layer;
+    vkCreateMetalSurfaceEXT(m_Test->instance, &mtlCreateInfo, NULL, &surface);
+#endif
+#if defined(VK_USE_PLATFORM_MACOS_MVK)
     VkMacOSSurfaceCreateInfoMVK createInfo;
 
     createInfo.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
@@ -1411,6 +1619,7 @@ VulkanWindow::VulkanWindow(VulkanGraphicsTest *test, GraphicsWindow *win)
     createInfo.flags = 0;
     createInfo.pView = ((AppleWindow *)win)->view;
     vkCreateMacOSSurfaceMVK(m_Test->instance, &createInfo, NULL, &surface);
+#endif
 #else
 #error UNKNOWN PLATFORM
 #endif
@@ -1426,10 +1635,16 @@ VulkanWindow::~VulkanWindow()
   DestroySwapchain();
 
   {
-    for(size_t i = 0; i < ARRAY_COUNT(renderStartSemaphore); i++)
+    TEST_ASSERT(renderStartSemaphore.size() == renderEndSemaphore.size(),
+                "size mismatch between start/end semaphore");
+    TEST_ASSERT(renderStartSemaphore.size() == imageFences.size(),
+                "size mismatch between render/image semaphore");
+
+    for(size_t i = 0; i < renderStartSemaphore.size(); i++)
     {
       vkDestroySemaphore(m_Test->device, renderStartSemaphore[i], NULL);
       vkDestroySemaphore(m_Test->device, renderEndSemaphore[i], NULL);
+      vkDestroyFence(m_Test->device, imageFences[i], NULL);
     }
 
     if(surface)
@@ -1474,7 +1689,8 @@ bool VulkanWindow::CreateSwapchain()
 
   for(const VkSurfaceFormatKHR &f : formats)
   {
-    if(f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+    if((f.format == VK_FORMAT_B8G8R8A8_SRGB || f.format == VK_FORMAT_R8G8B8A8_SRGB) &&
+       f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
     {
       surfaceFormat = f;
       break;
@@ -1517,9 +1733,9 @@ bool VulkanWindow::CreateSwapchain()
 
   CHECK_VKR(vkCreateSwapchainKHR(
       m_Test->device,
-      vkh::SwapchainCreateInfoKHR(
-          surface, mode, surfaceFormat, {width, height},
-          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
+      vkh::SwapchainCreateInfoKHR(surface, mode, surfaceFormat, {width, height},
+                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                                  VK_NULL_HANDLE, capabilities.minImageCount),
       NULL, &swap));
 
   CHECK_VKR(vkh::getSwapchainImagesKHR(imgs, m_Test->device, swap));
@@ -1533,11 +1749,37 @@ bool VulkanWindow::CreateSwapchain()
 
     renderPassCreateInfo.addSubpass({VkAttachmentReference({0, VK_IMAGE_LAYOUT_GENERAL})});
 
+    // add deps to allow clear/copy on the main target before or after
+    renderPassCreateInfo.dependencies.push_back(vkh::SubpassDependency(
+        ~0U, 0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT));
+    renderPassCreateInfo.dependencies.push_back(vkh::SubpassDependency(
+        0, ~0U, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT));
+
     rp = m_Test->createRenderPass(renderPassCreateInfo);
   }
 
-  TEST_ASSERT(imgs.size() <= ARRAY_COUNT(renderStartSemaphore),
-              "Expected to have one semaphore set per image");
+  renderStartSemaphore.resize(imgs.size());
+  renderEndSemaphore.resize(imgs.size());
+  imageFences.resize(imgs.size());
+  for(size_t i = 0; i < renderStartSemaphore.size(); i++)
+  {
+    CHECK_VKR(vkCreateSemaphore(m_Test->device, vkh::SemaphoreCreateInfo(), NULL,
+                                &renderStartSemaphore[i]));
+    CHECK_VKR(vkCreateSemaphore(m_Test->device, vkh::SemaphoreCreateInfo(), NULL,
+                                &renderEndSemaphore[i]));
+
+    m_Test->setName(renderStartSemaphore[i], title + " renderStartSemaphore" + std::to_string(i));
+    m_Test->setName(renderEndSemaphore[i], title + " renderEndSemaphore" + std::to_string(i));
+
+    CHECK_VKR(vkCreateFence(m_Test->device, vkh::FenceCreateInfo(VK_FENCE_CREATE_SIGNALED_BIT),
+                            NULL, &imageFences[i]));
+
+    m_Test->setName(imageFences[i], title + " fence" + std::to_string(i));
+  }
 
   imgviews.resize(imgs.size());
   for(size_t i = 0; i < imgs.size(); i++)
@@ -1558,10 +1800,14 @@ void VulkanWindow::Acquire()
   if(swap == VK_NULL_HANDLE)
     return;
 
-  semIdx = (semIdx + 1) % ARRAY_COUNT(renderStartSemaphore);
+  semIdx = (semIdx + 1) % renderStartSemaphore.size();
+
+  // acquire next image stupidly does not properly block, do a manual block
+  CHECK_VKR(vkWaitForFences(m_Test->device, 1, &imageFences[semIdx], VK_FALSE, UINT64_MAX));
+  CHECK_VKR(vkResetFences(m_Test->device, 1, &imageFences[semIdx]));
 
   VkResult vkr = vkAcquireNextImageKHR(m_Test->device, swap, UINT64_MAX,
-                                       renderStartSemaphore[semIdx], VK_NULL_HANDLE, &imgIndex);
+                                       renderStartSemaphore[semIdx], imageFences[semIdx], &imgIndex);
 
   if(vkr == VK_SUBOPTIMAL_KHR || vkr == VK_ERROR_OUT_OF_DATE_KHR)
   {
@@ -1631,6 +1877,8 @@ void VulkanWindow::Present(VkQueue queue)
 {
   if(swap == VK_NULL_HANDLE)
     return;
+
+  vkDeviceWaitIdle(m_Test->device);
 
   VkResult vkr =
       vkQueuePresentKHR(queue, vkh::PresentInfoKHR(swap, imgIndex, &renderEndSemaphore[semIdx]));
@@ -1751,13 +1999,23 @@ void AllocatedImage::free()
 }
 
 AllocatedBuffer::AllocatedBuffer(VulkanGraphicsTest *test, const VkBufferCreateInfo &bufInfo,
-                                 const VmaAllocationCreateInfo &allocInfo)
+                                 const VmaAllocationCreateInfo &allocInfo, uint32_t alignment)
 {
   this->test = test;
   allocator = test->allocator;
-  vmaCreateBuffer(allocator, &bufInfo, &allocInfo, &buffer, &alloc, NULL);
+  vmaCreateBufferWithAlignment(allocator, &bufInfo, &allocInfo, alignment, &buffer, &alloc, NULL);
 
   test->bufferAllocs[buffer] = alloc;
+
+  if(bufInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+  {
+    VkBufferDeviceAddressInfoKHR info = {
+        VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR,
+        NULL,
+        buffer,
+    };
+    address = vkGetBufferDeviceAddressKHR(test->device, &info);
+  }
 }
 
 void AllocatedBuffer::free()

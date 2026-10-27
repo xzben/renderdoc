@@ -50,11 +50,12 @@ Current Common Feature set
     * Currently set RT/textures thumbnail strip - updates as you move through the frame. Follows the currently selected pipeline slot as it changes, rather than remaining on the given texture.
     * Tabbed view for locking a view of a particular resource over time.
     * Pixel value picking.
-    * Save (in theory) any type of texture and format to various formats, dds as well as regular png/jpg.
-    * Several debug overlays for render targets - Wireframe, Depth pass/fail, Stencil pass/fail, Clipping (below black/above white points), NaN/-ve/INF highlight, quad overdraw, triangle size.
+    * Save (in theory) any type of texture and format to various formats, ``dds`` as well as regular ``png``/``jpg``.
+    * Several debug overlays for render targets - Wireframe, Depth pass/fail, Stencil pass/fail, Clipping (below black/above white points), NaN/negative/INF highlight, quad overdraw, triangle size.
 
 * Custom visualisation shader support - e.g. decode custom packed formats or gbuffers.
 * Hot shader editing and replacement.
+* Pixel history support to determine the set of changes of a given pixel.
 * Auto-range fitting to min/max values in texture data, and histogram display.
 * Simple per-action timings and tabular view of GPU counter data.
 * Python scripting console with full documented API, giving complete access to RenderDoc internals, core data structures, and the Qt UI itself.
@@ -72,7 +73,6 @@ D3D11
 
 * Support for D3D11 up to D3D11.4, Windows Vista and above. Where hardware support isn't available for feature level 11, WARP will be used.
 * Debug marker support comes from any available D3D interface (ID3DUserDefinedAnnotation, D3DPERF\_ functions, etc)
-* Pixel history view.
 * Vertex, Pixel and Compute shader debugging.
 * Detailed statistics on API call usage throughout the frame.
 
@@ -81,13 +81,14 @@ D3D12
 
 * Support for D3D12 up to D3D12.9, Windows 10 and above, and D3D12On7 on Windows 7.
 * Debug marker uses the SetMarker/BeginEvent/EndEvent functions on the command list or queue.
-* Vertex, Pixel and Compute shader debugging for DXBC/fxc shaders.
+* Vertex, Pixel and Compute shader debugging.
 
 Vulkan
 ------
 
-* Support for Vulkan 1.3 on Windows, Linux, and Android.
+* Support for Vulkan 1.4 on Windows, Linux, and Android.
 * Event markers and object naming both come from ``VK_EXT_debug_utils`` or deprecated ``VK_EXT_debug_marker``.
+* Vertex, Pixel, Mesh, and Compute shader debugging.
 
 Captures have a very limited amount of portability between machines. Many hardware-specific feature uses are baked into captures, and portability depends on how similar the capture and replay hardware are, whether these feature uses can map the same in both cases. Captures are however completely portable between different OSes with sufficiently comparable hardware.
 

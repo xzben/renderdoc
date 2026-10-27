@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -41,9 +41,17 @@ IDXGIFactory1Ptr factory;
 std::vector<IDXGIAdapterPtr> adapters;
 bool warp = false;
 
+struct Capabilities
+{
+  D3D11_FEATURE_DATA_D3D11_OPTIONS opts = {};
+  D3D11_FEATURE_DATA_D3D11_OPTIONS1 opts1 = {};
+  D3D11_FEATURE_DATA_D3D11_OPTIONS2 opts2 = {};
+} caps;
+
 pD3DCompile dyn_D3DCompile = NULL;
 pD3DStripShader dyn_D3DStripShader = NULL;
 pD3DSetBlobPart dyn_D3DSetBlobPart = NULL;
+pD3DGetBlobPart dyn_D3DGetBlobPart = NULL;
 
 PFN_D3D11_CREATE_DEVICE dyn_D3D11CreateDevice = NULL;
 PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN dyn_D3D11CreateDeviceAndSwapChain = NULL;
@@ -87,6 +95,7 @@ void D3D11GraphicsTest::Prepare(int argc, char **argv)
       dyn_D3DCompile = (pD3DCompile)GetProcAddress(d3dcompiler, "D3DCompile");
       dyn_D3DStripShader = (pD3DStripShader)GetProcAddress(d3dcompiler, "D3DStripShader");
       dyn_D3DSetBlobPart = (pD3DSetBlobPart)GetProcAddress(d3dcompiler, "D3DSetBlobPart");
+      dyn_D3DGetBlobPart = (pD3DGetBlobPart)GetProcAddress(d3dcompiler, "D3DGetBlobPart");
     }
 
     HRESULT hr = S_OK;
@@ -98,7 +107,27 @@ void D3D11GraphicsTest::Prepare(int argc, char **argv)
       if(SUCCEEDED(hr))
         adapters = FindD3DAdapters(factory, argc, argv, warp);
     }
+
+    if(dyn_D3D11CreateDevice)
+    {
+      D3D_FEATURE_LEVEL features[] = {D3D_FEATURE_LEVEL_11_0};
+      hr = CreateDevice(NULL, NULL, features, 0);
+
+      if(SUCCEEDED(hr))
+      {
+        dev->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &caps.opts, sizeof(caps.opts));
+        dev->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS1, &caps.opts1, sizeof(caps.opts1));
+        dev->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS2, &caps.opts2, sizeof(caps.opts2));
+      }
+
+      // This device was only used  to get feature support. Set it back to NULL
+      dev = NULL;
+    }
   }
+
+  opts = caps.opts;
+  opts1 = caps.opts1;
+  opts2 = caps.opts2;
 
   if(!d3d11)
     Avail = "d3d11.dll is not available";
@@ -109,24 +138,8 @@ void D3D11GraphicsTest::Prepare(int argc, char **argv)
   else if(!factory)
     Avail = "Couldn't create DXGI factory";
   else if(!dyn_D3D11CreateDevice || !dyn_D3D11CreateDeviceAndSwapChain || !dyn_D3DCompile ||
-          !dyn_D3DStripShader || !dyn_D3DSetBlobPart)
+          !dyn_D3DStripShader || !dyn_D3DSetBlobPart || !dyn_D3DGetBlobPart)
     Avail = "Missing required entry point";
-
-  if(dyn_D3D11CreateDevice)
-  {
-    D3D_FEATURE_LEVEL features[] = {D3D_FEATURE_LEVEL_11_0};
-    HRESULT hr = CreateDevice(NULL, NULL, features, 0);
-
-    if(SUCCEEDED(hr))
-    {
-      dev->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &opts, sizeof(opts));
-      dev->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS1, &opts1, sizeof(opts1));
-      dev->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS2, &opts2, sizeof(opts2));
-    }
-
-    // This device was only used  to get feature support. Set it back to NULL
-    dev = NULL;
-  }
 }
 
 bool D3D11GraphicsTest::Init(IDXGIAdapterPtr pAdapter)
@@ -520,6 +533,16 @@ void D3D11GraphicsTest::ClearRenderTargetView(ID3D11RenderTargetView *rt, Vec4f 
   ctx->ClearRenderTargetView(rt, &col.x);
 }
 
+void D3D11GraphicsTest::ClearUnorderedAccessView(ID3D11UnorderedAccessView *uav, Vec4f col)
+{
+  ctx->ClearUnorderedAccessViewFloat(uav, &col.x);
+}
+
+void D3D11GraphicsTest::ClearUnorderedAccessView(ID3D11UnorderedAccessView *uav, Vec4u col)
+{
+  ctx->ClearUnorderedAccessViewUint(uav, &col.x);
+}
+
 void D3D11GraphicsTest::RSSetViewport(D3D11_VIEWPORT view)
 {
   ctx->RSSetViewports(1, &view);
@@ -622,17 +645,28 @@ void D3D11GraphicsTest::SetStencilRef(UINT ref)
 }
 
 ID3DBlobPtr D3D11GraphicsTest::Compile(std::string src, std::string entry, std::string profile,
-                                       bool skipoptimise)
+                                       uint32_t compileOptions)
 {
+  const bool skipoptimise = ((compileOptions & CompileOptionFlags::SkipOptimise) != 0);
+  const bool separateDebugLegacy = ((compileOptions & CompileOptionFlags::SeparateDebugLegacy) != 0);
+  const bool separateDebugSetPRIV =
+      ((compileOptions & CompileOptionFlags::SeparateDebugSetPRIV) != 0);
+  const bool separateDebug = ((compileOptions & CompileOptionFlags::SeparateDebug) != 0);
+  const bool manualDebugName = ((compileOptions & CompileOptionFlags::ManualDebugName) != 0);
+  const bool lz4Compress = ((compileOptions & CompileOptionFlags::LZ4Compress) != 0);
+
   ID3DBlobPtr blob = NULL;
   ID3DBlobPtr error = NULL;
 
   UINT flags = D3DCOMPILE_WARNINGS_ARE_ERRORS | D3DCOMPILE_DEBUG;
 
+  if((separateDebugLegacy || separateDebug) && !manualDebugName)
+    flags |= D3DCOMPILE_DEBUG_NAME_FOR_SOURCE;
+
   if(skipoptimise)
     flags |= D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_OPTIMIZATION_LEVEL0;
   else
-    flags |= D3DCOMPILE_OPTIMIZATION_LEVEL0;
+    flags |= D3DCOMPILE_OPTIMIZATION_LEVEL1;
 
   HRESULT hr = dyn_D3DCompile(src.c_str(), src.length(), "", NULL, NULL, entry.c_str(),
                               profile.c_str(), flags, 0, &blob, &error);
@@ -645,6 +679,76 @@ ID3DBlobPtr D3D11GraphicsTest::Compile(std::string src, std::string entry, std::
     blob = NULL;
     error = NULL;
     return NULL;
+  }
+
+  if(separateDebugLegacy || separateDebug)
+  {
+    std::string debugName;
+    if(manualDebugName)
+    {
+      debugName = "shader_" + profile.substr(0, 2) + ".dbg";
+    }
+    else
+    {
+      ID3DBlobPtr nameBlob;
+      LPVOID bufferPointer = blob->GetBufferPointer();
+      hr = dyn_D3DGetBlobPart(bufferPointer, blob->GetBufferSize(), D3D_BLOB_DEBUG_NAME, 0,
+                              &nameBlob);
+
+      if(SUCCEEDED(hr))
+      {
+        const uint16_t *flags_len = (const uint16_t *)nameBlob->GetBufferPointer();
+
+        const char *name_str = (const char *)(flags_len + 2);
+
+        debugName.assign(name_str, flags_len[1]);
+      }
+      else
+      {
+        TEST_ERROR("Couldn't get automatic name");
+        debugName = "shader_" + profile.substr(0, 2) + ".dbg";
+      }
+    }
+
+    std::string path = tmpPath + "/" + debugName;
+
+    if(separateDebug)
+    {
+      ID3DBlobPtr debugBlob;
+      dyn_D3DGetBlobPart(blob->GetBufferPointer(), blob->GetBufferSize(), D3D_BLOB_PDB, 0,
+                         &debugBlob);
+
+      WriteBlob(path, debugBlob, lz4Compress);
+
+      if(manualDebugName)
+      {
+        std::string nameBlob = path;
+        // pad the blob to multiple of 4
+        nameBlob.resize((path.size() + 0x3) & ~0x3);
+
+        nameBlob.insert(0, 4, '\0');
+        nameBlob[2] += path.size() & 0xff;
+
+        if(path.size() > 255)
+          TEST_ERROR("tmp path is too long!");
+
+        ID3DBlobPtr newBlob;
+
+        dyn_D3DSetBlobPart(blob->GetBufferPointer(), blob->GetBufferSize(), D3D_BLOB_DEBUG_NAME, 0,
+                           nameBlob.c_str(), nameBlob.size(), &newBlob);
+
+        blob = newBlob;
+      }
+    }
+    else if(separateDebugLegacy)
+    {
+      WriteBlob(path, blob, lz4Compress);
+
+      if(separateDebugSetPRIV)
+        SetBlobPath(path, blob);
+    }
+
+    Strip(blob);
   }
 
   return blob;

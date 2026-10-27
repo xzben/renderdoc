@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -45,7 +45,7 @@ VkResult WrappedVulkan::vkCreateMacOSSurfaceMVK(VkInstance instance,
 
   if(ret == VK_SUCCESS)
   {
-    GetResourceManager()->WrapResource(Unwrap(instance), *pSurface);
+    GetResourceManager()->WrapResource(ResourceId(), Unwrap(instance), *pSurface);
 
     WrappedVkSurfaceKHR *wrapped = GetWrapped(*pSurface);
 
@@ -71,7 +71,7 @@ VkResult WrappedVulkan::vkCreateMetalSurfaceEXT(VkInstance instance,
 
   if(ret == VK_SUCCESS)
   {
-    GetResourceManager()->WrapResource(Unwrap(instance), *pSurface);
+    GetResourceManager()->WrapResource(ResourceId(), Unwrap(instance), *pSurface);
 
     WrappedVkSurfaceKHR *wrapped = GetWrapped(*pSurface);
 
@@ -105,7 +105,7 @@ void VulkanReplay::OutputWindow::CreateSurface(WrappedVulkan *driver, VkInstance
     RDCDEBUG("Creating macOS surface with EXT_metal_surface");
 
     VkResult vkr = ObjDisp(inst)->CreateMetalSurfaceEXT(Unwrap(inst), &createInfo, NULL, &surface);
-    driver->CheckVkResult(vkr);
+    CHECK_VKR(driver, vkr);
     return;
   }
 #endif
@@ -123,7 +123,7 @@ void VulkanReplay::OutputWindow::CreateSurface(WrappedVulkan *driver, VkInstance
     RDCDEBUG("Creating macOS surface with MVK_macos_surface");
 
     VkResult vkr = ObjDisp(inst)->CreateMacOSSurfaceMVK(Unwrap(inst), &createInfo, NULL, &surface);
-    driver->CheckVkResult(vkr);
+    CHECK_VKR(driver, vkr);
     return;
   }
 #endif

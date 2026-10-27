@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -36,13 +36,28 @@
 #include "common/timing.h"
 #include "os/os_specific.h"
 
+DECLARE_REFLECTION_ENUM(RENDERDOC_AnnotationType);
+DECLARE_REFLECTION_STRUCT(RENDERDOC_AnnotationValue);
+
 class Chunk;
 struct RDCThumb;
 struct ReplayOptions;
 struct SDObject;
 
+void WriteAnnotation(SDObject *obj, RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
+                     RENDERDOC_AnnotationValue value);
+
+struct PendingAnnotation
+{
+  uint32_t eventId;
+  rdcstr key;
+  RENDERDOC_AnnotationType valueType;
+  uint32_t valueVectorWidth;
+  RENDERDOC_AnnotationValue value;
+};
+
 // not provided by tinyexr, just do by hand
-bool is_exr_file(FILE *f);
+bool is_exr_file(const byte *headerBuffer, size_t size);
 void LogReplayOptions(const ReplayOptions &opts);
 
 enum class RDCDriver : uint32_t;
@@ -103,6 +118,13 @@ struct IFrameCapturer
   virtual void StartFrameCapture(DeviceOwnedWindow devWnd) = 0;
   virtual bool EndFrameCapture(DeviceOwnedWindow devWnd) = 0;
   virtual bool DiscardFrameCapture(DeviceOwnedWindow devWnd) = 0;
+
+  virtual uint32_t SetObjectAnnotation(void *object, const char *key,
+                                       RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
+                                       const RENDERDOC_AnnotationValue *value) = 0;
+  virtual uint32_t SetCommandAnnotation(void *queueOrCommandBuffer, const char *key,
+                                        RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
+                                        const RENDERDOC_AnnotationValue *value) = 0;
 };
 
 struct IDeviceProtocolHandler;
@@ -379,6 +401,7 @@ typedef bool (*VulkanLayerCheck)(VulkanLayerFlags &flags, rdcarray<rdcstr> &myJS
 typedef void (*VulkanLayerInstall)(bool systemLevel);
 
 typedef void (*ShutdownFunction)();
+typedef void (*EnvSetupFunction)();
 
 // this class mediates everything and owns any 'global' resources such as the crash handler.
 //
@@ -478,7 +501,7 @@ public:
   void RegisterMemoryRegion(void *mem, size_t size);
   void UnregisterMemoryRegion(void *mem);
   void ResamplePixels(const FramePixels &in, RDCThumb &out);
-  void EncodePixelsPNG(const RDCThumb &in, RDCThumb &out);
+  void EncodeThumbPixels(const RDCThumb &in, RDCThumb &out);
   RDCFile *CreateRDC(RDCDriver driver, uint32_t frameNum, const FramePixels &fp);
   void FinishCaptureWriting(RDCFile *rdc, uint32_t frameNumber);
 
@@ -513,6 +536,8 @@ public:
 
   rdcarray<CaptureFileFormat> GetCaptureFileFormats();
   rdcarray<GPUDevice> GetAvailableGPUs();
+
+  void AddEnvSetup(EnvSetupFunction envSetup) { m_EnvSetups.push_back(envSetup); }
 
   void SetVulkanLayerCheck(VulkanLayerCheck callback) { m_VulkanCheck = callback; }
   void SetVulkanLayerInstall(VulkanLayerInstall callback) { m_VulkanInstall = callback; }
@@ -572,6 +597,8 @@ public:
   void AddDeviceFrameCapturer(void *dev, IFrameCapturer *cap);
   void RemoveDeviceFrameCapturer(void *dev);
 
+  IFrameCapturer *MatchFrameCapturer(DeviceOwnedWindow devWnd);
+
   void StartFrameCapture(DeviceOwnedWindow devWnd);
   bool IsFrameCapturing() { return m_CapturesActive > 0; }
   void SetActiveWindow(DeviceOwnedWindow devWnd);
@@ -614,11 +641,41 @@ public:
   void CycleActiveWindow();
   uint32_t GetCapturableWindowCount();
 
+  bool GetTrackedFileData(const rdcstr &nickname, bytebuf &data) const;
+  bool AddTrackedFileReference(const rdcstr &nickname, const rdcstr &filepath);
+  void ClearTrackedFiles();
+  bool HasTrackedFileData() const;
+  rdcarray<rdcstr> GetTrackedFileNicknames() const;
+
+  RDResult EmbedExternalFiles(RDCFile *rdc);
+  RDResult RemoveExternalFiles(RDCFile *rdc);
+  bool HasEmbeddedFiles(RDCFile *rdc) const;
+  RDResult ReadExternalFiles(RDCFile *rdc);
+
 private:
   RenderDoc();
   ~RenderDoc();
 
+  struct TrackedFile
+  {
+    TrackedFile() = default;
+    TrackedFile(const rdcstr &name, const rdcstr &path)
+        : nickname(name), filepath(path), hasData(false)
+    {
+    }
+    TrackedFile(const rdcstr &name, const bytebuf &contents)
+        : nickname(name), data(contents), hasData(true)
+    {
+    }
+    rdcstr nickname;
+    rdcstr filepath;
+    bytebuf data;
+    bool hasData;
+  };
+
   void SyncAvailableGPUThread();
+  RDResult WriteExternalFiles(RDCFile *rdc, const rdcarray<TrackedFile> &trackedFiles);
+  bool DoesTrackedFileExist(const rdcstr &nickname) const;
 
   bool m_Replay;
 
@@ -681,7 +738,9 @@ private:
   VulkanLayerCheck m_VulkanCheck;
   VulkanLayerInstall m_VulkanInstall;
 
+  Threading::CriticalSection m_ShutdownLock;
   rdcarray<ShutdownFunction> m_ShutdownFunctions;
+  rdcarray<EnvSetupFunction> m_EnvSetups;
 
   struct FrameCap
   {
@@ -701,8 +760,6 @@ private:
   DeviceOwnedWindow m_ActiveWindow;
   std::map<void *, IFrameCapturer *> m_DeviceFrameCapturers;
 
-  IFrameCapturer *MatchFrameCapturer(DeviceOwnedWindow devWnd);
-
   bool m_VendorExts[arraydim<VendorExtensions>()] = {};
 
   volatile bool m_TargetControlThreadShutdown;
@@ -719,6 +776,9 @@ private:
 
   ICrashHandler *m_ExHandler;
   Threading::RWLock m_ExHandlerLock;
+
+  mutable Threading::RWLock m_TrackedFilesLock;
+  rdcarray<TrackedFile> m_TrackedFiles;
 
   void ProcessConfig();
 

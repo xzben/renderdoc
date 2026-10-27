@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -69,6 +69,7 @@ void DumpObject(FileIO::LogFileHandle *log, const rdcstr &indent, SDObject *obj)
       case SDBasic::Boolean: val = ToStr(obj->data.basic.b); break;
       case SDBasic::Character: val = ToStr(obj->data.basic.c); break;
       case SDBasic::Resource: val = ToStr(obj->data.basic.id); break;
+      case SDBasic::GPUAddress: val = "GPUAddress::" + ToStr(obj->data.basic.u); break;
     }
     rdcstr msg = StringFormat::Fmt("%s%s %s = %s\n", indent.c_str(), obj->type.name.c_str(),
                                    obj->name.c_str(), val.c_str());
@@ -351,7 +352,10 @@ uint32_t Serialiser<SerialiserMode::Writing>::BeginChunk(uint32_t chunkID, uint6
 {
   // cannot start a chunk inside a chunk
   RDCASSERTMSG("Beginning a chunk inside another chunk", m_ChunkMetadata.chunkID == 0,
-               m_ChunkMetadata.chunkID);
+               m_ChunkMetadata.chunkID, chunkID);
+
+  // don't carry over any previous sideband data
+  m_SidebandKV.clear();
 
   {
     // chunk index needs to be valid
@@ -423,7 +427,7 @@ uint32_t Serialiser<SerialiserMode::Writing>::BeginChunk(uint32_t chunkID, uint6
         m_Write->Write(m_ChunkMetadata.timestampMicro);
       }
 
-      if(byteLength > 0 || m_DataStreaming)
+      if((byteLength > 0 && byteLength != LARGE_CHUNK_SIZE) || m_DataStreaming)
       {
         // write length, assuming it is an upper bound
         m_ChunkFixup = 0;
@@ -438,6 +442,13 @@ uint32_t Serialiser<SerialiserMode::Writing>::BeginChunk(uint32_t chunkID, uint6
         }
         m_LastChunkOffset = m_Write->GetOffset();
         m_ChunkMetadata.length = byteLength;
+      }
+      else if(byteLength == LARGE_CHUNK_SIZE)
+      {
+        uint64_t chunkSize = 0xbeebfeedbeebfeedULL;
+        m_ChunkFixup = m_Write->GetOffset();
+        m_Write->Write(chunkSize);
+        m_ChunkMetadata.length = LARGE_CHUNK_SIZE;
       }
       else
       {
@@ -489,14 +500,23 @@ void Serialiser<SerialiserMode::Writing>::EndChunk()
 
     RDCASSERT(curOffset > chunkOffset);
 
-    uint64_t chunkLength = (curOffset - chunkOffset) - sizeof(uint32_t);
-    if(chunkLength > 0xffffffff)
+    uint64_t chunkLength = (curOffset - chunkOffset);
+    if(m_ChunkMetadata.length == LARGE_CHUNK_SIZE)
     {
-      RDCERR("!!! CHUNK LENGTH %llu EXCEEDED 32 BIT VALUE. CAPTURE WILL BE CORRUPTED. !!!",
-             chunkLength);
+      chunkLength -= sizeof(uint64_t);
+      m_Write->WriteAt(chunkOffset, chunkLength);
     }
+    else
+    {
+      chunkLength -= sizeof(uint32_t);
+      if(chunkLength > 0xffffffff)
+      {
+        RDCERR("!!! CHUNK LENGTH %llu EXCEEDED 32 BIT VALUE. CAPTURE WILL BE CORRUPTED. !!!",
+               chunkLength);
+      }
 
-    m_Write->WriteAt(chunkOffset, uint32_t(chunkLength & 0xffffffff));
+      m_Write->WriteAt(chunkOffset, uint32_t(chunkLength & 0xffffffff));
+    }
 
     m_ChunkMetadata.length = chunkLength;
   }
@@ -772,6 +792,7 @@ void DoSerialise(SerialiserType &ser, SDChunk &el)
 }
 
 INSTANTIATE_SERIALISE_TYPE(SDChunk);
+INSTANTIATE_SERIALISE_TYPE(SDObject);
 
 // serialise the pointer version - special case for writing a structured file, so can assume writing
 template <class SerialiserType>
@@ -835,6 +856,7 @@ void DoSerialise(SerialiserType &ser, SDObject *el)
     case SDBasic::Character: ser.Serialise(""_lit, el->data.basic.c); break;
     case SDBasic::Resource: ser.Serialise(""_lit, el->data.basic.id); break;
     case SDBasic::Enum:
+    case SDBasic::GPUAddress:
     case SDBasic::UnsignedInteger:
       if(el->type.byteSize == 1)
       {
@@ -1030,8 +1052,8 @@ Chunk *Chunk::Create(Serialiser<SerialiserMode::Writing> &ser, uint16_t chunkTyp
 {
   RDCCOMPILE_ASSERT(sizeof(Chunk) <= 16, "Chunk should be no more than 16 bytes");
 
-  RDCASSERT(ser.GetWriter()->GetOffset() < 0xffffffff);
-  uint32_t length = (uint32_t)ser.GetWriter()->GetOffset();
+  uint64_t length = ser.GetWriter()->GetOffset();
+  RDCASSERT(length < (1ULL << CHUNK_LENGTH_BITS));
 
   byte *data = NULL;
 

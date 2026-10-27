@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -59,7 +59,7 @@ struct GLInitParams
   rdcstr renderer, version;
 
   // check if a frame capture section version is supported
-  static const uint64_t CurrentVersion = 0x23;
+  static const uint64_t CurrentVersion = 0x24;
   static bool IsSupportedVersion(uint64_t ver);
 };
 
@@ -185,6 +185,12 @@ private:
 
   void *m_LastCtx;
   int m_ImplicitThreadSwitches = 0;
+
+  // Object and command annotation support
+  Threading::CriticalSection m_AnnotationsLock;
+  std::unordered_map<ResourceId, SDObject *> m_Annotations;    // Object annotations by ResourceId
+  SDObject *m_RootAnnotation = NULL;                           // Root for event annotation state
+  rdcarray<SDObject *> m_EventAnnotations;                     // Track allocations for cleanup
 
   GLContextTLSData m_EmptyTLSData;
   uint64_t m_CurCtxDataTLS;
@@ -574,6 +580,12 @@ private:
   rdcarray<QueuedResource> m_QueuedInitialFetches;
   rdcarray<QueuedResource> m_QueuedReleases;
 
+  void RemoveAnnotations(ResourceId id)
+  {
+    SCOPED_LOCK(m_AnnotationsLock);
+    m_Annotations.erase(id);
+  }
+
   void QueuePrepareInitialState(GLResource res);
   void QueueResourceRelease(GLResource res);
   void CheckQueuedInitialFetches(void *ctx);
@@ -587,7 +599,7 @@ private:
   void RenderText(float x, float y, const rdcstr &text);
   void RenderTextInternal(float x, float y, const rdcstr &text);
 
-  void CreateReplayBackbuffer(const GLInitParams &params, ResourceId fboOrigId, GLuint &fbo,
+  void CreateReplayBackbuffer(const GLInitParams &params, ResourceId fboId, GLuint &fbo,
                               rdcstr bbname);
 
   RenderDoc::FramePixels *SaveBackbufferImage();
@@ -604,6 +616,7 @@ private:
   // final check function to ensure we don't try and render with no index or vertex buffer bound, as
   // many drivers will still try to access memory via legacy behaviour even on core profile.
   bool Check_SafeDraw(bool indexed);
+  bool Check_SafeDrawAtEventID(uint32_t eid) const;
 
   void StoreCompressedTexData(ResourceId texId, GLenum target, GLint level, bool subUpdate,
                               GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width,
@@ -653,6 +666,15 @@ public:
   {
     SDFile *ret = m_StoredStructuredData;
     m_StoredStructuredData = m_StructuredFile = NULL;
+    return ret;
+  }
+  rdcarray<SDObject *> DetachAnnotations()
+  {
+    rdcarray<SDObject *> ret;
+    ret.swap(m_EventAnnotations);
+    for(auto it = m_Annotations.begin(); it != m_Annotations.end(); ++it)
+      ret.push_back(it->second);
+    m_Annotations.clear();
     return ret;
   }
   void SetFetchCounters(bool in) { m_FetchCounters = in; };
@@ -705,6 +727,17 @@ public:
   bool EndFrameCapture(DeviceOwnedWindow devWnd);
   bool DiscardFrameCapture(DeviceOwnedWindow devWnd);
 
+  template <typename SerialiserType>
+  bool Serialise_SetCommandAnnotation(SerialiserType &ser, rdcstr key,
+                                      RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
+                                      RENDERDOC_AnnotationValue value);
+
+  uint32_t SetObjectAnnotation(void *object, const char *key, RENDERDOC_AnnotationType valueType,
+                               uint32_t valueVectorWidth, const RENDERDOC_AnnotationValue *value);
+  uint32_t SetCommandAnnotation(void *queueOrCommandBuffer, const char *key,
+                                RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
+                                const RENDERDOC_AnnotationValue *value);
+
   // map with key being mip level, value being stored data
   typedef std::map<int, bytebuf> CompressedDataStore;
 
@@ -721,8 +754,8 @@ public:
     rdcspv::Reflector spirv;
     rdcstr disassembly;
     std::map<size_t, uint32_t> spirvInstructionLines;
-    ShaderReflection *reflection;
     int version;
+    const ShaderReflection *GetReflection() const { return reflection; }
 
     // used only when we're capturing and don't have driver-side reflection so we need to emulate
     glslang::TShader *glslangShader = NULL;
@@ -730,6 +763,15 @@ public:
     // used for if the application actually uploaded SPIR-V
     rdcarray<uint32_t> spirvWords;
     SPIRVPatchData patchData;
+
+    rdcarray<SpecConstant> specInfo;
+
+    // used if the application uploaded GLSL but we were able to compile to SPIR-V
+    bool convertedSPIRV = false;
+    bool convertedAutomapped = false;
+    rdcarray<uint32_t> convertedSpirvWords;
+    SPIRVPatchData convertedPatchData;
+    ShaderReflection convertedRefl;
 
     // the parameters passed to glSpecializeShader
     rdcstr entryPoint;
@@ -740,6 +782,27 @@ public:
     void ProcessSPIRVCompilation(WrappedOpenGL &drv, ResourceId id, GLuint realShader,
                                  const GLchar *pEntryPoint, GLuint numSpecializationConstants,
                                  const GLuint *pConstantIndex, const GLuint *pConstantValue);
+
+    void ClearReflection()
+    {
+      *reflection = ShaderReflection();
+      spirv = rdcspv::Reflector();
+    }
+    const ShaderReflection *StealReflection()
+    {
+      ShaderReflection *ret = reflection;
+      reflection = NULL;
+      return ret;
+    }
+
+    void Disassemble(const rdcstr &disasmEntryPoint)
+    {
+      if(disassembly.empty())
+        disassembly = spirv.Disassemble(disasmEntryPoint, specInfo, spirvInstructionLines);
+    }
+
+  private:
+    ShaderReflection *reflection;
   };
 
   struct ProgramData
@@ -786,15 +849,22 @@ public:
   std::map<ResourceId, ProgramData> m_Programs;
   std::map<ResourceId, PipelineData> m_Pipelines;
 
+  bool HasShader(ResourceId id) { return m_Shaders.find(id) != m_Shaders.end(); }
+  const ShaderData &GetShader(ResourceId id) { return m_Shaders[id]; }
+  ShaderData &GetWriteableShader(ResourceId id) { return m_Shaders[id]; }
+  const ProgramData &GetProgram(ResourceId id) { return m_Programs[id]; }
+  ProgramData &GetWriteableProgram(ResourceId id) { return m_Programs[id]; }
+  const PipelineData &GetPipeline(ResourceId id) { return m_Pipelines[id]; }
+
   void FillReflectionArray(ResourceId program, PerStageReflections &stages)
   {
-    ProgramData &progdata = m_Programs[program];
+    const ProgramData &progdata = GetProgram(program);
     for(size_t i = 0; i < ARRAY_COUNT(progdata.stageShaders); i++)
     {
       ResourceId shadId = progdata.stageShaders[i];
       if(shadId != ResourceId())
       {
-        stages.refls[i] = m_Shaders[shadId].reflection;
+        stages.refls[i] = GetShader(shadId).GetReflection();
       }
     }
   }

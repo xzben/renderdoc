@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2021-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,6 +30,27 @@ RD_TEST(D3D11_Parameter_Zoo, D3D11GraphicsTest)
       "General tests of parameters known to cause problems - e.g. optional values that should be "
       "ignored, edge cases, special values, etc.";
 
+  std::string pixel = R"EOSHADER(
+
+struct v2f
+{
+	float4 pos : SV_POSITION;
+	float4 col : COLOR0;
+	float2 uv : TEXCOORD0;
+};
+
+cbuffer cbuf : register(b0)
+{
+  float4 cbuf_zero;
+};
+
+float4 main(v2f IN) : SV_Target0
+{
+	return IN.col + cbuf_zero;
+}
+
+)EOSHADER";
+
   int main()
   {
     // initialise, create window, create device, etc
@@ -37,12 +58,15 @@ RD_TEST(D3D11_Parameter_Zoo, D3D11GraphicsTest)
       return 3;
 
     ID3DBlobPtr vsblob = Compile(D3DDefaultVertex, "main", "vs_4_0");
-    ID3DBlobPtr psblob = Compile(D3DDefaultPixel, "main", "ps_4_0");
+    ID3DBlobPtr psblob = Compile(pixel, "main", "ps_4_0");
 
     CreateDefaultInputLayout(vsblob);
 
     ID3D11VertexShaderPtr vs = CreateVS(vsblob);
     ID3D11PixelShaderPtr ps = CreatePS(psblob);
+
+    float whiteData[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    ID3D11BufferPtr cb = MakeBuffer().Constant().Data(whiteData);
 
     ID3D11BufferPtr vb = MakeBuffer().Vertex().Data(DefaultTri);
 
@@ -59,6 +83,15 @@ RD_TEST(D3D11_Parameter_Zoo, D3D11GraphicsTest)
                                             __uuidof(ID3D11Device), NULL, &ctxstate_off));
 
     ctx1->SwapDeviceContextState(ctxstate_off, NULL);
+
+    D3D11_RASTERIZER_DESC rastDesc = {
+        D3D11_FILL_SOLID, D3D11_CULL_NONE, FALSE, 0, 0.00, 0.00, FALSE, TRUE, FALSE, FALSE,
+    };
+
+    // this is expected to alias a renderdoc-internal state
+    ID3D11RasterizerStatePtr rastStateObj;
+    dev->CreateRasterizerState(&rastDesc, &rastStateObj);
+    SetDebugName(rastStateObj, "RastState");
 
     std::string features1_tiled_resources("Features1: D3D11_TILED_RESOURCES_SUPPORTED");
     std::string features2_tiled_resources("Features2: D3D11_TILED_RESOURCES_SUPPORTED");
@@ -163,6 +196,9 @@ RD_TEST(D3D11_Parameter_Zoo, D3D11GraphicsTest)
 
       ctx->OMSetRenderTargets(1, &bbRTV.GetInterfacePtr(), NULL);
 
+      UINT zero = 0;
+      ctx1->PSSetConstantBuffers1(0, 1, &cb.GetInterfacePtr(), &zero, &zero);
+
       ctx->Draw(3, 0);
 
       setMarker(features1_tiled_resources);
@@ -171,6 +207,11 @@ RD_TEST(D3D11_Parameter_Zoo, D3D11GraphicsTest)
       setMarker(create_tile_pool_buffer);
       setMarker(create_tiled_texture2D);
       setMarker(create_tiled_texture2D1);
+
+      ctx->RSSetState(rastStateObj);
+
+      setMarker("RastState");
+      ctx->Draw(3, 0);
 
       Present();
 

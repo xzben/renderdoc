@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -44,7 +44,8 @@ enum class NameType
   Member,
 };
 
-inline bool checkname(rdcstr &log, const char *baseType, rdcstr name, NameType nameType)
+inline bool checkname(rdcstr &log, const char *baseType, rdcstr name, NameType nameType,
+                      const rdcstr &mem_doc)
 {
   // skip __ prefixed names
   if(name.beginsWith("__"))
@@ -67,7 +68,7 @@ inline bool checkname(rdcstr &log, const char *baseType, rdcstr name, NameType n
     return false;
 
   // allow the config to have different names
-  if((baseType && strstr(baseType, "PersistantConfig")) || name.contains("PersistantConfig"))
+  if((baseType && strstr(baseType, "PersistentConfig")) || name.contains("PersistentConfig"))
     return false;
 
   // skip swig internal type
@@ -114,6 +115,18 @@ inline bool checkname(rdcstr &log, const char *baseType, rdcstr name, NameType n
     return true;
   }
 
+  if(member)
+  {
+    if(!mem_doc.contains(":type:"))
+    {
+      snprintf(convert_error, sizeof(convert_error) - 1,
+               "%s.%s is missing a :type: in its docstring\n", baseType, name.c_str());
+      log += convert_error;
+
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -150,7 +163,7 @@ inline bool check_interface(rdcstr &log, swig_type_info **swig_types, size_t num
     }
 
     rdcstr typeName = typeobj->tp_name;
-    errors_found |= checkname(log, "renderdoc", typeName, NameType::Type);
+    errors_found |= checkname(log, "renderdoc", typeName, NameType::Type, "");
 
     PyObject *dict = typeobj->tp_dict;
 
@@ -200,11 +213,33 @@ inline bool check_interface(rdcstr &log, swig_type_info **swig_types, size_t num
 
               NameType nameType = NameType::Member;
 
+              rdcstr mem_doc;
+
               // if the value is an integer, it's a constant
               if(PyLong_Check(value))
               {
                 constants.insert(name);
                 nameType = NameType::EnumValue;
+              }
+              else if(PyObject_HasAttrString(value, "__doc__"))
+              {
+                PyObject *doc = PyObject_GetAttrString(value, "__doc__");
+
+                if(doc)
+                {
+                  if(!Py_IsNone(doc))
+                  {
+                    char *docstr = NULL;
+                    Py_ssize_t doclen = 0;
+                    PyObject *docbytes = PyUnicode_AsUTF8String(doc);
+                    PyBytes_AsStringAndSize(docbytes, &docstr, &doclen);
+
+                    mem_doc = rdcstr(docstr, doclen);
+
+                    Py_DecRef(docbytes);
+                  }
+                  Py_DecRef(doc);
+                }
               }
 
               // if it's a callable it's a method, ignore it
@@ -221,7 +256,7 @@ inline bool check_interface(rdcstr &log, swig_type_info **swig_types, size_t num
                 }
                 else
                 {
-                  errors_found |= checkname(log, typeobj->tp_name, name, nameType);
+                  errors_found |= checkname(log, typeobj->tp_name, name, nameType, mem_doc);
                 }
               }
             }
@@ -283,7 +318,7 @@ inline bool check_interface(rdcstr &log, swig_type_info **swig_types, size_t num
     {
       rdcstr method_doc = method->ml_doc;
 
-      errors_found |= checkname(log, typeobj->tp_name, method->ml_name, NameType::Method);
+      errors_found |= checkname(log, typeobj->tp_name, method->ml_name, NameType::Method, "");
 
       int32_t i = 0;
       while(method_doc[i] == '\n')

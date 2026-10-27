@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -67,7 +67,6 @@
 #define RDOC_LINUX OPTION_OFF
 #define RDOC_APPLE OPTION_OFF
 #define RDOC_POSIX OPTION_OFF
-#define RDOC_GGP OPTION_OFF
 #define RDOC_SWITCH OPTION_OFF
 
 #elif defined(RENDERDOC_PLATFORM_ANDROID)
@@ -77,7 +76,6 @@
 #define RDOC_LINUX OPTION_OFF
 #define RDOC_APPLE OPTION_OFF
 #define RDOC_POSIX OPTION_ON
-#define RDOC_GGP OPTION_OFF
 #define RDOC_SWITCH OPTION_OFF
 
 #elif defined(RENDERDOC_PLATFORM_LINUX)
@@ -87,7 +85,6 @@
 #define RDOC_LINUX OPTION_ON
 #define RDOC_APPLE OPTION_OFF
 #define RDOC_POSIX OPTION_ON
-#define RDOC_GGP OPTION_OFF
 #define RDOC_SWITCH OPTION_OFF
 
 #elif defined(RENDERDOC_PLATFORM_APPLE)
@@ -97,17 +94,6 @@
 #define RDOC_LINUX OPTION_OFF
 #define RDOC_APPLE OPTION_ON
 #define RDOC_POSIX OPTION_ON
-#define RDOC_GGP OPTION_OFF
-#define RDOC_SWITCH OPTION_OFF
-
-#elif defined(RENDERDOC_PLATFORM_GGP)
-
-#define RDOC_WIN32 OPTION_OFF
-#define RDOC_ANDROID OPTION_OFF
-#define RDOC_LINUX OPTION_OFF
-#define RDOC_APPLE OPTION_OFF
-#define RDOC_POSIX OPTION_ON
-#define RDOC_GGP OPTION_ON
 #define RDOC_SWITCH OPTION_OFF
 
 #elif defined(RENDERDOC_PLATFORM_SWITCH)
@@ -117,7 +103,6 @@
 #define RDOC_LINUX OPTION_OFF
 #define RDOC_APPLE OPTION_OFF
 #define RDOC_POSIX OPTION_ON
-#define RDOC_GGP OPTION_OFF
 #define RDOC_SWITCH OPTION_ON
 
 #else

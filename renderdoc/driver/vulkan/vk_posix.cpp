@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -59,8 +59,7 @@ void WrappedVulkan::AddRequiredExtensions(bool instance, rdcarray<rdcstr> &exten
 
 #if(defined(VK_USE_PLATFORM_ANDROID_KHR) || defined(VK_USE_PLATFORM_XCB_KHR) ||  \
     defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XLIB_KHR) || \
-    defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT) ||  \
-    defined(VK_USE_PLATFORM_GGP))
+    defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT))
 
 #undef EXPECT_WSI
 #define EXPECT_WSI 1
@@ -149,18 +148,6 @@ void WrappedVulkan::AddRequiredExtensions(bool instance, rdcarray<rdcstr> &exten
       extensionList.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
 #endif
 
-#if defined(VK_USE_PLATFORM_GGP)
-    // must be supported
-    RDCASSERT(supportedExtensions.find(VK_GGP_STREAM_DESCRIPTOR_SURFACE_EXTENSION_NAME) !=
-              supportedExtensions.end());
-
-    m_SupportedWindowSystems.push_back(WindowingSystem::GGP);
-
-    // don't add duplicates, application will have added this but just be sure
-    if(!extensionList.contains(VK_GGP_STREAM_DESCRIPTOR_SURFACE_EXTENSION_NAME))
-      extensionList.push_back(VK_GGP_STREAM_DESCRIPTOR_SURFACE_EXTENSION_NAME);
-#endif
-
 #if EXPECT_WSI
     // we must have VK_KHR_surface to support WSI at all
     if(supportedExtensions.find(VK_KHR_SURFACE_EXTENSION_NAME) == supportedExtensions.end())
@@ -210,11 +197,6 @@ void WrappedVulkan::AddRequiredExtensions(bool instance, rdcarray<rdcstr> &exten
 #if defined(VK_USE_PLATFORM_XLIB_KHR)
       RDCWARN("XLib Output requires the '%s' extension to be present",
               VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
-#endif
-
-#if defined(VK_USE_PLATFORM_GGP)
-      RDCWARN("GGP Output requires the '%s' extension to be present",
-              VK_GGP_STREAM_DESCRIPTOR_SURFACE_EXTENSION_NAME);
 #endif
     }
 
@@ -296,6 +278,17 @@ static rdcstr GenerateJSON(const rdcstr &sopath)
            json.substr(idx + sizeof(enableVarString) - 1);
 
     idx = json.find(enableVarString);
+  }
+
+  const char layerNameString[] = "@VULKAN_LAYER_NAME@";
+
+  idx = json.find(layerNameString);
+  while(idx >= 0)
+  {
+    json = json.substr(0, idx) + "VK_LAYER_" + strupper(VulkanLayerJSONBasename) + "_Capture" +
+           json.substr(idx + sizeof(layerNameString) - 1);
+
+    idx = json.find(layerNameString);
   }
 
   return json;

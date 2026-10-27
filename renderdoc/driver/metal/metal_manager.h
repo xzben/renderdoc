@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021-2024 Baldur Karlsson
+ * Copyright (c) 2022-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,18 +33,18 @@ struct MetalInitialContents
   {
     RDCCOMPILE_ASSERT(std::is_standard_layout<MetalInitialContents>::value,
                       "MetalInitialContents must be POD");
-    memset(this, 0, sizeof(*this));
+    memset((void *)this, 0, sizeof(*this));
   }
 
   MetalInitialContents(MetalResourceType t)
   {
-    memset(this, 0, sizeof(*this));
+    memset((void *)this, 0, sizeof(*this));
     type = t;
   }
 
   MetalInitialContents(MetalResourceType t, bytebuf data)
   {
-    memset(this, 0, sizeof(*this));
+    memset((void *)this, 0, sizeof(*this));
     type = t;
     resourceContents = data;
   }
@@ -83,16 +83,14 @@ public:
     // if any objects leaked past, it's no longer safe to delete them as we would
     // be calling Shutdown() after the device that owns them is destroyed. Instead
     // we just have to leak ourselves.
-    RDCASSERT(m_LiveResourceMap.empty());
     RDCASSERT(m_InitialContents.empty());
     RDCASSERT(m_ResourceRecords.empty());
-    RDCASSERT(m_CurrentResourceMap.empty());
+    RDCASSERT(m_ResourceMap.empty());
     RDCASSERT(m_WrapperMap.empty());
 
-    m_LiveResourceMap.clear();
     m_InitialContents.clear();
     m_ResourceRecords.clear();
-    m_CurrentResourceMap.clear();
+    m_ResourceMap.clear();
     m_WrapperMap.clear();
   }
 
@@ -107,16 +105,24 @@ public:
   // ResourceManager interface
 
   template <typename realtype>
-  ResourceId WrapResource(realtype obj, typename UnwrapHelper<realtype>::Outer *&wrapped)
+  ResourceId WrapResource(ResourceId id, realtype obj,
+                          typename UnwrapHelper<realtype>::Outer *&wrapped)
   {
     RDCASSERT(obj != NULL);
     RDCASSERT(m_Device != NULL);
 
-    ResourceId id = ResourceIDGen::GetNewUniqueID();
+    // on replay, we provide an ID for replayed versions of capture-time resources. For
+    // replay-only/internal resources, we auto-gen a resource id.
+    // during capture we should always be auto-gen'ing a resource id for obvious reasons.
+    if(id == ResourceId())
+      id = ResourceIDGen::GetNewUniqueID();
+    else
+      RDCASSERT(IsReplayMode(m_State));
+
     using WrappedType = typename UnwrapHelper<realtype>::Outer;
     wrapped = new WrappedType(obj, id, m_Device);
     wrapped->m_Real = obj;
-    AddCurrentResource(id, wrapped);
+    AddResource(id, wrapped);
 
     // TODO: implement RD MTL replay
     //    if(IsReplayMode(m_State))
@@ -131,7 +137,7 @@ public:
 
     // TODO: implement RD MTL replay
 
-    ResourceManager::ReleaseCurrentResource(id);
+    ResourceManager::ReleaseResource(id);
     MetalResourceRecord *record = GetRecord(wrapped);
     if(record)
     {
@@ -167,7 +173,7 @@ private:
   bool Serialise_InitialState(WriteSerialiser &ser, ResourceId id, MetalResourceRecord *record,
                               const MetalInitialContents *initial);
   void Create_InitialState(ResourceId id, WrappedMTLObject *live, bool hasData);
-  void Apply_InitialState(WrappedMTLObject *live, const MetalInitialContents &initial);
+  void Apply_InitialState(WrappedMTLObject *live, MetalInitialContents &initial);
   // ResourceManager interface
 
   WrappedMTLDevice *m_Device;

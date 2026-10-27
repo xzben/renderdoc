@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -236,7 +236,8 @@ void Program::ParseConstant(ValueList &values, const LLVMBC::BlockOrRecord &cons
     c->setCompound(alloc, std::move(members));
     values.addValue();
   }
-  else if(IS_KNOWN(constant.id, ConstantsRecord::EVAL_GEP))
+  else if(IS_KNOWN(constant.id, ConstantsRecord::EVAL_INBOUNDS_GEP) ||
+          IS_KNOWN(constant.id, ConstantsRecord::EVAL_GEP))
   {
     Constant *c = values.nextValue<Constant>();
 
@@ -2225,17 +2226,39 @@ rdcstr Program::GetValueSymtabString(Value *v)
 void Program::SetValueSymtabString(Value *v, const rdcstr &s)
 {
   if(Constant *c = cast<Constant>(v))
+  {
     c->str = s;
+  }
   else if(Instruction *i = cast<Instruction>(v))
-    i->extra(alloc).name = s;
+  {
+    rdcstr &str = i->extra(alloc).name;
+    str = s;
+#if DISABLED(DXC_COMPATIBLE_DISASM)
+    // For instruction names convert "." -> "_" to allow the name to be used as debugger variable name
+    // "." is treated as a field separator by the debugger
+    for(size_t j = 0; j < str.size(); ++j)
+    {
+      if(str[j] == '.')
+        str[j] = '_';
+    }
+#endif
+  }
   else if(Block *b = cast<Block>(v))
+  {
     b->name = s;
+  }
   else if(GlobalVar *g = cast<GlobalVar>(v))
+  {
     g->name = s;
+  }
   else if(Function *f = cast<Function>(v))
+  {
     f->name = s;
+  }
   else if(Alias *a = cast<Alias>(v))
+  {
     a->name = s;
+  }
 }
 
 uint32_t Program::GetMetaSlot(const Metadata *m) const
@@ -2611,8 +2634,15 @@ void LLVMOrderAccumulator::processFunction(const Function *f)
   uint32_t curBlock = 0;
 
   for(Instruction *arg : func.args)
+  {
+#if DISABLED(DXC_COMPATIBLE_DISASM)
+    if(arg->slot == ~0U)
+      arg->slot = slot++;
+#else
     if(arg->getName().isEmpty())
       arg->slot = slot++;
+#endif
+  }
 
   if(!func.blocks.empty() && func.blocks[0]->name.empty())
     func.blocks[0]->slot = slot++;
@@ -2636,8 +2666,13 @@ void LLVMOrderAccumulator::processFunction(const Function *f)
     {
       accumulate(inst);
 
+#if DISABLED(DXC_COMPATIBLE_DISASM)
+      if(inst->slot == ~0U)
+        inst->slot = slot++;
+#else
       if(inst->getName().isEmpty())
         inst->slot = slot++;
+#endif
     }
 
     if(inst->op == Operation::Branch || inst->op == Operation::Unreachable ||
@@ -2653,6 +2688,16 @@ void LLVMOrderAccumulator::processFunction(const Function *f)
 
 void LLVMOrderAccumulator::exitFunction()
 {
+  // reset IDs for function constants, so that if they're used in a different function they get a new id
+  for(size_t i = firstFuncConst; i < firstFuncConst + numFuncConsts; i++)
+  {
+    if(cast<Constant>(values[i]))
+    {
+      Value *value = (Value *)values[i];
+      value->id = Value::UnvisitedID;
+    }
+  }
+
   values.resize(functionWaterMark);
 }
 

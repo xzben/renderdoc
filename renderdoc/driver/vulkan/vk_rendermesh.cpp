@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -235,7 +235,7 @@ VKMeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(VkPipelineL
       VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
       NULL,
       0,
-      false,
+      true,
       false,
       VK_POLYGON_MODE_FILL,
       VK_CULL_MODE_NONE,
@@ -394,13 +394,13 @@ VKMeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(VkPipelineL
 
   vkr = vt->CreateGraphicsPipelines(Unwrap(m_Device), VK_NULL_HANDLE, 1, &pipeInfo, NULL,
                                     &cache.pipes[VKMeshDisplayPipelines::ePipe_Wire]);
-  CheckVkResult(vkr);
+  CHECK_VKR(m_pDriver, vkr);
 
   ds.depthTestEnable = true;
 
   vkr = vt->CreateGraphicsPipelines(Unwrap(m_Device), VK_NULL_HANDLE, 1, &pipeInfo, NULL,
                                     &cache.pipes[VKMeshDisplayPipelines::ePipe_WireDepth]);
-  CheckVkResult(vkr);
+  CHECK_VKR(m_pDriver, vkr);
 
   // solid shading pipeline
   rs.polygonMode = VK_POLYGON_MODE_FILL;
@@ -408,13 +408,14 @@ VKMeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(VkPipelineL
 
   vkr = vt->CreateGraphicsPipelines(Unwrap(m_Device), VK_NULL_HANDLE, 1, &pipeInfo, NULL,
                                     &cache.pipes[VKMeshDisplayPipelines::ePipe_Solid]);
-  CheckVkResult(vkr);
+  CHECK_VKR(m_pDriver, vkr);
 
   ds.depthTestEnable = true;
+  rs.depthClampEnable = false;
 
   vkr = vt->CreateGraphicsPipelines(Unwrap(m_Device), VK_NULL_HANDLE, 1, &pipeInfo, NULL,
                                     &cache.pipes[VKMeshDisplayPipelines::ePipe_SolidDepth]);
-  CheckVkResult(vkr);
+  CHECK_VKR(m_pDriver, vkr);
 
   if(secondary.vertexResourceId != ResourceId())
   {
@@ -427,7 +428,7 @@ VKMeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(VkPipelineL
 
     vkr = vt->CreateGraphicsPipelines(Unwrap(m_Device), VK_NULL_HANDLE, 1, &pipeInfo, NULL,
                                       &cache.pipes[VKMeshDisplayPipelines::ePipe_Secondary]);
-    CheckVkResult(vkr);
+    CHECK_VKR(m_pDriver, vkr);
   }
 
   vertAttrs[1].binding = 0;
@@ -443,12 +444,12 @@ VKMeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(VkPipelineL
   {
     vkr = vt->CreateGraphicsPipelines(Unwrap(m_Device), VK_NULL_HANDLE, 1, &pipeInfo, NULL,
                                       &cache.pipes[VKMeshDisplayPipelines::ePipe_Lit]);
-    CheckVkResult(vkr);
+    CHECK_VKR(m_pDriver, vkr);
   }
 
   for(uint32_t i = 0; i < VKMeshDisplayPipelines::ePipe_Count; i++)
     if(cache.pipes[i] != VK_NULL_HANDLE)
-      m_pDriver->GetResourceManager()->WrapResource(Unwrap(m_Device), cache.pipes[i]);
+      m_pDriver->GetResourceManager()->WrapResource(ResourceId(), Unwrap(m_Device), cache.pipes[i]);
 
   vt->DestroyRenderPass(Unwrap(m_Device), rp, NULL);
 
@@ -458,7 +459,9 @@ VKMeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(VkPipelineL
 void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &secondaryDraws,
                               const MeshDisplay &cfg)
 {
-  if(cfg.position.vertexResourceId == ResourceId() || cfg.position.numIndices == 0)
+  if(cfg.position.vertexResourceId == ResourceId() ||
+     !m_pDriver->GetResourceManager()->HasResource(cfg.position.vertexResourceId) ||
+     cfg.position.numIndices == 0)
     return;
 
   auto it = m_OutputWindows.find(m_ActiveWinID);
@@ -485,7 +488,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
                                         VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
 
   vkr = vt->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-  CheckVkResult(vkr);
+  CHECK_VKR(m_pDriver, vkr);
 
   VkMarkerRegion::Begin(
       StringFormat::Fmt("RenderMesh with %zu secondary draws", secondaryDraws.size()), cmd);
@@ -508,8 +511,11 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
   VkViewport viewport = {0.0f, 0.0f, (float)m_DebugWidth, (float)m_DebugHeight, 0.0f, 1.0f};
   vt->CmdSetViewport(Unwrap(cmd), 0, 1, &viewport);
 
+  float nearPlane = cfg.cam ? ((Camera *)cfg.cam)->GetNear() : 0.1f;
+  float farPlane = cfg.cam ? ((Camera *)cfg.cam)->GetFar() : 100000.0f;
+
   Matrix4f projMat =
-      Matrix4f::Perspective(90.0f, 0.1f, 100000.0f, float(m_DebugWidth) / float(m_DebugHeight));
+      Matrix4f::Perspective(90.0f, nearPlane, farPlane, float(m_DebugWidth) / float(m_DebugHeight));
   Matrix4f InvProj = projMat.Inverse();
 
   Matrix4f camMat = cfg.cam ? ((Camera *)cfg.cam)->GetMatrix() : Matrix4f::Identity();
@@ -572,7 +578,8 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
     {
       const MeshFormat &fmt = secondaryDraws[i];
 
-      if(fmt.vertexResourceId != ResourceId())
+      if(fmt.vertexResourceId != ResourceId() &&
+         m_pDriver->GetResourceManager()->HasResource(fmt.vertexResourceId))
       {
         // TODO should move the color to a push constant so we don't have to map all the time
         MeshUBOData *data = (MeshUBOData *)m_MeshRender.UBO.Map(&dynOffs[0]);
@@ -594,7 +601,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
           vt->CmdEndRenderPass(Unwrap(cmd));
 
           vkr = vt->EndCommandBuffer(Unwrap(cmd));
-          CheckVkResult(vkr);
+          CHECK_VKR(m_pDriver, vkr);
 
           m_pDriver->SubmitCmds();
           m_pDriver->FlushQ();
@@ -607,7 +614,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
             return;
 
           vkr = vt->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-          CheckVkResult(vkr);
+          CHECK_VKR(m_pDriver, vkr);
           vt->CmdBeginRenderPass(Unwrap(cmd), &rpbegin, VK_SUBPASS_CONTENTS_INLINE);
 
           vt->CmdSetViewport(Unwrap(cmd), 0, 1, &viewport);
@@ -623,8 +630,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
         vt->CmdBindPipeline(Unwrap(cmd), VK_PIPELINE_BIND_POINT_GRAPHICS,
                             Unwrap(secondaryCache.pipes[VKMeshDisplayPipelines::ePipe_WireDepth]));
 
-        VkBuffer vb =
-            m_pDriver->GetResourceManager()->GetCurrentHandle<VkBuffer>(fmt.vertexResourceId);
+        VkBuffer vb = m_pDriver->GetResourceManager()->GetHandle<VkBuffer>(fmt.vertexResourceId);
 
         VkDeviceSize offs = fmt.vertexByteOffset - secondaryCache.primaryStridePadding;
         vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, UnwrapPtr(vb), &offs);
@@ -635,14 +641,16 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
           if(fmt.indexByteStride == 4)
             idxtype = VK_INDEX_TYPE_UINT32;
           else if(fmt.indexByteStride == 1)
-            idxtype = VK_INDEX_TYPE_UINT8_KHR;
+            idxtype = VK_INDEX_TYPE_UINT8;
 
           if(fmt.indexResourceId != ResourceId())
           {
-            VkBuffer ib =
-                m_pDriver->GetResourceManager()->GetLiveHandle<VkBuffer>(fmt.indexResourceId);
+            VkBuffer ib = m_pDriver->GetResourceManager()->GetHandle<VkBuffer>(fmt.indexResourceId);
 
-            vt->CmdBindIndexBuffer(Unwrap(cmd), Unwrap(ib), fmt.indexByteOffset, idxtype);
+            const VulkanCreationInfo::Buffer &bufProps =
+                m_pDriver->m_CreationInfo.m_Buffer[fmt.indexResourceId];
+            uint64_t ibOffs = RDCMIN(fmt.indexByteOffset, bufProps.size);
+            vt->CmdBindIndexBuffer(Unwrap(cmd), Unwrap(ib), ibOffs, idxtype);
           }
           vt->CmdDrawIndexed(Unwrap(cmd), fmt.numIndices, 1, 0, fmt.baseVertex, 0);
         }
@@ -658,7 +666,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
       vt->CmdEndRenderPass(Unwrap(cmd));
 
       vkr = vt->EndCommandBuffer(Unwrap(cmd));
-      CheckVkResult(vkr);
+      CHECK_VKR(m_pDriver, vkr);
 
       m_pDriver->SubmitCmds();
       m_pDriver->FlushQ();
@@ -669,7 +677,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
         return;
 
       vkr = vt->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-      CheckVkResult(vkr);
+      CHECK_VKR(m_pDriver, vkr);
       vt->CmdBeginRenderPass(Unwrap(cmd), &rpbegin, VK_SUBPASS_CONTENTS_INLINE);
 
       vt->CmdSetViewport(Unwrap(cmd), 0, 1, &viewport);
@@ -681,8 +689,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
 
   if(cfg.position.vertexResourceId != ResourceId())
   {
-    VkBuffer vb =
-        m_pDriver->GetResourceManager()->GetCurrentHandle<VkBuffer>(cfg.position.vertexResourceId);
+    VkBuffer vb = m_pDriver->GetResourceManager()->GetHandle<VkBuffer>(cfg.position.vertexResourceId);
 
     VkDeviceSize offs = cfg.position.vertexByteOffset;
 
@@ -698,8 +705,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
 
   if(finalVisualisation == Visualisation::Secondary)
   {
-    VkBuffer vb =
-        m_pDriver->GetResourceManager()->GetCurrentHandle<VkBuffer>(cfg.second.vertexResourceId);
+    VkBuffer vb = m_pDriver->GetResourceManager()->GetHandle<VkBuffer>(cfg.second.vertexResourceId);
 
     VkDeviceSize offs = cfg.second.vertexByteOffset;
 
@@ -797,14 +803,17 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
       if(cfg.position.indexByteStride == 4)
         idxtype = VK_INDEX_TYPE_UINT32;
       else if(cfg.position.indexByteStride == 1)
-        idxtype = VK_INDEX_TYPE_UINT8_KHR;
+        idxtype = VK_INDEX_TYPE_UINT8;
 
       if(cfg.position.indexResourceId != ResourceId())
       {
         VkBuffer ib =
-            m_pDriver->GetResourceManager()->GetCurrentHandle<VkBuffer>(cfg.position.indexResourceId);
+            m_pDriver->GetResourceManager()->GetHandle<VkBuffer>(cfg.position.indexResourceId);
 
-        vt->CmdBindIndexBuffer(Unwrap(cmd), Unwrap(ib), cfg.position.indexByteOffset, idxtype);
+        const VulkanCreationInfo::Buffer &bufProps =
+            m_pDriver->m_CreationInfo.m_Buffer[cfg.position.indexResourceId];
+        uint64_t ibOffs = RDCMIN(cfg.position.indexByteOffset, bufProps.size);
+        vt->CmdBindIndexBuffer(Unwrap(cmd), Unwrap(ib), ibOffs, idxtype);
       }
       vt->CmdDrawIndexed(Unwrap(cmd), cfg.position.numIndices, 1, 0, cfg.position.baseVertex, 0);
     }
@@ -845,14 +854,17 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
       if(cfg.position.indexByteStride == 4)
         idxtype = VK_INDEX_TYPE_UINT32;
       else if(cfg.position.indexByteStride == 1)
-        idxtype = VK_INDEX_TYPE_UINT8_KHR;
+        idxtype = VK_INDEX_TYPE_UINT8;
 
       if(cfg.position.indexResourceId != ResourceId())
       {
         VkBuffer ib =
-            m_pDriver->GetResourceManager()->GetCurrentHandle<VkBuffer>(cfg.position.indexResourceId);
+            m_pDriver->GetResourceManager()->GetHandle<VkBuffer>(cfg.position.indexResourceId);
 
-        vt->CmdBindIndexBuffer(Unwrap(cmd), Unwrap(ib), cfg.position.indexByteOffset, idxtype);
+        const VulkanCreationInfo::Buffer &bufProps =
+            m_pDriver->m_CreationInfo.m_Buffer[cfg.position.indexResourceId];
+        uint64_t ibOffs = RDCMIN(cfg.position.indexByteOffset, bufProps.size);
+        vt->CmdBindIndexBuffer(Unwrap(cmd), Unwrap(ib), ibOffs, idxtype);
       }
       vt->CmdDrawIndexed(Unwrap(cmd), cfg.position.numIndices, 1, 0, cfg.position.baseVertex, 0);
     }
@@ -915,7 +927,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
 
     m_MeshRender.BBoxVB.Unmap();
 
-    vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, UnwrapPtr(m_MeshRender.BBoxVB.buf), &vboffs);
+    vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, &m_MeshRender.BBoxVB.UnwrappedBuffer(), &vboffs);
 
     MeshUBOData *data = (MeshUBOData *)m_MeshRender.UBO.Map(&dynOffs[0]);
     if(!data)
@@ -940,7 +952,8 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
   if(!cfg.position.unproject)
   {
     VkDeviceSize vboffs = 0;
-    vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, UnwrapPtr(m_MeshRender.AxisFrustumVB.buf), &vboffs);
+    vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, &m_MeshRender.AxisFrustumVB.UnwrappedBuffer(),
+                             &vboffs);
 
     MeshUBOData *data = (MeshUBOData *)m_MeshRender.UBO.Map(&dynOffs[0]);
     if(!data)
@@ -994,7 +1007,8 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
   if(cfg.position.unproject)
   {
     VkDeviceSize vboffs = sizeof(Vec4f) * 6;    // skim the axis helpers
-    vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, UnwrapPtr(m_MeshRender.AxisFrustumVB.buf), &vboffs);
+    vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, &m_MeshRender.AxisFrustumVB.UnwrappedBuffer(),
+                             &vboffs);
 
     MeshUBOData *data = (MeshUBOData *)m_MeshRender.UBO.Map(&dynOffs[0]);
     if(!data)
@@ -1024,7 +1038,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
       vt->CmdEndRenderPass(Unwrap(cmd));
 
       vkr = vt->EndCommandBuffer(Unwrap(cmd));
-      CheckVkResult(vkr);
+      CHECK_VKR(m_pDriver, vkr);
 
       if(Vulkan_Debug_SingleSubmitFlushing())
         m_pDriver->SubmitCmds();
@@ -1040,7 +1054,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
         return;
 
       vkr = vt->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-      CheckVkResult(vkr);
+      CHECK_VKR(m_pDriver, vkr);
       vt->CmdBeginRenderPass(Unwrap(cmd), &rpbegin, VK_SUBPASS_CONTENTS_INLINE);
 
       vt->CmdSetViewport(Unwrap(cmd), 0, 1, &viewport);
@@ -1139,7 +1153,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
 
         m_MeshRender.BBoxVB.Unmap();
 
-        vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, UnwrapPtr(m_MeshRender.BBoxVB.buf), &vboffs);
+        vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, &m_MeshRender.BBoxVB.UnwrappedBuffer(), &vboffs);
 
         vt->CmdDraw(Unwrap(cmd), primSize, 1, 0, 0);
       }
@@ -1168,7 +1182,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
 
         m_MeshRender.BBoxVB.Unmap();
 
-        vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, UnwrapPtr(m_MeshRender.BBoxVB.buf), &vboffs);
+        vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, &m_MeshRender.BBoxVB.UnwrappedBuffer(), &vboffs);
 
         vt->CmdDraw(Unwrap(cmd), (uint32_t)adjacentPrimVertices.size(), 1, 0, 0);
       }
@@ -1220,7 +1234,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
 
         m_MeshRender.BBoxVB.Unmap();
 
-        vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, UnwrapPtr(m_MeshRender.BBoxVB.buf), &vboffs);
+        vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, &m_MeshRender.BBoxVB.UnwrappedBuffer(), &vboffs);
 
         vt->CmdDraw(Unwrap(cmd), 4, 1, 0, 0);
       }
@@ -1256,7 +1270,8 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
 
         for(size_t i = 0; i < inactiveVertices.size(); i++)
         {
-          vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, UnwrapPtr(m_MeshRender.BBoxVB.buf), &vboffs);
+          vt->CmdBindVertexBuffers(Unwrap(cmd), 0, 1, &m_MeshRender.BBoxVB.UnwrappedBuffer(),
+                                   &vboffs);
 
           vt->CmdDraw(Unwrap(cmd), 4, 1, 0, 0);
 
@@ -1271,7 +1286,7 @@ void VulkanReplay::RenderMesh(uint32_t eventId, const rdcarray<MeshFormat> &seco
   VkMarkerRegion::End(cmd);
 
   vkr = vt->EndCommandBuffer(Unwrap(cmd));
-  CheckVkResult(vkr);
+  CHECK_VKR(m_pDriver, vkr);
 
   if(Vulkan_Debug_SingleSubmitFlushing())
     m_pDriver->SubmitCmds();

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -296,37 +296,6 @@ void GLReplay::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h)
   m_pDriver->m_Platform.GetOutputWindowDimensions(outw, w, h);
 }
 
-void GLReplay::SetOutputWindowDimensions(uint64_t id, int32_t w, int32_t h)
-{
-  if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
-    return;
-
-  OutputWindow &outw = m_OutputWindows[id];
-
-  // can't resize an output with an actual window backing
-  if(outw.system != WindowingSystem::Headless)
-    return;
-
-  outw.width = w;
-  outw.height = h;
-
-  MakeCurrentReplayContext(m_DebugCtx);
-
-  WrappedOpenGL &drv = *m_pDriver;
-
-  bool haddepth = false;
-
-  drv.glDeleteTextures(1, &outw.BlitData.backbuffer);
-  if(outw.BlitData.depthstencil)
-  {
-    haddepth = true;
-    drv.glDeleteTextures(1, &outw.BlitData.depthstencil);
-  }
-  drv.glDeleteFramebuffers(1, &outw.BlitData.windowFBO);
-
-  CreateOutputWindowBackbuffer(outw, haddepth);
-}
-
 void GLReplay::GetOutputWindowData(uint64_t id, bytebuf &retData)
 {
   if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
@@ -370,7 +339,7 @@ void GLReplay::GetOutputWindowData(uint64_t id, bytebuf &retData)
   {
     for(int32_t x = 0; x < outw.width; x++)
     {
-      memcpy(dst, src, 3);
+      memmove(dst, src, 3);
       dst += 3;
       src += 4;
     }

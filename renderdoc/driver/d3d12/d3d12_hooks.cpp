@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -194,12 +194,22 @@ public:
   virtual void STDMETHODCALLTYPE SetForceLegacyBarrierValidation(BOOL Enable) {}
 };
 
-class WrappedID3D12Tools : public RefCounter12<ID3D12Tools>, public ID3D12Tools
+class WrappedID3D12Tools : public RefCounter12<ID3D12Tools2>, public ID3D12Tools2
 {
   BOOL m_Instrumentation = FALSE;
+  ID3D12Tools1 *m_Tools1 = NULL;
+  ID3D12Tools2 *m_Tools2 = NULL;
 public:
-  WrappedID3D12Tools() : RefCounter12(NULL) {}
-  virtual ~WrappedID3D12Tools() {}
+  WrappedID3D12Tools(ID3D12Tools *tools) : RefCounter12(NULL)
+  {
+    tools->QueryInterface(__uuidof(ID3D12Tools1), (void **)&m_Tools1);
+    tools->QueryInterface(__uuidof(ID3D12Tools2), (void **)&m_Tools2);
+  }
+  virtual ~WrappedID3D12Tools()
+  {
+    SAFE_RELEASE(m_Tools1);
+    SAFE_RELEASE(m_Tools2);
+  }
   //////////////////////////////
   // Implement IUnknown
   ULONG STDMETHODCALLTYPE AddRef() { return RefCounter12::AddRef(); }
@@ -218,6 +228,18 @@ public:
       AddRef();
       return S_OK;
     }
+    if(riid == __uuidof(ID3D12Tools1))
+    {
+      *ppvObject = (ID3D12Tools1 *)this;
+      AddRef();
+      return S_OK;
+    }
+    if(riid == __uuidof(ID3D12Tools2))
+    {
+      *ppvObject = (ID3D12Tools2 *)this;
+      AddRef();
+      return S_OK;
+    }
 
     return E_NOINTERFACE;
   }
@@ -230,6 +252,32 @@ public:
   }
 
   virtual BOOL STDMETHODCALLTYPE ShaderInstrumentationEnabled(void) { return m_Instrumentation; }
+
+  //////////////////////////////
+  // Implement ID3D12Tools1
+  virtual HRESULT STDMETHODCALLTYPE ReserveGPUVARangesAtCreate(D3D12_GPU_VIRTUAL_ADDRESS_RANGE *pRanges,
+                                                               UINT uiNumRanges)
+  {
+    if(m_Tools1)
+      return m_Tools1->ReserveGPUVARangesAtCreate(pRanges, uiNumRanges);
+    return E_NOINTERFACE;
+  }
+
+  virtual void STDMETHODCALLTYPE ClearReservedGPUVARangesList(void)
+  {
+    if(m_Tools1)
+      m_Tools1->ClearReservedGPUVARangesList();
+  }
+
+  //////////////////////////////
+  // Implement ID3D12Tools2
+  virtual HRESULT STDMETHODCALLTYPE SetApplicationSpecificDriverState(_In_ IUnknown *pAdapter,
+                                                                      _In_opt_ ID3DBlob *pBlob)
+  {
+    if(m_Tools2)
+      return m_Tools2->SetApplicationSpecificDriverState(pAdapter, pBlob);
+    return E_NOINTERFACE;
+  }
 };
 
 class WrappedID3D12DeviceRemovedExtendedData : public RefCounter12<ID3D12DeviceRemovedExtendedData1>,
@@ -326,6 +374,12 @@ public:
       AddRef();
       return S_OK;
     }
+    if(riid == __uuidof(ID3D12DeviceConfiguration1) && config.IsValid1())
+    {
+      *ppvObject = (ID3D12DeviceConfiguration1 *)&config;
+      AddRef();
+      return S_OK;
+    }
 
     return E_NOINTERFACE;
   }
@@ -363,11 +417,13 @@ public:
   {
     rdcarray<IID> allowedIIDs;
 
-    // allow enabling unsigned DXIL.
+    // allow enabling unsigned DXIL, and GPU upload heaps on most windows versions
     for(UINT i = 0; i < NumFeatures; i++)
     {
       if(pIIDs[i] == D3D12ExperimentalShaderModels)
         allowedIIDs.push_back(D3D12ExperimentalShaderModels);
+      else if(pIIDs[i] == D3D12GPUUploadHeapsOnUnsupportedOS)
+        allowedIIDs.push_back(D3D12GPUUploadHeapsOnUnsupportedOS);
     }
 
     // there's no "partially successful" error code, so we just lie to the application and pretend
@@ -560,7 +616,23 @@ public:
     }
     else if(riid == __uuidof(ID3D12Tools))
     {
-      *ppvInterface = (ID3D12Tools *)(new WrappedID3D12Tools());
+      ID3D12Tools *real = (ID3D12Tools *)realUnk;
+      // don't need to addref real here, WrappedID3D12Tools doesn't hold onto it but just uses it for QueryInterface
+      *ppvInterface = (ID3D12Tools *)(new WrappedID3D12Tools(real));
+      return S_OK;
+    }
+    else if(riid == __uuidof(ID3D12Tools1))
+    {
+      ID3D12Tools1 *real = (ID3D12Tools1 *)realUnk;
+      // don't need to addref real here, WrappedID3D12Tools doesn't hold onto it but just uses it for QueryInterface
+      *ppvInterface = (ID3D12Tools1 *)(new WrappedID3D12Tools(real));
+      return S_OK;
+    }
+    else if(riid == __uuidof(ID3D12Tools2))
+    {
+      ID3D12Tools2 *real = (ID3D12Tools2 *)realUnk;
+      // don't need to addref real here, WrappedID3D12Tools doesn't hold onto it but just uses it for QueryInterface
+      *ppvInterface = (ID3D12Tools2 *)(new WrappedID3D12Tools(real));
       return S_OK;
     }
     else if(riid == __uuidof(ID3D12DeviceRemovedExtendedData))
@@ -652,7 +724,8 @@ private:
        riid != __uuidof(ID3D12Device6) && riid != __uuidof(ID3D12Device7) &&
        riid != __uuidof(ID3D12Device8) && riid != __uuidof(ID3D12Device9) &&
        riid != __uuidof(ID3D12Device10) && riid != __uuidof(ID3D12Device11) &&
-       riid != __uuidof(ID3D12Device12))
+       riid != __uuidof(ID3D12Device12) && riid != __uuidof(ID3D12Device13) &&
+       riid != __uuidof(ID3D12Device14) && riid != __uuidof(ID3D12Device15))
     {
       RDCERR("Unsupported UUID %s for D3D12CreateDevice", ToStr(riid).c_str());
       return E_NOINTERFACE;
@@ -732,18 +805,33 @@ private:
         }
         else if(riid == __uuidof(ID3D12Device10))
         {
-          ID3D12Device10 *dev9 = (ID3D12Device10 *)*ppDevice;
-          dev = (ID3D12Device *)dev9;
+          ID3D12Device10 *dev10 = (ID3D12Device10 *)*ppDevice;
+          dev = (ID3D12Device *)dev10;
         }
         else if(riid == __uuidof(ID3D12Device11))
         {
-          ID3D12Device11 *dev9 = (ID3D12Device11 *)*ppDevice;
-          dev = (ID3D12Device *)dev9;
+          ID3D12Device11 *dev11 = (ID3D12Device11 *)*ppDevice;
+          dev = (ID3D12Device *)dev11;
         }
         else if(riid == __uuidof(ID3D12Device12))
         {
-          ID3D12Device12 *dev9 = (ID3D12Device12 *)*ppDevice;
-          dev = (ID3D12Device *)dev9;
+          ID3D12Device12 *dev12 = (ID3D12Device12 *)*ppDevice;
+          dev = (ID3D12Device *)dev12;
+        }
+        else if(riid == __uuidof(ID3D12Device13))
+        {
+          ID3D12Device13 *dev13 = (ID3D12Device13 *)*ppDevice;
+          dev = (ID3D12Device *)dev13;
+        }
+        else if(riid == __uuidof(ID3D12Device14))
+        {
+          ID3D12Device14 *dev14 = (ID3D12Device14 *)*ppDevice;
+          dev = (ID3D12Device *)dev14;
+        }
+        else if(riid == __uuidof(ID3D12Device15))
+        {
+          ID3D12Device15 *dev15 = (ID3D12Device15 *)*ppDevice;
+          dev = (ID3D12Device *)dev15;
         }
 
         WrappedID3D12Device *wrap = WrappedID3D12Device::Create(dev, params, EnableDebugLayer);
@@ -752,7 +840,6 @@ private:
         {
           D3D12DevConfiguration *cfg = new D3D12DevConfiguration(*devConfig);
           wrap->GetReplay()->SetDevConfiguration(cfg);
-          wrap->GetShaderCache()->SetDevConfiguration(cfg);
         }
 
         RDCDEBUG("created wrapped device.");
@@ -783,6 +870,12 @@ private:
           *ppDevice = (ID3D12Device11 *)wrap;
         else if(riid == __uuidof(ID3D12Device12))
           *ppDevice = (ID3D12Device12 *)wrap;
+        else if(riid == __uuidof(ID3D12Device13))
+          *ppDevice = (ID3D12Device13 *)wrap;
+        else if(riid == __uuidof(ID3D12Device14))
+          *ppDevice = (ID3D12Device14 *)wrap;
+        else if(riid == __uuidof(ID3D12Device15))
+          *ppDevice = (ID3D12Device15 *)wrap;
       }
     }
     else if(SUCCEEDED(ret))
@@ -829,11 +922,13 @@ private:
   {
     rdcarray<IID> allowedIIDs;
 
-    // allow enabling unsigned DXIL.
+    // allow enabling unsigned DXIL, and GPU upload heaps on most windows versions
     for(UINT i = 0; i < NumFeatures; i++)
     {
       if(pIIDs[i] == D3D12ExperimentalShaderModels)
         allowedIIDs.push_back(D3D12ExperimentalShaderModels);
+      else if(pIIDs[i] == D3D12GPUUploadHeapsOnUnsupportedOS)
+        allowedIIDs.push_back(D3D12GPUUploadHeapsOnUnsupportedOS);
     }
 
     // there's no "partially successful" error code, so we just lie to the application and pretend
@@ -858,6 +953,12 @@ private:
 
   static HRESULT WINAPI D3D12GetDebugInterface_hook(REFIID riid, void **ppvDebug)
   {
+    if(riid == CLSID_D3D12StateObjectFactory)
+    {
+      RDCLOG("Deliberately reporting no support for state object factories");
+      return E_NOINTERFACE;
+    }
+
     IUnknown *realUnk = NULL;
     HRESULT real = d3d12hooks.GetDebugInterface()(riid, (void **)&realUnk);
 
@@ -877,6 +978,12 @@ private:
 
   static HRESULT WINAPI D3D12GetInterface_hook(REFCLSID rclsid, REFIID riid, void **ppvDebug)
   {
+    if(riid == CLSID_D3D12StateObjectFactory)
+    {
+      RDCLOG("Deliberately reporting no support for state object factories");
+      return E_NOINTERFACE;
+    }
+
     IUnknown *realUnk = NULL;
     HRESULT real = d3d12hooks.GetInterface()(rclsid, riid, (void **)&realUnk);
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -59,7 +59,7 @@ struct ScopedTreeUpdater
   int vs;
 };
 
-class RDPreviewTooltip : public QFrame, public ITreeViewTipDisplay
+class RDPreviewTooltip : public QFrame, public ICustomToolTipDisplay
 {
 private:
   Q_OBJECT
@@ -74,8 +74,8 @@ public:
                             ICaptureContext &ctx);
 
   void hideTip();
-  QSize configureTip(QWidget *widget, QModelIndex idx, QString text);
-  void showTip(QPoint pos);
+  QSize configureTip(QWidget *widget, QString text, QModelIndex idx);
+  void showTipAtPos(QPoint pos);
   bool forceTip(QWidget *widget, QModelIndex idx);
 
 protected:

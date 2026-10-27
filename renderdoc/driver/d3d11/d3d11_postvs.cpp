@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -254,11 +254,11 @@ void D3D11Replay::InitPostVSBuffers(uint32_t eventId)
     return;
   }
 
-  DXBC::DXBCContainer *dxbcVS = wrappedVS->GetDXBC();
+  const DXBC::DXBCContainer *dxbcVS = wrappedVS->GetDXBC();
 
   RDCASSERT(dxbcVS);
 
-  DXBC::DXBCContainer *dxbcGS = NULL;
+  const DXBC::DXBCContainer *dxbcGS = NULL;
 
   if(gs)
   {
@@ -266,11 +266,12 @@ void D3D11Replay::InitPostVSBuffers(uint32_t eventId)
         (WrappedID3D11Shader<ID3D11GeometryShader> *)gs;
 
     dxbcGS = wrappedGS->GetDXBC();
+    wrappedGS->GetWriteableDXBC()->CacheOutputTopology();
 
     RDCASSERT(dxbcGS);
   }
 
-  DXBC::DXBCContainer *dxbcDS = NULL;
+  const DXBC::DXBCContainer *dxbcDS = NULL;
 
   if(ds)
   {
@@ -278,12 +279,13 @@ void D3D11Replay::InitPostVSBuffers(uint32_t eventId)
         (WrappedID3D11Shader<ID3D11DomainShader> *)ds;
 
     dxbcDS = wrappedDS->GetDXBC();
+    wrappedDS->GetWriteableDXBC()->CacheOutputTopology();
 
     RDCASSERT(dxbcDS);
   }
 
   ResourceId lastShaderId = GetIDForDeviceChild(ds);
-  DXBC::DXBCContainer *lastShader = dxbcDS;
+  const DXBC::DXBCContainer *lastShader = dxbcDS;
   if(dxbcGS)
   {
     lastShaderId = GetIDForDeviceChild(gs);

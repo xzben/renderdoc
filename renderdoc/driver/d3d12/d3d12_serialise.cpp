@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2017-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -107,17 +107,15 @@ void DoSerialiseViaResourceId(SerialiserType &ser, Interface *&el)
 
   ResourceId id;
 
-  if(ser.IsWriting())
+  if(ser.IsWriting() || ser.IsStructurising())
     id = GetResID(el);
-  if(ser.IsStructurising() && rm)
-    id = rm->GetOriginalID(GetResID(el));
 
   DoSerialise(ser, id);
 
   if(ser.IsReading() && !ser.IsStructurising())
   {
-    if(id != ResourceId() && rm && rm->HasLiveResource(id))
-      el = rm->GetLiveAs<Interface>(id);
+    if(id != ResourceId() && rm && rm->HasResource(id))
+      el = rm->GetResAs<Interface>(id);
     else
       el = NULL;
   }
@@ -262,8 +260,6 @@ void DoSerialise(SerialiserType &ser, D3D12_CPU_DESCRIPTOR_HANDLE &el)
 
   if(ser.IsWriting() || ser.IsStructurising())
     ph = ToPortableHandle(el);
-  if(ser.IsStructurising() && rm)
-    ph.heap = rm->GetOriginalID(ph.heap);
 
   DoSerialise(ser, ph);
 
@@ -285,8 +281,6 @@ void DoSerialise(SerialiserType &ser, D3D12_GPU_DESCRIPTOR_HANDLE &el)
 
   if(ser.IsWriting() || ser.IsStructurising())
     ph = ToPortableHandle(el);
-  if(ser.IsStructurising() && rm)
-    ph.heap = rm->GetOriginalID(ph.heap);
 
   DoSerialise(ser, ph);
 
@@ -312,11 +306,6 @@ void DoSerialise(SerialiserType &ser, DynamicDescriptorCopy &el)
   {
     dst = ToPortableHandle(el.dst);
     src = ToPortableHandle(el.src);
-  }
-  if(ser.IsStructurising() && rm)
-  {
-    dst.heap = rm->GetOriginalID(dst.heap);
-    src.heap = rm->GetOriginalID(src.heap);
   }
 
   ser.Serialise("dst"_lit, dst).Important();
@@ -347,19 +336,97 @@ void DoSerialise(SerialiserType &ser, D3D12BufferLocation &el)
 
   if(ser.IsWriting() || ser.IsStructurising())
     WrappedID3D12Resource::GetResIDFromAddrAllowOutOfBounds(el.Location, buffer, offs);
-  if(ser.IsStructurising() && rm)
-    buffer = rm->GetOriginalID(buffer);
 
   ser.Serialise("Buffer"_lit, buffer).Important();
   ser.Serialise("Offset"_lit, offs).OffsetOrSize();
 
   if(ser.IsReading() && !ser.IsStructurising())
   {
-    if(rm && buffer != ResourceId() && rm->HasLiveResource(buffer))
-      el.Location = rm->GetLiveAs<ID3D12Resource>(buffer)->GetGPUVirtualAddress() + offs;
+    if(rm && buffer != ResourceId() && rm->HasResource(buffer))
+      el.Location = rm->GetResAs<ID3D12Resource>(buffer)->GetGPUVirtualAddress() + offs;
     else
       ser.ClearObj(el.Location);
   }
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12ASLocation &el, bool useSideband)
+{
+  D3D12ResourceManager *rm = (D3D12ResourceManager *)ser.GetUserData();
+
+  ResourceId buffer;
+  UINT64 offs = 0;
+  ResourceId asId;
+  bool isZero = el.Location == 0;
+
+  if(ser.IsWriting() || ser.IsStructurising())
+  {
+    WrappedID3D12Resource::GetResIDFromAddrAllowOutOfBounds(el.Location, buffer, offs);
+
+    // for ASs which haven't yet been created where we're serialising them, we allow the user to
+    // pass in the upcoming ResourceId via sideband data.
+    if(useSideband)
+    {
+      asId = ser.GetSidebandData<ResourceId>(D3D12DestASLocation::SidebandGUID);
+    }
+    else
+    {
+      // otherwise query from the resource for the current AS there, if one exists
+      WrappedID3D12Resource *res = rm ? rm->GetResAs<WrappedID3D12Resource>(buffer) : NULL;
+      if(res)
+      {
+        D3D12AccelerationStructure *as = NULL;
+        if(res->GetAccStructIfExist(offs, &as))
+          asId = as->GetResourceID();
+      }
+    }
+  }
+
+  // we get a little dynamic with this. If we successfully got an AS (or it was a zero location)
+  // then we only display the AS's ID since no offset is needed. If for some reason the AS didn't
+  // come through, we display it as a buffer location with buffer+offset
+
+  ser.Serialise("isZero"_lit, isZero).Hidden();
+  ser.Serialise("AccStruct"_lit, asId);
+
+  if(asId != ResourceId() || isZero)
+    ser.Important();
+  else
+    ser.Hidden();
+
+  ser.Serialise("Buffer"_lit, buffer);
+
+  if(asId != ResourceId() || isZero)
+    ser.Hidden();
+  else
+    ser.Important();
+
+  ser.Serialise("Offset"_lit, offs).OffsetOrSize();
+
+  if(asId != ResourceId() || isZero)
+    ser.Hidden();
+
+  if(ser.IsReading() && !ser.IsStructurising())
+  {
+    if(rm && asId != ResourceId() && rm->HasResource(asId))
+      el.Location = rm->GetResAs<D3D12AccelerationStructure>(asId)->GetVirtualAddress();
+    else if(rm && buffer != ResourceId() && rm->HasResource(buffer))
+      el.Location = rm->GetResAs<ID3D12Resource>(buffer)->GetGPUVirtualAddress() + offs;
+    else
+      ser.ClearObj(el.Location);
+  }
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12DestASLocation &el)
+{
+  return DoSerialise(ser, el, true);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12SrcASLocation &el)
+{
+  return DoSerialise(ser, el, false);
 }
 
 template <class SerialiserType>
@@ -385,11 +452,6 @@ void DoSerialise(SerialiserType &ser, D3D12Descriptor &el)
     el.data.nonsamp.type = type;
   }
 
-  // we serialise via a pointer. This means if the resource isn't present it becomes NULL and we set
-  // the ResourceId to 0 on replay, and otherwise we get the live ID as we want. As a benefit, it's
-  // also invisibly backwards compatible
-  D3D12ResourceManager *rm = (D3D12ResourceManager *)ser.GetUserData();
-
   switch(type)
   {
     case D3D12DescriptorType::Sampler:
@@ -411,17 +473,7 @@ void DoSerialise(SerialiserType &ser, D3D12Descriptor &el)
     }
     case D3D12DescriptorType::SRV:
     {
-      ResourceId Resource = el.data.nonsamp.resource;
-
-      if(ser.IsStructurising())
-        Resource = rm->GetOriginalID(Resource);
-
-      ser.Serialise("Resource"_lit, Resource).TypedAs("ID3D12Resource *"_lit).Important();
-
-      // convert to Live ID on replay
-      if(ser.IsReading() && !ser.IsStructurising())
-        el.data.nonsamp.resource =
-            rm->HasLiveResource(Resource) ? rm->GetLiveID(Resource) : ResourceId();
+      ser.Serialise("Resource"_lit, el.data.nonsamp.resource).TypedAs("ID3D12Resource *"_lit).Important();
 
       // special case because of squeezed descriptor
       D3D12_SHADER_RESOURCE_VIEW_DESC desc;
@@ -434,60 +486,21 @@ void DoSerialise(SerialiserType &ser, D3D12Descriptor &el)
     }
     case D3D12DescriptorType::RTV:
     {
-      ResourceId Resource = el.data.nonsamp.resource;
-
-      if(ser.IsStructurising())
-        Resource = rm->GetOriginalID(Resource);
-
-      ser.Serialise("Resource"_lit, Resource).TypedAs("ID3D12Resource *"_lit).Important();
-
-      // convert to Live ID on replay
-      if(ser.IsReading() && !ser.IsStructurising())
-        el.data.nonsamp.resource =
-            rm->HasLiveResource(Resource) ? rm->GetLiveID(Resource) : ResourceId();
-
+      ser.Serialise("Resource"_lit, el.data.nonsamp.resource).TypedAs("ID3D12Resource *"_lit).Important();
       ser.Serialise("Descriptor"_lit, el.data.nonsamp.rtv);
       break;
     }
     case D3D12DescriptorType::DSV:
     {
-      ResourceId Resource = el.data.nonsamp.resource;
-
-      if(ser.IsStructurising())
-        Resource = rm->GetOriginalID(Resource);
-
-      ser.Serialise("Resource"_lit, Resource).TypedAs("ID3D12Resource *"_lit).Important();
-
-      // convert to Live ID on replay
-      if(ser.IsReading() && !ser.IsStructurising())
-        el.data.nonsamp.resource =
-            rm->HasLiveResource(Resource) ? rm->GetLiveID(Resource) : ResourceId();
-
+      ser.Serialise("Resource"_lit, el.data.nonsamp.resource).TypedAs("ID3D12Resource *"_lit).Important();
       ser.Serialise("Descriptor"_lit, el.data.nonsamp.dsv);
       break;
     }
     case D3D12DescriptorType::UAV:
     {
-      ResourceId Resource = el.data.nonsamp.resource;
-      ResourceId CounterResource = el.data.nonsamp.counterResource;
-
-      if(ser.IsStructurising())
-      {
-        Resource = rm->GetOriginalID(Resource);
-        CounterResource = rm->GetOriginalID(CounterResource);
-      }
-
-      ser.Serialise("Resource"_lit, Resource).TypedAs("ID3D12Resource *"_lit).Important();
-      ser.Serialise("CounterResource"_lit, CounterResource).TypedAs("ID3D12Resource *"_lit);
-
-      // convert to Live ID on replay
-      if(ser.IsReading() && !ser.IsStructurising())
-      {
-        el.data.nonsamp.resource =
-            rm->HasLiveResource(Resource) ? rm->GetLiveID(Resource) : ResourceId();
-        el.data.nonsamp.counterResource =
-            rm->HasLiveResource(CounterResource) ? rm->GetLiveID(CounterResource) : ResourceId();
-      }
+      ser.Serialise("Resource"_lit, el.data.nonsamp.resource).TypedAs("ID3D12Resource *"_lit).Important();
+      ser.Serialise("CounterResource"_lit, el.data.nonsamp.counterResource)
+          .TypedAs("ID3D12Resource *"_lit);
 
       // special case because of squeezed descriptor
       D3D12_UNORDERED_ACCESS_VIEW_DESC desc;
@@ -507,9 +520,39 @@ void DoSerialise(SerialiserType &ser, D3D12Descriptor &el)
 }
 
 template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_SERIALIZED_ROOT_SIGNATURE_DESC &el)
+{
+  SERIALISE_MEMBER_ARRAY(pSerializedBlob, SerializedBlobSizeInBytes).Important();
+
+  // don't serialise size_t, otherwise capture/replay between different bit-ness won't work
+  {
+    uint64_t SerializedBlobSizeInBytes = el.SerializedBlobSizeInBytes;
+    ser.Serialise("SerializedBlobSizeInBytes"_lit, SerializedBlobSizeInBytes);
+    if(ser.IsReading())
+      el.SerializedBlobSizeInBytes = (size_t)SerializedBlobSizeInBytes;
+  }
+}
+
+template <>
+void Deserialise(const D3D12_SERIALIZED_ROOT_SIGNATURE_DESC &el)
+{
+  FreeAlignedBuffer((byte *)(el.pSerializedBlob));
+}
+
+template <class SerialiserType>
 void DoSerialise(SerialiserType &ser, D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &el)
 {
   SERIALISE_MEMBER(pRootSignature);
+
+  if(ser.VersionAtLeast(0x15))
+  {
+    SERIALISE_MEMBER(RootSigBlob);
+  }
+  else if(ser.IsReading())
+  {
+    el.RootSigBlob = {};
+  }
+
   SERIALISE_MEMBER(VS).Important();
   SERIALISE_MEMBER(PS).Important();
   SERIALISE_MEMBER(DS);
@@ -520,6 +563,11 @@ void DoSerialise(SerialiserType &ser, D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC 
   {
     SERIALISE_MEMBER(AS);
     SERIALISE_MEMBER(MS);
+  }
+  else if(ser.IsReading())
+  {
+    el.AS = {};
+    el.MS = {};
   }
 
   SERIALISE_MEMBER(StreamOutput);
@@ -1075,7 +1123,22 @@ void DoSerialise(SerialiserType &ser, D3D12_TEXCUBE_ARRAY_SRV &el)
 template <class SerialiserType>
 void DoSerialise(SerialiserType &ser, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_SRV &el)
 {
-  SERIALISE_MEMBER_TYPED(D3D12BufferLocation, Location);
+  // because descriptor writes are on the CPU timeline and AS existence is effectively on the GPU
+  // timeline, this may come before the first build is submitted or even recorded. In that case the
+  // AS could be serialised as a buffer+offset instead of by its ID, or it could be serialised as
+  // the "wrong" AS ID - e.g. the previous version of an AS when this descriptor won't be used until
+  // after a rebuild. We assume in the case where we get the wrong AS ID that it will be a strict
+  // alias and aliasing it handled by any re-allocation of AS backing memory that happens
+  SERIALISE_MEMBER_TYPED(D3D12SrcASLocation, Location);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_BUFFER_SRV_BYTE_OFFSET &el)
+{
+  SERIALISE_MEMBER(Offset).OffsetOrSize();
+  SERIALISE_MEMBER(Size).OffsetOrSize();
+  SERIALISE_MEMBER(StructureByteStride).OffsetOrSize();
+  SERIALISE_MEMBER(Flags);
 }
 
 template <class SerialiserType>
@@ -1104,6 +1167,7 @@ void DoSerialise(SerialiserType &ser, D3D12_SHADER_RESOURCE_VIEW_DESC &el)
     case D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE:
       SERIALISE_MEMBER(RaytracingAccelerationStructure);
       break;
+    case D3D12_SRV_DIMENSION_BUFFER_BYTE_OFFSET: SERIALISE_MEMBER(BufferByteOffset); break;
     default: RDCERR("Unrecognised SRV Dimension %d", el.ViewDimension); break;
   }
 }
@@ -1311,6 +1375,16 @@ void DoSerialise(SerialiserType &ser, D3D12_TEX3D_UAV &el)
 }
 
 template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_BUFFER_UAV_BYTE_OFFSET &el)
+{
+  SERIALISE_MEMBER(Offset).OffsetOrSize();
+  SERIALISE_MEMBER(Size).OffsetOrSize();
+  SERIALISE_MEMBER(StructureByteStride).OffsetOrSize();
+  SERIALISE_MEMBER(CounterOffsetInBytes).OffsetOrSize();
+  SERIALISE_MEMBER(Flags);
+}
+
+template <class SerialiserType>
 void DoSerialise(SerialiserType &ser, D3D12_UNORDERED_ACCESS_VIEW_DESC &el)
 {
   SERIALISE_MEMBER(Format).Important();
@@ -1329,6 +1403,7 @@ void DoSerialise(SerialiserType &ser, D3D12_UNORDERED_ACCESS_VIEW_DESC &el)
     case D3D12_UAV_DIMENSION_TEXTURE2DMS: SERIALISE_MEMBER(Texture2DMS); break;
     case D3D12_UAV_DIMENSION_TEXTURE2DMSARRAY: SERIALISE_MEMBER(Texture2DMSArray); break;
     case D3D12_UAV_DIMENSION_TEXTURE3D: SERIALISE_MEMBER(Texture3D); break;
+    case D3D12_UAV_DIMENSION_BUFFER_BYTE_OFFSET: SERIALISE_MEMBER(BufferByteOffset); break;
     default: RDCERR("Unrecognised RTV Dimension %d", el.ViewDimension); break;
   }
 }
@@ -1880,10 +1955,10 @@ void Deserialise(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC &el)
 template <class SerialiserType>
 void DoSerialise(SerialiserType &ser, D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC &el)
 {
-  SERIALISE_MEMBER_TYPED(D3D12BufferLocation, DestAccelerationStructureData).Important();
+  SERIALISE_MEMBER_TYPED(D3D12DestASLocation, DestAccelerationStructureData).Important();
   SERIALISE_MEMBER(Inputs);
 
-  SERIALISE_MEMBER_TYPED(D3D12BufferLocation, SourceAccelerationStructureData);
+  SERIALISE_MEMBER_TYPED(D3D12SrcASLocation, SourceAccelerationStructureData);
   if(el.SourceAccelerationStructureData)
     ser.Important();
 
@@ -2033,6 +2108,20 @@ void Deserialise(const D3D12_STATE_OBJECT_DESC &el)
           delete temp;
           break;
         }
+        case D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_SERIALIZED_ROOT_SIGNATURE:
+        {
+          D3D12_GLOBAL_SERIALIZED_ROOT_SIGNATURE *temp =
+              (D3D12_GLOBAL_SERIALIZED_ROOT_SIGNATURE *)el.pSubobjects[i].pDesc;
+          delete temp;
+          break;
+        }
+        case D3D12_STATE_SUBOBJECT_TYPE_LOCAL_SERIALIZED_ROOT_SIGNATURE:
+        {
+          D3D12_LOCAL_SERIALIZED_ROOT_SIGNATURE *temp =
+              (D3D12_LOCAL_SERIALIZED_ROOT_SIGNATURE *)el.pSubobjects[i].pDesc;
+          delete temp;
+          break;
+        }
         case D3D12_STATE_SUBOBJECT_TYPE_NODE_MASK:
         {
           D3D12_NODE_MASK *temp = (D3D12_NODE_MASK *)el.pSubobjects[i].pDesc;
@@ -2122,6 +2211,12 @@ void DoSerialise(SerialiserType &ser, D3D12_STATE_SUBOBJECT &el)
     case D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE:
       ser.SerialiseNullable("pDesc"_lit, (D3D12_LOCAL_ROOT_SIGNATURE *&)el.pDesc);
       break;
+    case D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_SERIALIZED_ROOT_SIGNATURE:
+      ser.SerialiseNullable("pDesc"_lit, (D3D12_GLOBAL_SERIALIZED_ROOT_SIGNATURE *&)el.pDesc);
+      break;
+    case D3D12_STATE_SUBOBJECT_TYPE_LOCAL_SERIALIZED_ROOT_SIGNATURE:
+      ser.SerialiseNullable("pDesc"_lit, (D3D12_LOCAL_SERIALIZED_ROOT_SIGNATURE *&)el.pDesc);
+      break;
     case D3D12_STATE_SUBOBJECT_TYPE_NODE_MASK:
       ser.SerialiseNullable("pDesc"_lit, (D3D12_NODE_MASK *&)el.pDesc);
       break;
@@ -2169,6 +2264,18 @@ template <class SerialiserType>
 void DoSerialise(SerialiserType &ser, D3D12_LOCAL_ROOT_SIGNATURE &el)
 {
   SERIALISE_MEMBER(pLocalRootSignature);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_GLOBAL_SERIALIZED_ROOT_SIGNATURE &el)
+{
+  SERIALISE_MEMBER(Desc);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_LOCAL_SERIALIZED_ROOT_SIGNATURE &el)
+{
+  SERIALISE_MEMBER(Desc);
 }
 
 template <class SerialiserType>
@@ -2501,6 +2608,8 @@ INSTANTIATE_SERIALISE_TYPE(D3D12_STATE_SUBOBJECT);
 INSTANTIATE_SERIALISE_TYPE(D3D12_STATE_OBJECT_CONFIG);
 INSTANTIATE_SERIALISE_TYPE(D3D12_GLOBAL_ROOT_SIGNATURE);
 INSTANTIATE_SERIALISE_TYPE(D3D12_LOCAL_ROOT_SIGNATURE);
+INSTANTIATE_SERIALISE_TYPE(D3D12_GLOBAL_SERIALIZED_ROOT_SIGNATURE);
+INSTANTIATE_SERIALISE_TYPE(D3D12_LOCAL_SERIALIZED_ROOT_SIGNATURE);
 INSTANTIATE_SERIALISE_TYPE(D3D12_NODE_MASK);
 INSTANTIATE_SERIALISE_TYPE(D3D12_DXIL_LIBRARY_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_EXISTING_COLLECTION_DESC);
@@ -2514,3 +2623,4 @@ INSTANTIATE_SERIALISE_TYPE(D3D12_EXPORT_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_GPU_VIRTUAL_ADDRESS_RANGE);
 INSTANTIATE_SERIALISE_TYPE(D3D12_GPU_VIRTUAL_ADDRESS_RANGE_AND_STRIDE);
 INSTANTIATE_SERIALISE_TYPE(D3D12_DISPATCH_RAYS_DESC);
+INSTANTIATE_SERIALISE_TYPE(D3D12_SERIALIZED_ROOT_SIGNATURE_DESC);

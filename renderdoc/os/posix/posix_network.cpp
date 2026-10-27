@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -167,7 +167,11 @@ bool Socket::SendDataBlocking(const void *buf, uint32_t length)
 
   while(sent < length)
   {
-    ssize_t ret = send((int)socket, src, length - sent, 0);
+    int sendflags = 0;
+#if ENABLED(RDOC_LINUX)
+    sendflags = MSG_NOSIGNAL;
+#endif
+    ssize_t ret = send((int)socket, src, length - sent, sendflags);
 
     if(ret <= 0)
     {

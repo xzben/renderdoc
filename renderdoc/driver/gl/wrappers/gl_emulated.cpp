@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1187,7 +1187,8 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
     GLenum attach = eGL_COLOR_ATTACHMENT0;
 
     bool layered = false;
-    bool compressed = false;
+    bool msaa = false;
+    bool cpuTransfer = false;
 
     if(srcTarget == eGL_TEXTURE_CUBE_MAP || srcTarget == eGL_TEXTURE_CUBE_MAP_ARRAY ||
        srcTarget == eGL_TEXTURE_1D_ARRAY || srcTarget == eGL_TEXTURE_2D_ARRAY ||
@@ -1206,10 +1207,91 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
       GLenum fmt = eGL_NONE;
       GL.glGetTexLevelParameteriv(levelQueryType, 0, eGL_TEXTURE_INTERNAL_FORMAT, (GLint *)&fmt);
 
+      bool colorRenderable = true;
+
       if(IsCompressedFormat(fmt))
+        colorRenderable = false;
+
+      if(fmt == eGL_RGB9_E5)
+        colorRenderable = false;
+
+      if(colorRenderable && IsGLES)
+      {
+        // before GLES 3 framebuffers basically weren't supported for the lack of formats you could
+        // use. We can turn some on based on extensions below
+        if(GLCoreVersion < 30)
+          colorRenderable = false;
+
+        // GLES randomly excludes an inconsistent set of formats
+        switch(fmt)
+        {
+          // case eGL_RGB8: // valid?!
+          case eGL_SRGB8:
+          case eGL_RGB8I:
+          case eGL_RGB8UI:
+          case eGL_RGB8_SNORM:
+
+          case eGL_RGB9_E5:
+
+          case eGL_RGB10:
+
+          case eGL_RGB16I:
+          case eGL_RGB16UI:
+
+          case eGL_RGB32F:
+          case eGL_RGB32I:
+          case eGL_RGB32UI: colorRenderable = false; break;
+          default: break;
+        }
+
+        // SRGB 1- and 2- channel formats aren't renderable
+        if(fmt == eGL_SR8_EXT || fmt == eGL_SRG8_EXT)
+          colorRenderable = false;
+
+        // some extensions are required for other formats
+        switch(fmt)
+        {
+          case eGL_R8_SNORM:
+          case eGL_RG8_SNORM:
+          case eGL_RGBA8_SNORM: colorRenderable = HasExt[EXT_render_snorm]; break;
+
+          case eGL_R16_SNORM:
+          case eGL_RG16_SNORM:
+          case eGL_RGBA16_SNORM: colorRenderable = HasExt[EXT_render_snorm]; break;
+
+          case eGL_R16F:
+          case eGL_RG16F:
+          case eGL_RGBA16F:
+            colorRenderable = HasExt[EXT_color_buffer_half_float] || HasExt[EXT_color_buffer_float];
+            break;
+
+          case eGL_RGB16F: colorRenderable = HasExt[EXT_color_buffer_half_float]; break;
+
+          case eGL_R32F:
+          case eGL_RG32F:
+          case eGL_RGBA32F:
+          case eGL_R11F_G11F_B10F: colorRenderable = HasExt[EXT_color_buffer_float]; break;
+
+          case eGL_RGB10_A2:
+          case eGL_RGB10_A2UI: colorRenderable = (GLCoreVersion >= 30); break;
+
+          default: break;
+        }
+      }
+
+      // can't blit or CPU-read MSAA textures. we treat these as 'color-renderable' but we will just clear to black
+      if(srcTarget == eGL_TEXTURE_2D_MULTISAMPLE || srcTarget == eGL_TEXTURE_2D_MULTISAMPLE_ARRAY)
+      {
+        colorRenderable = true;
+        msaa = true;
+        RDCDEBUG("Can't support image copy emulation on MSAA images, clearing to black");
+      }
+
+      // non-color-renderable formats have to go through this path even though they are not compressed
+      if(!colorRenderable)
       {
         // have to do this via CPU readback, there's no alternative for GPU copies
-        compressed = true;
+        cpuTransfer = true;
 
         GLenum targets[] = {
             eGL_TEXTURE_CUBE_MAP_POSITIVE_X, eGL_TEXTURE_CUBE_MAP_NEGATIVE_X,
@@ -1225,7 +1307,10 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
           count = 1;
         }
 
-        size_t size = GetCompressedByteSize(srcWidth, srcHeight, srcDepth, fmt);
+        size_t size =
+            IsCompressedFormat(fmt)
+                ? GetCompressedByteSize(srcWidth, srcHeight, srcDepth, fmt)
+                : GetByteSize(srcWidth, srcHeight, srcDepth, GetBaseFormat(fmt), GetDataType(fmt));
 
         if(srcTarget == eGL_TEXTURE_CUBE_MAP)
           size /= 6;
@@ -1235,6 +1320,29 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
         for(int trg = 0; trg < count; trg++)
         {
           // read to CPU
+          if(!IsCompressedFormat(fmt))
+          {
+            GL.glGetTextureImageEXT(srcName, targets[trg], srcLevel, GetBaseFormat(fmt),
+                                    GetDataType(fmt), buf);
+
+            // write to GPU
+            if(srcTarget == eGL_TEXTURE_1D)
+              GL.glTextureSubImage1DEXT(dstName, targets[trg], dstLevel, 0, srcWidth,
+                                        GetBaseFormat(fmt), GetDataType(fmt), buf);
+            else if(srcTarget == eGL_TEXTURE_1D_ARRAY)
+              GL.glTextureSubImage2DEXT(dstName, targets[trg], dstLevel, 0, 0, srcWidth, srcDepth,
+                                        GetBaseFormat(fmt), GetDataType(fmt), buf);
+            else if(srcTarget == eGL_TEXTURE_3D || srcTarget == eGL_TEXTURE_2D_ARRAY ||
+                    srcTarget == eGL_TEXTURE_CUBE_MAP_ARRAY)
+              GL.glTextureSubImage3DEXT(dstName, targets[trg], dstLevel, 0, 0, 0, srcWidth, srcHeight,
+                                        srcDepth, GetBaseFormat(fmt), GetDataType(fmt), buf);
+            else
+              GL.glTextureSubImage2DEXT(dstName, targets[trg], dstLevel, 0, 0, srcWidth, srcHeight,
+                                        GetBaseFormat(fmt), GetDataType(fmt), buf);
+
+            continue;
+          }
+
           if(IsGLES)
           {
             RDCERR("Can't emulate glCopyImageSubData without glGetCompressedTexImage on GLES");
@@ -1246,10 +1354,14 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
           }
 
           // write to GPU
-          if(srcTarget == eGL_TEXTURE_1D || srcTarget == eGL_TEXTURE_1D_ARRAY)
+          if(srcTarget == eGL_TEXTURE_1D)
             GL.glCompressedTextureSubImage1DEXT(dstName, targets[trg], dstLevel, 0, srcWidth, fmt,
                                                 (GLsizei)size, buf);
-          else if(srcTarget == eGL_TEXTURE_3D)
+          else if(srcTarget == eGL_TEXTURE_1D_ARRAY)
+            GL.glCompressedTextureSubImage2DEXT(dstName, targets[trg], dstLevel, 0, 0, srcWidth,
+                                                srcDepth, fmt, (GLsizei)size, buf);
+          else if(srcTarget == eGL_TEXTURE_3D || srcTarget == eGL_TEXTURE_2D_ARRAY ||
+                  srcTarget == eGL_TEXTURE_CUBE_MAP_ARRAY)
             GL.glCompressedTextureSubImage3DEXT(dstName, targets[trg], dstLevel, 0, 0, 0, srcWidth,
                                                 srcHeight, srcDepth, fmt, (GLsizei)size, buf);
           else
@@ -1301,7 +1413,9 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
       }
     }
 
-    if(compressed)
+    GLfloat black[4] = {};
+
+    if(cpuTransfer)
     {
       // nothing to do!
     }
@@ -1317,8 +1431,16 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
       if(status != eGL_FRAMEBUFFER_COMPLETE)
         RDCERR("glCopyImageSubData emulation read FBO is %s", ToStr(status).c_str());
 
-      SafeBlitFramebuffer(srcX, srcY, srcX + srcWidth, srcY + srcHeight, dstX, dstY,
-                          dstX + srcWidth, dstY + srcHeight, mask, eGL_NEAREST);
+      if(msaa)
+      {
+        SafeClearFramebuffer(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT,
+                             black, 0.0f, 0);
+      }
+      else
+      {
+        SafeBlitFramebuffer(srcX, srcY, srcX + srcWidth, srcY + srcHeight, dstX, dstY,
+                            dstX + srcWidth, dstY + srcHeight, mask, eGL_NEAREST);
+      }
     }
     else if(srcTarget == eGL_TEXTURE_CUBE_MAP)
     {
@@ -1350,8 +1472,16 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
             RDCERR("glCopyImageSubData emulation read FBO is %s for slice 0", ToStr(status).c_str());
         }
 
-        SafeBlitFramebuffer(srcX, srcY, srcX + srcWidth, srcY + srcHeight, dstX, dstY,
-                            dstX + srcWidth, dstY + srcHeight, mask, eGL_NEAREST);
+        if(msaa)
+        {
+          SafeClearFramebuffer(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT,
+                               black, 0.0f, 0);
+        }
+        else
+        {
+          SafeBlitFramebuffer(srcX, srcY, srcX + srcWidth, srcY + srcHeight, dstX, dstY,
+                              dstX + srcWidth, dstY + srcHeight, mask, eGL_NEAREST);
+        }
       }
     }
     else
@@ -1374,8 +1504,16 @@ void APIENTRY _glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLev
             RDCERR("glCopyImageSubData emulation read FBO is %s for slice 0", ToStr(status).c_str());
         }
 
-        SafeBlitFramebuffer(srcX, srcY, srcX + srcWidth, srcY + srcHeight, dstX, dstY,
-                            dstX + srcWidth, dstY + srcHeight, mask, eGL_NEAREST);
+        if(msaa)
+        {
+          SafeClearFramebuffer(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT,
+                               black, 0.0f, 0);
+        }
+        else
+        {
+          SafeBlitFramebuffer(srcX, srcY, srcX + srcWidth, srcY + srcHeight, dstX, dstY,
+                              dstX + srcWidth, dstY + srcHeight, mask, eGL_NEAREST);
+        }
       }
     }
   }
@@ -2436,15 +2574,15 @@ static glslang::TProgram *GetGlslangProgram(GLuint program, bool *hasRealProgram
 
   ResourceId id = driver->GetResourceManager()->GetResID(ProgramRes(driver->GetCtx(), program));
 
-  if(!driver->m_Programs[id].glslangProgram)
+  if(!driver->GetProgram(id).glslangProgram)
   {
     RDCERR("Don't have glslang program for reflecting program %u = %s", program, ToStr(id).c_str());
   }
 
   if(hasRealProgram)
-    *hasRealProgram = !driver->m_Programs[id].shaders.empty();
+    *hasRealProgram = !driver->GetProgram(id).shaders.empty();
 
-  return driver->m_Programs[id].glslangProgram;
+  return driver->GetProgram(id).glslangProgram;
 }
 
 void APIENTRY _glGetProgramInterfaceiv(GLuint program, GLenum programInterface, GLenum pname,
@@ -3184,6 +3322,9 @@ void APIENTRY _glGetTexImage(GLenum target, GLint level, const GLenum format, co
     level = 0;
     readFormat = remapformat;
     readType = remaptype;
+    // always reset depthFormat. If the target format is depth, it was remapped
+    // and read-back will happen on remapped texture.
+    depthFormat = false;
 
     attachment = eGL_COLOR_ATTACHMENT0;
 
@@ -3358,7 +3499,7 @@ void APIENTRY _glGetTexImage(GLenum target, GLint level, const GLenum format, co
       size_t readCompSize = GetByteSize(1, 1, 1, eGL_RED, readType);
 
       if(depthFormat)
-        readCompSize = 4;
+        readCompSize = GetByteSize(1, 1, 1, readFormat, readType);
 
       // if the type didn't change from what the caller expects, we only changed the number of
       // components. This is easy to remap
@@ -4104,7 +4245,7 @@ void MakeOfflineShaderReflection(ShaderStage stage, const rdcstr &source, const 
   REQUIRE(prog);
 
   // the lookup won't get a valid Id, so set the program to the ResourceId()
-  driver.m_Programs[ResourceId()].glslangProgram = prog;
+  driver.GetWriteableProgram(ResourceId()).glslangProgram = prog;
 
   GLuint fakeProg = 0;
 
@@ -4238,7 +4379,7 @@ void main() {
     REQUIRE(prog);
 
     // the lookup won't get a valid Id, so set the program to the ResourceId()
-    driver.m_Programs[ResourceId()].glslangProgram = prog;
+    driver.GetWriteableProgram(ResourceId()).glslangProgram = prog;
 
     GLint numUniforms = 0;
     GL.glGetProgramInterfaceiv(0, eGL_UNIFORM, eGL_ACTIVE_RESOURCES, &numUniforms);

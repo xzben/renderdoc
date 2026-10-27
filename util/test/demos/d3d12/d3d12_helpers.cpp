@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -260,6 +260,20 @@ D3D12BufferCreator &D3D12BufferCreator::UAV()
   return *this;
 }
 
+D3D12BufferCreator &D3D12BufferCreator::ASB()
+{
+  m_InitialState = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+  m_BufDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+  return *this;
+}
+
+D3D12BufferCreator &D3D12BufferCreator::GPUUpload()
+{
+  m_HeapDesc.Type = D3D12_HEAP_TYPE_GPU_UPLOAD;
+  m_InitialState = D3D12_RESOURCE_STATE_COMMON;
+  return *this;
+}
+
 D3D12BufferCreator &D3D12BufferCreator::Upload()
 {
   m_HeapDesc.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -441,6 +455,12 @@ D3D12ViewCreator::D3D12ViewCreator(ID3D12DevicePtr dev, ID3D12DescriptorHeap *he
   {
     desc.cbv.BufferLocation = m_Res->GetGPUVirtualAddress();
     desc.cbv.SizeInBytes = 0;
+  }
+  else if(m_Type == ViewType::AS)
+  {
+    desc.srv.Format = DXGI_FORMAT_UNKNOWN;
+    desc.srv.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+    desc.srv.RaytracingAccelerationStructure.Location = m_Res->GetGPUVirtualAddress();
   }
   else if(dim == D3D12_RESOURCE_DIMENSION_BUFFER)
   {
@@ -835,6 +855,8 @@ D3D12ViewCreator &D3D12ViewCreator::Offset(UINT offset)
 {
   if(m_Type == ViewType::CBV)
     desc.cbv.BufferLocation += offset;
+  else if(m_Type == ViewType::AS)
+    desc.srv.RaytracingAccelerationStructure.Location += offset;
   else
     TEST_ERROR("This view & resource doesn't support SizeBytes");
   return *this;
@@ -969,9 +991,16 @@ D3D12_CPU_DESCRIPTOR_HANDLE D3D12ViewCreator::CreateCPU(ID3D12DescriptorHeap *he
     cpu.ptr += increment[D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV] * descriptor;
     m_Dev->CreateConstantBufferView(&desc.cbv, cpu);
   }
+  else if(m_Type == ViewType::AS)
+  {
+    desc.srv.Shader4ComponentMapping = Shader4ComponentMapping;
+
+    cpu.ptr += increment[D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV] * descriptor;
+    m_Dev->CreateShaderResourceView(NULL, &desc.srv, cpu);
+  }
   else if(m_Type == ViewType::SRV)
   {
-    if(desc.uav.ViewDimension == D3D12_SRV_DIMENSION_BUFFER)
+    if(desc.srv.ViewDimension == D3D12_SRV_DIMENSION_BUFFER)
     {
       D3D12_RESOURCE_DESC bufdesc = m_Res->GetDesc();
 
@@ -1074,6 +1103,7 @@ D3D12PSOCreator::D3D12PSOCreator(ID3D12DevicePtr dev) : m_Dev(dev)
 
 D3D12PSOCreator &D3D12PSOCreator::VS(ID3DBlobPtr blob)
 {
+  vsblob = blob;
   if(blob)
   {
     GraphicsDesc.VS.pShaderBytecode = blob->GetBufferPointer();
@@ -1087,8 +1117,41 @@ D3D12PSOCreator &D3D12PSOCreator::VS(ID3DBlobPtr blob)
   return *this;
 }
 
+D3D12PSOCreator &D3D12PSOCreator::AS(ID3DBlobPtr blob)
+{
+  asblob = blob;
+  if(blob)
+  {
+    m_AS.pShaderBytecode = blob->GetBufferPointer();
+    m_AS.BytecodeLength = blob->GetBufferSize();
+  }
+  else
+  {
+    m_AS.pShaderBytecode = NULL;
+    m_AS.BytecodeLength = 0;
+  }
+  return *this;
+}
+
+D3D12PSOCreator &D3D12PSOCreator::MS(ID3DBlobPtr blob)
+{
+  msblob = blob;
+  if(blob)
+  {
+    m_MS.pShaderBytecode = blob->GetBufferPointer();
+    m_MS.BytecodeLength = blob->GetBufferSize();
+  }
+  else
+  {
+    m_MS.pShaderBytecode = NULL;
+    m_MS.BytecodeLength = 0;
+  }
+  return *this;
+}
+
 D3D12PSOCreator &D3D12PSOCreator::HS(ID3DBlobPtr blob)
 {
+  hsblob = blob;
   if(blob)
   {
     GraphicsDesc.HS.pShaderBytecode = blob->GetBufferPointer();
@@ -1104,6 +1167,7 @@ D3D12PSOCreator &D3D12PSOCreator::HS(ID3DBlobPtr blob)
 
 D3D12PSOCreator &D3D12PSOCreator::DS(ID3DBlobPtr blob)
 {
+  dsblob = blob;
   if(blob)
   {
     GraphicsDesc.DS.pShaderBytecode = blob->GetBufferPointer();
@@ -1119,6 +1183,7 @@ D3D12PSOCreator &D3D12PSOCreator::DS(ID3DBlobPtr blob)
 
 D3D12PSOCreator &D3D12PSOCreator::GS(ID3DBlobPtr blob)
 {
+  gsblob = blob;
   if(blob)
   {
     GraphicsDesc.GS.pShaderBytecode = blob->GetBufferPointer();
@@ -1134,6 +1199,7 @@ D3D12PSOCreator &D3D12PSOCreator::GS(ID3DBlobPtr blob)
 
 D3D12PSOCreator &D3D12PSOCreator::PS(ID3DBlobPtr blob)
 {
+  psblob = blob;
   if(blob)
   {
     GraphicsDesc.PS.pShaderBytecode = blob->GetBufferPointer();
@@ -1149,6 +1215,7 @@ D3D12PSOCreator &D3D12PSOCreator::PS(ID3DBlobPtr blob)
 
 D3D12PSOCreator &D3D12PSOCreator::CS(ID3DBlobPtr blob)
 {
+  csblob = blob;
   if(blob)
   {
     ComputeDesc.CS.pShaderBytecode = blob->GetBufferPointer();
@@ -1223,6 +1290,10 @@ D3D12PSOCreator &D3D12PSOCreator::SampleCount(UINT Samples)
 D3D12PSOCreator::operator ID3D12PipelineStatePtr() const
 {
   ID3D12PipelineStatePtr pso;
+  if((m_MS.BytecodeLength > 0) || (m_AS.BytecodeLength > 0))
+  {
+    return NULL;
+  }
   if(ComputeDesc.CS.BytecodeLength > 0)
   {
     CHECK_HR(m_Dev->CreateComputePipelineState(&ComputeDesc, __uuidof(ID3D12PipelineState),

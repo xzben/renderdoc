@@ -114,6 +114,9 @@ win32 {
 
 	DESTDIR=$$CMAKE_DIR/bin
 
+	# Archlinux broke Qt builds by forcing on lto, so we have to re-override that here
+	CONFIG -= ltcg
+
 	include($$CMAKE_DIR/qrenderdoc/qrenderdoc_cmake.pri)
 
 	# Temp files into .obj
@@ -174,11 +177,13 @@ SOURCES += Code/qrenderdoc.cpp \
     Code/Resources.cpp \
     Code/RGPInterop.cpp \
     Code/pyrenderdoc/PythonContext.cpp \
+    Code/pyrenderdoc/PythonInvokers.cpp \
     Code/Interface/QRDInterface.cpp \
     Code/Interface/Analytics.cpp \
     Code/Interface/ShaderProcessingTool.cpp \
-    Code/Interface/PersistantConfig.cpp \
+    Code/Interface/PersistentConfig.cpp \
     Code/Interface/RemoteHost.cpp \
+    Code/Interface/Helpers.cpp \
     Styles/StyleData.cpp \
     Styles/RDStyle/RDStyle.cpp \
     Styles/RDTweakedNativeStyle/RDTweakedNativeStyle.cpp \
@@ -206,6 +211,7 @@ SOURCES += Code/qrenderdoc.cpp \
     Widgets/ReplayOptionsSelector.cpp \
     Widgets/TextureGoto.cpp \
     Widgets/RangeHistogram.cpp \
+    Widgets/AnnotationDisplay.cpp \
     Widgets/CollapseGroupBox.cpp \
     Windows/Dialogs/TextureSaveDialog.cpp \
     Windows/Dialogs/CaptureDialog.cpp \
@@ -218,6 +224,7 @@ SOURCES += Code/qrenderdoc.cpp \
     Windows/PipelineState/D3D12PipelineStateViewer.cpp \
     Windows/PipelineState/GLPipelineStateViewer.cpp \
     Widgets/Extended/RDTreeView.cpp \
+    Widgets/Extended/RDToolTip.cpp \
     Widgets/Extended/RDTreeWidget.cpp \
     Widgets/BufferFormatSpecifier.cpp \
     Windows/BufferViewer.cpp \
@@ -248,7 +255,9 @@ SOURCES += Code/qrenderdoc.cpp \
     Windows/ResourceInspector.cpp \
     Windows/Dialogs/AnalyticsConfirmDialog.cpp \
     Windows/Dialogs/AnalyticsPromptDialog.cpp \
-    Windows/Dialogs/AxisMappingDialog.cpp
+    Windows/Dialogs/AxisMappingDialog.cpp \
+    Windows/Dialogs/CameraControlsDialog.cpp \
+    Windows/Dialogs/ProjectionGuessDialog.cpp
 HEADERS += Code/CaptureContext.h \
     Code/qprocessinfo.h \
     Code/ReplayManager.h \
@@ -262,7 +271,8 @@ HEADERS += Code/CaptureContext.h \
     Code/pyrenderdoc/interface_check.h \
     Code/Interface/QRDInterface.h \
     Code/Interface/Analytics.h \
-    Code/Interface/PersistantConfig.h \
+    Code/Interface/PersistentConfig.h \
+    Code/Interface/Helpers.h \
     Code/Interface/Extensions.h \
     Code/Interface/RemoteHost.h \
     Styles/StyleData.h \
@@ -291,6 +301,7 @@ HEADERS += Code/CaptureContext.h \
     Widgets/ThumbnailStrip.h \
     Widgets/ReplayOptionsSelector.h \
     Widgets/TextureGoto.h \
+    Widgets/AnnotationDisplay.h \
     Widgets/RangeHistogram.h \
     Widgets/CollapseGroupBox.h \
     Windows/Dialogs/TextureSaveDialog.h \
@@ -304,6 +315,7 @@ HEADERS += Code/CaptureContext.h \
     Windows/PipelineState/D3D12PipelineStateViewer.h \
     Windows/PipelineState/GLPipelineStateViewer.h \
     Widgets/Extended/RDTreeView.h \
+    Widgets/Extended/RDToolTip.h \
     Widgets/Extended/RDTreeWidget.h \
     Widgets/BufferFormatSpecifier.h \
     Windows/BufferViewer.h \
@@ -334,7 +346,9 @@ HEADERS += Code/CaptureContext.h \
     Windows/ResourceInspector.h \
     Windows/Dialogs/AnalyticsConfirmDialog.h \
     Windows/Dialogs/AnalyticsPromptDialog.h \
-    Windows/Dialogs/AxisMappingDialog.h
+    Windows/Dialogs/AxisMappingDialog.h \
+    Windows/Dialogs/CameraControlsDialog.h \
+    Windows/Dialogs/ProjectionGuessDialog.h
 FORMS    += Windows/Dialogs/AboutDialog.ui \
     Windows/Dialogs/CrashDialog.ui \
     Windows/Dialogs/UpdateDialog.ui \
@@ -379,7 +393,9 @@ FORMS    += Windows/Dialogs/AboutDialog.ui \
     Windows/ResourceInspector.ui \
     Windows/Dialogs/AnalyticsConfirmDialog.ui \
     Windows/Dialogs/AnalyticsPromptDialog.ui \
-    Windows/Dialogs/AxisMappingDialog.ui
+    Windows/Dialogs/AxisMappingDialog.ui \
+    Windows/Dialogs/CameraControlsDialog.ui \
+    Windows/Dialogs/ProjectionGuessDialog.ui
 
 RESOURCES += Resources/resources.qrc
 

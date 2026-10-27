@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,8 +25,8 @@
 #include "spirv_processor.h"
 #include "common/formatting.h"
 #include "maths/half_convert.h"
+#include "replay/common/var_dispatch_helpers.h"
 #include "spirv_op_helpers.h"
-#include "var_dispatch_helpers.h"
 
 namespace rdcspv
 {
@@ -223,6 +223,10 @@ void Decorations::Register(const DecorationAndParamData &decoration)
   {
     flags = Flags(flags | Aliased);
   }
+  else if(decoration == Decoration::UTFEncodedKHR)
+  {
+    flags = Flags(flags | UTF8);
+  }
   else if(decoration == Decoration::Location)
   {
     RDCASSERT(!(flags & HasArrayStride));
@@ -303,6 +307,18 @@ void Decorations::Unregister(const DecorationAndParamData &decoration)
   {
     flags = Flags(flags & ~ColMajor);
   }
+  else if(decoration == Decoration::Restrict)
+  {
+    flags = Flags(flags & ~Restrict);
+  }
+  else if(decoration == Decoration::Aliased)
+  {
+    flags = Flags(flags & ~Aliased);
+  }
+  else if(decoration == Decoration::UTFEncodedKHR)
+  {
+    flags = Flags(flags & ~UTF8);
+  }
   else if(decoration == Decoration::Location)
   {
     flags = Flags(flags & ~HasLocation);
@@ -358,18 +374,15 @@ Processor::~Processor()
 {
 }
 
-void Processor::Parse(const rdcarray<uint32_t> &spirvWords)
+bool Processor::Parse(const rdcarray<uint32_t> &spirvWords)
 {
-  m_SPIRV = spirvWords;
-
-  if(m_SPIRV.size() < FirstRealWord || m_SPIRV[0] != MagicNumber)
+  if(spirvWords.size() < FirstRealWord || spirvWords[0] != MagicNumber)
   {
     RDCERR("Empty or invalid SPIR-V module");
-    m_SPIRV.clear();
-    return;
+    return false;
   }
 
-  uint32_t packedVersion = m_SPIRV[1];
+  uint32_t packedVersion = spirvWords[1];
 
   // Bytes: 0 | major | minor | 0
   m_MajorVersion = uint8_t((packedVersion & 0x00ff0000) >> 16);
@@ -378,10 +391,69 @@ void Processor::Parse(const rdcarray<uint32_t> &spirvWords)
   if(packedVersion > VersionPacked)
   {
     RDCERR("Unsupported SPIR-V version: %08x", packedVersion);
-    m_SPIRV.clear();
-    return;
+    return false;
   }
 
+  m_SPIRV = spirvWords;
+
+  return Parse();
+}
+
+bool Processor::Parse(const void *spirvWords, size_t byteSize)
+{
+  const uint32_t wordCount = byteSize / sizeof(uint32_t);
+  const uint32_t *words = (const uint32_t *)spirvWords;
+
+  if(wordCount < FirstRealWord || words[0] != MagicNumber)
+  {
+    RDCERR("Empty or invalid SPIR-V module");
+    return false;
+  }
+
+  uint32_t packedVersion = words[1];
+
+  // Bytes: 0 | major | minor | 0
+  m_MajorVersion = uint8_t((packedVersion & 0x00ff0000) >> 16);
+  m_MinorVersion = uint8_t((packedVersion & 0x0000ff00) >> 8);
+
+  if(packedVersion > VersionPacked)
+  {
+    RDCERR("Unsupported SPIR-V version: %08x", packedVersion);
+    return false;
+  }
+
+  m_SPIRV.assign(words, wordCount);
+
+  return Parse();
+}
+
+bool Processor::Parse(rdcarray<uint32_t> &&spirvWords)
+{
+  if(spirvWords.size() < FirstRealWord || spirvWords[0] != MagicNumber)
+  {
+    RDCERR("Empty or invalid SPIR-V module");
+    return false;
+  }
+
+  uint32_t packedVersion = spirvWords[1];
+
+  // Bytes: 0 | major | minor | 0
+  m_MajorVersion = uint8_t((packedVersion & 0x00ff0000) >> 16);
+  m_MinorVersion = uint8_t((packedVersion & 0x0000ff00) >> 8);
+
+  if(packedVersion > VersionPacked)
+  {
+    RDCERR("Unsupported SPIR-V version: %08x", packedVersion);
+    return false;
+  }
+
+  m_SPIRV = std::move(spirvWords);
+
+  return Parse();
+}
+
+bool Processor::Parse()
+{
   m_Generator = Generator(m_SPIRV[2] >> 16);
   m_GeneratorVersion = m_SPIRV[2] & 0xffff;
 
@@ -461,7 +533,7 @@ void Processor::Parse(const rdcarray<uint32_t> &spirvWords)
     }
     else if(opcode == Op::Decorate || opcode == Op::MemberDecorate || opcode == Op::GroupDecorate ||
             opcode == Op::GroupMemberDecorate || opcode == Op::DecorationGroup ||
-            opcode == Op::DecorateStringGOOGLE || opcode == Op::MemberDecorateStringGOOGLE)
+            opcode == Op::DecorateString || opcode == Op::MemberDecorateString)
     {
       START_SECTION(Section::Annotations);
     }
@@ -503,6 +575,8 @@ void Processor::Parse(const rdcarray<uint32_t> &spirvWords)
     if(m_Sections[s - 1].startOffset == 0)
       m_Sections[s - 1].startOffset = m_Sections[s - 1].endOffset;
   }
+
+  return true;
 }
 
 void Processor::PreParse(uint32_t maxId)
@@ -532,6 +606,25 @@ void Processor::RegisterOp(Iter it)
   {
     OpCapability decoded(it);
     capabilities.insert(decoded.capability);
+
+    if(decoded.capability == Capability::GroupNonUniform ||
+       decoded.capability == Capability::GroupNonUniformVote ||
+       decoded.capability == Capability::GroupNonUniformArithmetic ||
+       decoded.capability == Capability::GroupNonUniformBallot ||
+       decoded.capability == Capability::GroupNonUniformShuffle ||
+       decoded.capability == Capability::GroupNonUniformShuffleRelative ||
+       decoded.capability == Capability::GroupNonUniformClustered ||
+       decoded.capability == Capability::GroupNonUniformRotateKHR ||
+       decoded.capability == Capability::GroupUniformArithmeticKHR ||
+       decoded.capability == Capability::SubgroupBallotKHR ||
+       decoded.capability == Capability::SubgroupVoteKHR)
+    {
+      m_ThreadScope |= ThreadScope::Subgroup;
+    }
+    else if(decoded.capability == Capability::GroupNonUniformQuad)
+    {
+      m_ThreadScope |= ThreadScope::Quad;
+    }
   }
   else if(opdata.op == Op::Extension)
   {
@@ -549,6 +642,8 @@ void Processor::RegisterOp(Iter it)
       knownExtSet[ExtSet_Printf] = decoded.result;
     else if(decoded.name == "NonSemantic.Shader.DebugInfo.100")
       knownExtSet[ExtSet_ShaderDbg] = decoded.result;
+    else if(decoded.name == "NonSemantic.DebugBreak")
+      knownExtSet[ExtSet_DebugBreak] = decoded.result;
   }
   else if(opdata.op == Op::EntryPoint)
   {
@@ -590,6 +685,9 @@ void Processor::RegisterOp(Iter it)
     if(decoded.storageClass != rdcspv::StorageClass::Function)
       globals.push_back(
           Variable(decoded.resultType, decoded.result, decoded.storageClass, decoded.initializer));
+
+    if(decoded.storageClass == StorageClass::Workgroup)
+      m_ThreadScope |= ThreadScope::Workgroup;
   }
   else if(opdata.op == Op::ConstantNull)
   {
@@ -726,6 +824,19 @@ void Processor::RegisterOp(Iter it)
 
     constants[opdata.result] = {opdata.resultType, opdata.result, v, {}, opdata.op};
     if(opdata.op == Op::SpecConstant)
+      specConstants.insert(opdata.result);
+  }
+  else if(opdata.op == Op::ConstantDataKHR || opdata.op == Op::SpecConstantDataKHR)
+  {
+    // this one has complex decoding rules, so we do it by hand.
+    DataType &type = dataTypes[opdata.resultType];
+
+    RDCASSERT(type.type == DataType::ArrayType);
+
+    // don't evaluate the value because these are just strings and would waste huge amounts of space
+
+    constants[opdata.result] = {opdata.resultType, opdata.result, ShaderVariable(), {}, opdata.op};
+    if(opdata.op == Op::SpecConstantDataKHR)
       specConstants.insert(opdata.result);
   }
   else if(opdata.op == Op::TypeVoid || opdata.op == Op::TypeBool || opdata.op == Op::TypeInt ||

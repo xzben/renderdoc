@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,10 +23,17 @@
  ******************************************************************************/
 
 #include "d3d12_common.h"
+#include "common/formatting.h"
+#include "core/settings.h"
 #include "driver/dxgi/dxgi_common.h"
 #include "driver/dxgi/dxgi_wrapped.h"
 #include "d3d12_manager.h"
 #include "d3d12_resources.h"
+
+RDOC_CONFIG(bool, D3D12_Debug_EnableGPUVA, false,
+            "Enable GPU Validation when enabling D3D12 validation.");
+
+RDOC_CONFIG(bool, D3D12_Debug_EnableDRED, false, "Enable DRED when enabling D3D12 validation.");
 
 D3D12MarkerRegion::D3D12MarkerRegion(ID3D12GraphicsCommandList *l, const rdcstr &marker)
 {
@@ -52,16 +59,42 @@ D3D12MarkerRegion::~D3D12MarkerRegion()
     D3D12MarkerRegion::End(queue);
 }
 
-void D3D12MarkerRegion::Begin(ID3D12GraphicsCommandList *list, const rdcstr &marker)
+UINT MakeMarkerText(bool begin, const rdcstr &marker, bytebuf &storage)
 {
-  if(list)
+  // DRED needs encoded PIX markers, blerch
+  if(D3D12_Debug_EnableDRED())
+  {
+    uint64_t header[3] = {
+        begin ? (2ULL << 10) : (8ULL << 10),    // begin or set event
+        0,                                      // no colour
+        (8ULL << 55) | (1ULL << 54),            // 8 copy chunk size, ANSI
+    };
+    storage.resize(sizeof(header) + AlignUp(marker.size() + 1, sizeof(uint64_t)));
+    memcpy(storage.data(), header, sizeof(header));
+    memcpy(storage.data() + sizeof(header), marker.data(), marker.size());
+
+    return PIX_EVENT_PIX3BLOB_VERSION;
+  }
+  else
   {
     // Some debuggers (but not all) will assume the event string is null-terminated, and
     // display one less character than specified by the size. Append a space to pad the
     // output without visibly changing the event marker for other debuggers.
     rdcwstr text = StringFormat::UTF82Wide(marker + " ");
-    UINT size = UINT(text.length() * sizeof(wchar_t));
-    list->BeginEvent(0, text.c_str(), size);
+    storage.resize(text.length() * sizeof(wchar_t));
+    memcpy(storage.data(), text.data(), storage.size());
+
+    return 0;
+  }
+}
+
+void D3D12MarkerRegion::Begin(ID3D12GraphicsCommandList *list, const rdcstr &marker)
+{
+  if(list)
+  {
+    bytebuf storage;
+    UINT meta = MakeMarkerText(true, marker, storage);
+    list->BeginEvent(meta, storage.data(), (UINT)storage.byteSize());
   }
 }
 
@@ -69,9 +102,9 @@ void D3D12MarkerRegion::Begin(ID3D12CommandQueue *queue, const rdcstr &marker)
 {
   if(queue)
   {
-    rdcwstr text = StringFormat::UTF82Wide(marker + " ");
-    UINT size = UINT(text.length() * sizeof(wchar_t));
-    queue->BeginEvent(0, text.c_str(), size);
+    bytebuf storage;
+    UINT meta = MakeMarkerText(true, marker, storage);
+    queue->BeginEvent(meta, storage.data(), (UINT)storage.byteSize());
   }
 }
 
@@ -79,9 +112,9 @@ void D3D12MarkerRegion::Set(ID3D12GraphicsCommandList *list, const rdcstr &marke
 {
   if(list)
   {
-    rdcwstr text = StringFormat::UTF82Wide(marker + " ");
-    UINT size = UINT(text.length() * sizeof(wchar_t));
-    list->SetMarker(0, text.c_str(), size);
+    bytebuf storage;
+    UINT meta = MakeMarkerText(false, marker, storage);
+    list->SetMarker(meta, storage.data(), (UINT)storage.byteSize());
   }
 }
 
@@ -89,9 +122,9 @@ void D3D12MarkerRegion::Set(ID3D12CommandQueue *queue, const rdcstr &marker)
 {
   if(queue)
   {
-    rdcwstr text = StringFormat::UTF82Wide(marker + " ");
-    UINT size = UINT(text.length() * sizeof(wchar_t));
-    queue->SetMarker(0, text.c_str(), size);
+    bytebuf storage;
+    UINT meta = MakeMarkerText(false, marker, storage);
+    queue->SetMarker(meta, storage.data(), (UINT)storage.byteSize());
   }
 }
 
@@ -155,8 +188,22 @@ void BarrierSet::Configure(ID3D12Resource *res, const SubresourceStateVector &st
       break;
   }
 
-  barriers.reserve(states.size());
-  newBarriers.reserve(states.size());
+  bool different = false;
+  for(size_t i = 1; i < states.size(); i++)
+  {
+    if(states[i] != states[0])
+    {
+      different = true;
+      break;
+    }
+  }
+
+  if(different)
+  {
+    barriers.reserve(states.size());
+    newBarriers.reserve(states.size());
+  }
+
   for(size_t i = 0; i < states.size(); i++)
   {
     if(states[i].IsStates())
@@ -177,7 +224,13 @@ void BarrierSet::Configure(ID3D12Resource *res, const SubresourceStateVector &st
       b.Transition.Subresource = (UINT)i;
       b.Transition.StateAfter = resourceState;
 
+      if(!different)
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+
       barriers.push_back(b);
+
+      if(!different)
+        break;
     }
     // buffers don't need any transitions with the new layouts
     else if(!isBuffer)
@@ -207,7 +260,13 @@ void BarrierSet::Configure(ID3D12Resource *res, const SubresourceStateVector &st
       b.Subresources.IndexOrFirstMipLevel = (UINT)i;
       b.pResource = res;
 
+      if(!different)
+        b.Subresources.IndexOrFirstMipLevel = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+
       newBarriers.push_back(b);
+
+      if(!different)
+        break;
     }
   }
 }
@@ -301,25 +360,76 @@ bool EnableD3D12DebugLayer(D3D12DevConfiguration *devConfig,
 
     RDCDEBUG("Enabling debug layer");
 
-// enable this to get GPU-based validation, where available, whenever we enable API validation
-#if 0
-    ID3D12Debug1 *debug1 = NULL;
-    hr = debug->QueryInterface(__uuidof(ID3D12Debug1), (void **)&debug1);
-
-    if(SUCCEEDED(hr) && debug1)
+    if(RenderDoc::Inst().IsReplayApp() && D3D12_Debug_EnableGPUVA())
     {
-      RDCDEBUG("Enabling GPU-based validation");
-      debug1->SetEnableGPUBasedValidation(true);
+      ID3D12Debug1 *debug1 = NULL;
+      HRESULT hr = debug->QueryInterface(__uuidof(ID3D12Debug1), (void **)&debug1);
+
+      if(SUCCEEDED(hr) && debug1)
+      {
+        RDCLOG("Enabling GPU-based validation");
+        debug1->SetEnableGPUBasedValidation(true);
+      }
+      else
+      {
+        RDCLOG("GPU-based validation not available");
+      }
       SAFE_RELEASE(debug1);
     }
-    else
-    {
-      RDCDEBUG("GPU-based validation not available");
-    }
-#endif
 
     SAFE_RELEASE(debug);
 
+    return true;
+  }
+
+  return false;
+}
+
+bool EnableDRED(D3D12DevConfiguration *devConfig, PFN_D3D12_GET_DEBUG_INTERFACE getDebugInterface)
+{
+  ID3D12DeviceRemovedExtendedDataSettings *dred = NULL;
+  if(devConfig)
+  {
+    if(devConfig->dred)
+    {
+      dred = devConfig->dred;
+      dred->AddRef();
+    }
+  }
+  else
+  {
+    if(!getDebugInterface)
+      getDebugInterface = (PFN_D3D12_GET_DEBUG_INTERFACE)GetProcAddress(
+          GetModuleHandleA("d3d12.dll"), "D3D12GetDebugInterface");
+
+    if(!getDebugInterface)
+    {
+      RDCERR("Couldn't find D3D12GetDebugInterface!");
+      return false;
+    }
+
+    HRESULT hr = getDebugInterface(__uuidof(ID3D12DeviceRemovedExtendedDataSettings), (void **)&dred);
+
+    if(FAILED(hr))
+      SAFE_RELEASE(dred);
+  }
+
+  if(dred && D3D12_Debug_EnableDRED())
+  {
+    RDCLOG("Enabling DRED");
+
+    dred->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    dred->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    dred->SetWatsonDumpEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+
+    ID3D12DeviceRemovedExtendedDataSettings1 *settings1 = NULL;
+    HRESULT hr = dred->QueryInterface(__uuidof(ID3D12DeviceRemovedExtendedDataSettings1),
+                                      (void **)&settings1);
+    if(SUCCEEDED(hr) && settings1)
+      settings1->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    SAFE_RELEASE(settings1);
+
+    SAFE_RELEASE(dred);
     return true;
   }
 
@@ -423,6 +533,32 @@ bool D3D12InitParams::IsSupportedVersion(uint64_t ver)
   if(ver == 0x11)
     return true;
 
+  // 0x12 -> 0x13 - Descriptor heap initial states contain optional user names for descriptors
+  if(ver == 0x12)
+    return true;
+
+  // 0x13 -> 0x14 - Reserved/placed buffers are serialised via their heaps not per-buffer
+  if(ver == 0x13)
+    return true;
+
+  // 0x14 -> 0x15 - Add serialisation of new root signature blob in PSO desc
+  if(ver == 0x14)
+    return true;
+
+  // 0x15 -> 0x16 - added IDs generated at capture time for shaders in pipelines
+  if(ver == 0x15)
+    return true;
+
+  // 0x16 -> 0x17 - added serialised annotations
+  if(ver == 0x16)
+    return true;
+
+  // 0x17 -> 0x20 - converted serialised page table to be 64-bit
+  //                version jump was to match vulkan version, as page table is agnostic.
+  //                Version numbers are arbitrary and just have to be increasing
+  if(ver == 0x17)
+    return true;
+
   return false;
 }
 
@@ -511,7 +647,7 @@ TextureType MakeTextureDim(D3D12_SRV_DIMENSION dim)
     case D3D12_SRV_DIMENSION_TEXTURE3D: return TextureType::Texture3D;
     case D3D12_SRV_DIMENSION_TEXTURECUBE: return TextureType::TextureCube;
     case D3D12_SRV_DIMENSION_TEXTURECUBEARRAY: return TextureType::TextureCubeArray;
-    default: break;
+    case D3D12_SRV_DIMENSION_BUFFER_BYTE_OFFSET: return TextureType::Buffer;
   }
 
   return TextureType::Unknown;
@@ -530,7 +666,6 @@ TextureType MakeTextureDim(D3D12_RTV_DIMENSION dim)
     case D3D12_RTV_DIMENSION_TEXTURE2DMS: return TextureType::Texture2DMS;
     case D3D12_RTV_DIMENSION_TEXTURE2DMSARRAY: return TextureType::Texture2DMSArray;
     case D3D12_RTV_DIMENSION_TEXTURE3D: return TextureType::Texture3D;
-    default: break;
   }
 
   return TextureType::Unknown;
@@ -547,7 +682,6 @@ TextureType MakeTextureDim(D3D12_DSV_DIMENSION dim)
     case D3D12_DSV_DIMENSION_TEXTURE2DARRAY: return TextureType::Texture2DArray;
     case D3D12_DSV_DIMENSION_TEXTURE2DMS: return TextureType::Texture2DMS;
     case D3D12_DSV_DIMENSION_TEXTURE2DMSARRAY: return TextureType::Texture2DMSArray;
-    default: break;
   }
 
   return TextureType::Unknown;
@@ -566,7 +700,7 @@ TextureType MakeTextureDim(D3D12_UAV_DIMENSION dim)
     case D3D12_UAV_DIMENSION_TEXTURE2DMS: return TextureType::Texture2DMS;
     case D3D12_UAV_DIMENSION_TEXTURE2DMSARRAY: return TextureType::Texture2DMSArray;
     case D3D12_UAV_DIMENSION_TEXTURE3D: return TextureType::Texture3D;
-    default: break;
+    case D3D12_UAV_DIMENSION_BUFFER_BYTE_OFFSET: return TextureType::Buffer;
   }
 
   return TextureType::Unknown;
@@ -581,7 +715,6 @@ AddressMode MakeAddressMode(D3D12_TEXTURE_ADDRESS_MODE addr)
     case D3D12_TEXTURE_ADDRESS_MODE_CLAMP: return AddressMode::ClampEdge;
     case D3D12_TEXTURE_ADDRESS_MODE_BORDER: return AddressMode::ClampBorder;
     case D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE: return AddressMode::MirrorOnce;
-    default: break;
   }
 
   return AddressMode::Wrap;
@@ -600,7 +733,6 @@ CompareFunction MakeCompareFunc(D3D12_COMPARISON_FUNC func)
     case D3D12_COMPARISON_FUNC_NOT_EQUAL: return CompareFunction::NotEqual;
     case D3D12_COMPARISON_FUNC_GREATER_EQUAL: return CompareFunction::GreaterEqual;
     case D3D12_COMPARISON_FUNC_ALWAYS: return CompareFunction::AlwaysTrue;
-    default: break;
   }
 
   return CompareFunction::AlwaysTrue;
@@ -937,46 +1069,108 @@ enum PIXEventType
   ePIXEvent_SetMarker_OnContext_NoArgs = 0x018,
 };
 
+enum PIXEventTypeV2
+{
+  ePIXEventV2_EndEvent = 0,
+  ePIXEventV2_BeginEvent = 1,
+  ePIXEventV2_SetMarker = 2,
+};
+
+enum PIXEventFlagsV2
+{
+  None = 0x0,
+  ePIXEventV2_OnContext = 0x1,
+  ePIXEventV2_FormatStrANSI = 0x2,
+  ePIXEventV2_HasColor = 0xf0,
+};
+
 inline void PIX3DecodeEventInfo(const UINT64 BlobData, UINT64 &Timestamp, PIXEventType &EventType)
 {
-  static const UINT64 PIXEventsBlockEndMarker = 0x00000000000FFF80;
-
-  static const UINT64 PIXEventsTypeReadMask = 0x00000000000FFC00;
-  static const UINT64 PIXEventsTypeWriteMask = 0x00000000000003FF;
+  static const UINT64 PIXEventsTypeMask = 0x00000000000003FF;
   static const UINT64 PIXEventsTypeBitShift = 10;
 
-  static const UINT64 PIXEventsTimestampReadMask = 0xFFFFFFFFFFF00000;
-  static const UINT64 PIXEventsTimestampWriteMask = 0x00000FFFFFFFFFFF;
+  static const UINT64 PIXEventsTimestampMask = 0x00000FFFFFFFFFFF;
   static const UINT64 PIXEventsTimestampBitShift = 20;
 
-  Timestamp = (BlobData >> PIXEventsTimestampBitShift) & PIXEventsTimestampWriteMask;
-  EventType = PIXEventType((BlobData >> PIXEventsTypeBitShift) & PIXEventsTypeWriteMask);
+  Timestamp = (BlobData >> PIXEventsTimestampBitShift) & PIXEventsTimestampMask;
+  EventType = PIXEventType((BlobData >> PIXEventsTypeBitShift) & PIXEventsTypeMask);
+}
+
+inline void PIX3DecodeEventInfoV2(const UINT64 BlobData, UINT64 &Timestamp, uint8_t &size,
+                                  PIXEventTypeV2 &type, PIXEventFlagsV2 &flags)
+{
+  static const UINT64 PIXEventsSizeMask = 0x000000000000007F;
+  static const UINT64 PIXEventsSizeBitShift = 0;
+
+  static const UINT64 PIXEventsTypeMask = 0x000000000000001F;
+  static const UINT64 PIXEventsTypeBitShift = 7;
+
+  static const UINT64 PIXEventsFlagsMask = 0x00000000000000FF;
+  static const UINT64 PIXEventsFlagsBitShift = 12;
+
+  static const UINT64 PIXEventsTimestampMask = 0x00000FFFFFFFFFFF;
+  static const UINT64 PIXEventsTimestampBitShift = 20;
+
+  Timestamp = (BlobData >> PIXEventsTimestampBitShift) & PIXEventsTimestampMask;
+  size = (BlobData >> PIXEventsSizeBitShift) & PIXEventsSizeMask;
+  type = PIXEventTypeV2((BlobData >> PIXEventsTypeBitShift) & PIXEventsTypeMask);
+  flags = PIXEventFlagsV2((BlobData >> PIXEventsFlagsBitShift) & PIXEventsTypeMask);
 }
 
 inline void PIX3DecodeStringInfo(const UINT64 BlobData, UINT64 &Alignment, UINT64 &CopyChunkSize,
                                  bool &IsANSI, bool &IsShortcut)
 {
-  static const UINT64 PIXEventsStringAlignmentWriteMask = 0x000000000000000F;
-  static const UINT64 PIXEventsStringAlignmentReadMask = 0xF000000000000000;
+  static const UINT64 PIXEventsStringAlignmentMask = 0x000000000000000F;
   static const UINT64 PIXEventsStringAlignmentBitShift = 60;
 
-  static const UINT64 PIXEventsStringCopyChunkSizeWriteMask = 0x000000000000001F;
-  static const UINT64 PIXEventsStringCopyChunkSizeReadMask = 0x0F80000000000000;
+  static const UINT64 PIXEventsStringCopyChunkSizeMask = 0x000000000000001F;
   static const UINT64 PIXEventsStringCopyChunkSizeBitShift = 55;
 
-  static const UINT64 PIXEventsStringIsANSIWriteMask = 0x0000000000000001;
-  static const UINT64 PIXEventsStringIsANSIReadMask = 0x0040000000000000;
+  static const UINT64 PIXEventsStringIsANSIMask = 0x0000000000000001;
   static const UINT64 PIXEventsStringIsANSIBitShift = 54;
 
-  static const UINT64 PIXEventsStringIsShortcutWriteMask = 0x0000000000000001;
-  static const UINT64 PIXEventsStringIsShortcutReadMask = 0x0020000000000000;
+  static const UINT64 PIXEventsStringIsShortcutMask = 0x0000000000000001;
   static const UINT64 PIXEventsStringIsShortcutBitShift = 53;
 
-  Alignment = (BlobData >> PIXEventsStringAlignmentBitShift) & PIXEventsStringAlignmentWriteMask;
+  Alignment = (BlobData >> PIXEventsStringAlignmentBitShift) & PIXEventsStringAlignmentMask;
   CopyChunkSize =
-      (BlobData >> PIXEventsStringCopyChunkSizeBitShift) & PIXEventsStringCopyChunkSizeWriteMask;
-  IsANSI = (BlobData >> PIXEventsStringIsANSIBitShift) & PIXEventsStringIsANSIWriteMask;
-  IsShortcut = (BlobData >> PIXEventsStringIsShortcutBitShift) & PIXEventsStringIsShortcutWriteMask;
+      (BlobData >> PIXEventsStringCopyChunkSizeBitShift) & PIXEventsStringCopyChunkSizeMask;
+  IsANSI = (BlobData >> PIXEventsStringIsANSIBitShift) & PIXEventsStringIsANSIMask;
+  IsShortcut = (BlobData >> PIXEventsStringIsShortcutBitShift) & PIXEventsStringIsShortcutMask;
+}
+
+const void *PIX3GetStringPointer(bool isANSI, UINT64 copyChunkSize, const UINT64 *&pData,
+                                 UINT &stringCharCount)
+{
+  const void *ret = NULL;
+  UINT totalStringBytes = 0;
+  if(isANSI)
+  {
+    ret = pData;
+    stringCharCount = UINT(strlen((const char *)pData));
+    totalStringBytes = stringCharCount + 1;
+  }
+  else
+  {
+    ret = pData;
+    stringCharCount = UINT(wcslen((const wchar_t *)pData));
+    totalStringBytes = (stringCharCount + 1) * sizeof(wchar_t);
+  }
+
+  UINT64 byteChunks = ((totalStringBytes + copyChunkSize - 1) / copyChunkSize) * copyChunkSize;
+  UINT64 stringQWordCount = (byteChunks + 7) / 8;
+  pData += stringQWordCount;
+  return ret;
+}
+
+rdcstr PIX3DecodeRawString(bool isANSI, UINT64 copyChunkSize, const UINT64 *&pData)
+{
+  UINT stringCharCount = 0;
+  const void *ptr = PIX3GetStringPointer(isANSI, copyChunkSize, pData, stringCharCount);
+  if(isANSI)
+    return rdcstr((const char *)ptr, stringCharCount);
+  else
+    return StringFormat::Wide2UTF8(rdcwstr((const wchar_t *)ptr, stringCharCount));
 }
 
 const UINT64 *PIX3DecodeStringParam(const UINT64 *pData, rdcstr &DecodedString)
@@ -988,70 +1182,55 @@ const UINT64 *PIX3DecodeStringParam(const UINT64 *pData, rdcstr &DecodedString)
   PIX3DecodeStringInfo(*pData, alignment, copyChunkSize, isANSI, isShortcut);
   ++pData;
 
-  UINT totalStringBytes = 0;
-  if(isANSI)
-  {
-    const char *c = (const char *)pData;
-    UINT formatStringCharCount = UINT(strlen((const char *)pData));
-    DecodedString = rdcstr(c, formatStringCharCount);
-    totalStringBytes = formatStringCharCount + 1;
-  }
-  else
-  {
-    const wchar_t *w = (const wchar_t *)pData;
-    UINT formatStringCharCount = UINT(wcslen((const wchar_t *)pData));
-    DecodedString = StringFormat::Wide2UTF8(rdcwstr(w, formatStringCharCount));
-    totalStringBytes = (formatStringCharCount + 1) * sizeof(wchar_t);
-  }
-
-  UINT64 byteChunks = ((totalStringBytes + copyChunkSize - 1) / copyChunkSize) * copyChunkSize;
-  UINT64 stringQWordCount = (byteChunks + 7) / 8;
-  pData += stringQWordCount;
+  DecodedString = PIX3DecodeRawString(isANSI, copyChunkSize, pData);
 
   return pData;
 }
 
-rdcstr PIX3SprintfParams(const rdcstr &Format, const UINT64 *pData)
+struct PIX3FormatArgs : public StringFormat::Args
 {
-  rdcstr finalString;
-  rdcstr formatPart;
-  int32_t lastFind = 0;
+public:
+  PIX3FormatArgs(const UINT64 *pData) : m_Data(pData), m_Start(pData) {}
 
-  for(int32_t found = Format.indexOf('%'); found >= 0;)
+  void reset() override { m_Data = m_Start; }
+  void error(const char *err) override { RDCERR("Error formatting PIX3 string: %s", err); }
+  uint64_t get_uint64() override
   {
-    finalString += Format.substr(lastFind, found - lastFind);
-
-    int32_t endOfFormat = Format.find_first_of("%diufFeEgGxXoscpaAn", found + 1);
-    if(endOfFormat < 0)
-    {
-      finalString += "<FORMAT_ERROR>";
-      break;
-    }
-
-    formatPart = Format.substr(found, (endOfFormat - found) + 1);
-
-    // strings
-    if(formatPart.back() == 's')
-    {
-      rdcstr stringParam;
-      pData = PIX3DecodeStringParam(pData, stringParam);
-      finalString += stringParam;
-    }
-    // numerical values
-    else
-    {
-      finalString += StringFormat::Fmt(formatPart.c_str(), *pData);
-      ++pData;
-    }
-
-    lastFind = endOfFormat + 1;
-    found = Format.indexOf('%', lastFind);
+    uint64_t ret = *m_Data;
+    m_Data++;
+    return ret;
   }
+  double get_double() override
+  {
+    double ret = *(double *)m_Data;
+    m_Data++;
+    return ret;
+  }
+  void *get_ptr() override
+  {
+    uint64_t *ret = *(uint64_t **)m_Data;
+    m_Data++;
+    return ret;
+  }
+  const char *get_str() override
+  {
+    UINT64 alignment;
+    UINT64 copyChunkSize;
+    bool isANSI;
+    bool isShortcut;
+    PIX3DecodeStringInfo(*m_Data, alignment, copyChunkSize, isANSI, isShortcut);
+    ++m_Data;
 
-  finalString += Format.substr(lastFind);
-
-  return finalString;
-}
+    tmpStr = PIX3DecodeRawString(isANSI, copyChunkSize, m_Data);
+    return tmpStr.c_str();
+  }
+  int get_int() override { return int(get_uint64()); }
+  unsigned int get_uint() override { return (unsigned int)(get_uint64()); }
+private:
+  const UINT64 *m_Data;
+  const UINT64 *m_Start;
+  rdcstr tmpStr;
+};
 
 rdcstr PIX3DecodeEventString(const UINT64 *pData, UINT64 &color)
 {
@@ -1087,13 +1266,53 @@ rdcstr PIX3DecodeEventString(const UINT64 *pData, UINT64 &color)
     return formatString;
 
   // sprintf remaining args
-  formatString = PIX3SprintfParams(formatString, pData);
-  return formatString;
+  PIX3FormatArgs args(pData);
+  return StringFormat::FmtArgs(formatString.c_str(), args);
+}
+
+rdcstr PIX3DecodeEventStringV2(const UINT64 *pData, UINT Size, UINT64 &color)
+{
+  // event header
+  UINT64 timestamp;
+  PIXEventTypeV2 eventType;
+  PIXEventFlagsV2 eventFlags;
+  uint8_t eventSize;
+
+  PIX3DecodeEventInfoV2(*pData, timestamp, eventSize, eventType, eventFlags);
+  ++pData;
+
+  if(eventType != ePIXEventV2_BeginEvent && eventType != ePIXEventV2_SetMarker)
+  {
+    RDCERR("Unexpected/unsupported PIX3Event v2 %u type in PIXDecodeMarkerEventString", eventType);
+    return "<UnknownV2EventType>";
+  }
+
+  if(eventSize > Size - sizeof(UINT64))
+  {
+    RDCERR("Invalid PIX3Event v2 %u encoded size with %u actual bytes", eventSize, Size);
+    return "";
+  }
+
+  // color
+  color = *pData;
+  ++pData;
+
+  // queue/list pointer?????
+  void *queueOrList = *(void **)pData;
+  (void)queueOrList;
+  ++pData;
+
+  // format string
+  rdcstr formatString = PIX3DecodeRawString((eventFlags & ePIXEventV2_FormatStrANSI) != 0, 8, pData);
+
+  // sprintf remaining args
+  PIX3FormatArgs args(pData);
+  return StringFormat::FmtArgs(formatString.c_str(), args);
 }
 
 D3D12_SAMPLER_DESC2 ConvertStaticSampler(const D3D12_STATIC_SAMPLER_DESC1 &samp)
 {
-  D3D12_SAMPLER_DESC2 desc;
+  D3D12_SAMPLER_DESC2 desc = {};
   desc.Filter = samp.Filter;
   desc.AddressU = samp.AddressU;
   desc.AddressV = samp.AddressV;
@@ -1391,6 +1610,7 @@ struct D3D12_PTR_PSO_SUBOBJECT
     D3D12_INPUT_LAYOUT_DESC InputLayout;
     D3D12_CACHED_PIPELINE_STATE CachedPSO;
     D3D12_VIEW_INSTANCING_DESC ViewInstancing;
+    D3D12_SERIALIZED_ROOT_SIGNATURE_DESC RootSig;
   } data;
 };
 
@@ -1505,6 +1725,12 @@ D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC::D3D12_EXPANDED_PIPELINE_STATE_STREAM_
       {
         pRootSignature = ptr->data.pRootSignature;
         ITER_ADV(ID3D12RootSignature *);
+        break;
+      }
+      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SERIALIZED_ROOT_SIGNATURE:
+      {
+        RootSigBlob = ptr->data.RootSig;
+        ITER_ADV(D3D12_SERIALIZED_ROOT_SIGNATURE_DESC);
         break;
       }
       case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS:
@@ -1716,26 +1942,66 @@ D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC::D3D12_EXPANDED_PIPELINE_STATE_STREAM_
   }
 }
 
+ID3D12RootSignature *D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC::GetOrCreateRootSig(
+    WrappedID3D12Device *dev)
+{
+  if(pRootSignature == NULL && RootSigBlob.SerializedBlobSizeInBytes > 0)
+  {
+    pRootSignature = dev->CreateImplicitRootSig(RootSigBlob);
+    RootSigBlob = {};
+  }
+
+  return pRootSignature;
+}
+
 void D3D12_PACKED_PIPELINE_STATE_STREAM_DESC::Unwrap()
 {
-  m_GraphicsStreamData.pRootSignature = ::Unwrap(m_GraphicsStreamData.pRootSignature);
-  m_ComputeStreamData.pRootSignature = ::Unwrap(m_ComputeStreamData.pRootSignature);
+  *m_RootSigToUnwrap = ::Unwrap(*m_RootSigToUnwrap);
 }
 
 D3D12_PACKED_PIPELINE_STATE_STREAM_DESC &D3D12_PACKED_PIPELINE_STATE_STREAM_DESC::operator=(
     const D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &expanded)
 {
+#define WRITE_VERSIONED_SUBOJBECT(subobjType, subobj) \
+  type = subobjType;                                  \
+  memcpy(ptr, &type, sizeof(type));                   \
+  ptr += sizeof(type);                                \
+  ptr = AlignUpPtr(ptr, alignof(decltype(subobj)));   \
+  memcpy(ptr, &subobj, sizeof(subobj));               \
+  ptr += sizeof(subobj);                              \
+  ptr = AlignUpPtr(ptr, sizeof(void *));
+
   if(expanded.CS.BytecodeLength > 0)
   {
-    m_ComputeStreamData.pRootSignature = expanded.pRootSignature;
     m_ComputeStreamData.CS = expanded.CS;
     m_ComputeStreamData.NodeMask = expanded.NodeMask;
     m_ComputeStreamData.CachedPSO = expanded.CachedPSO;
     m_ComputeStreamData.Flags = expanded.Flags;
+
+    byte *ptr = m_ComputeStreamData.VariableVersionedData;
+    const byte *start = ptr;
+    D3D12_PIPELINE_STATE_SUBOBJECT_TYPE type;
+
+    D3D12_SERIALIZED_ROOT_SIGNATURE_DESC RootSigBlob = expanded.GetRootSigBlob();
+    if(RootSigBlob.SerializedBlobSizeInBytes > 0)
+    {
+      WRITE_VERSIONED_SUBOJBECT(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SERIALIZED_ROOT_SIGNATURE,
+                                RootSigBlob);
+
+      m_RootSigToUnwrap = NULL;
+    }
+    else
+    {
+      ID3D12RootSignature *sig = expanded.GetRootSigIfPresent();
+      WRITE_VERSIONED_SUBOJBECT(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, sig);
+
+      m_RootSigToUnwrap = ((ID3D12RootSignature **)ptr) - 1;
+    }
+
+    m_VariableVersionedDataLength = ptr - start;
   }
   else
   {
-    m_GraphicsStreamData.pRootSignature = expanded.pRootSignature;
     m_GraphicsStreamData.VS = expanded.VS;
     m_GraphicsStreamData.PS = expanded.PS;
     m_GraphicsStreamData.DS = expanded.DS;
@@ -1761,14 +2027,21 @@ D3D12_PACKED_PIPELINE_STATE_STREAM_DESC &D3D12_PACKED_PIPELINE_STATE_STREAM_DESC
     const byte *start = ptr;
     D3D12_PIPELINE_STATE_SUBOBJECT_TYPE type;
 
-#define WRITE_VERSIONED_SUBOJBECT(subobjType, subobj) \
-  type = subobjType;                                  \
-  memcpy(ptr, &type, sizeof(type));                   \
-  ptr += sizeof(type);                                \
-  ptr = AlignUpPtr(ptr, alignof(decltype(subobj)));   \
-  memcpy(ptr, &subobj, sizeof(subobj));               \
-  ptr += sizeof(subobj);                              \
-  ptr = AlignUpPtr(ptr, sizeof(void *));
+    D3D12_SERIALIZED_ROOT_SIGNATURE_DESC RootSigBlob = expanded.GetRootSigBlob();
+    if(RootSigBlob.SerializedBlobSizeInBytes > 0)
+    {
+      WRITE_VERSIONED_SUBOJBECT(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SERIALIZED_ROOT_SIGNATURE,
+                                RootSigBlob);
+
+      m_RootSigToUnwrap = NULL;
+    }
+    else
+    {
+      ID3D12RootSignature *sig = expanded.GetRootSigIfPresent();
+      WRITE_VERSIONED_SUBOJBECT(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, sig);
+
+      m_RootSigToUnwrap = ((ID3D12RootSignature **)ptr) - 1;
+    }
 
     // is the line rasterization mode narrow quadrilateral? if so we need version 2.
     if(expanded.RasterizerState.LineRasterizationMode ==

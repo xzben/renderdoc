@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -41,6 +41,7 @@
 #include "d3d12_debug.h"
 #include "d3d12_device.h"
 #include "d3d12_replay.h"
+#include "d3d12_rootsig.h"
 #include "d3d12_shader_cache.h"
 
 #include "data/hlsl/hlsl_cbuffers.h"
@@ -72,6 +73,12 @@ struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
     D3D12RenderState &rs = m_pDevice->GetQueue()->GetCommandData()->GetCurRenderState();
     m_PrevState = rs;
 
+    D3D12CommandData *cmdData = m_pDevice->GetQueue()->GetCommandData();
+    ID3D12CommandSignature *comSig = NULL;
+    if(cmdData)
+      comSig = cmdData->m_IndirectData.commandSig;
+    m_PrevComSig = comSig;
+
     // check cache first
     CachedPipeline cache = m_PipelineCache[rs.pipe];
 
@@ -81,8 +88,7 @@ struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
       HRESULT hr = S_OK;
 
       WrappedID3D12RootSignature *sig =
-          m_pDevice->GetResourceManager()->GetCurrentAs<WrappedID3D12RootSignature>(
-              rs.graphics.rootsig);
+          m_pDevice->GetResourceManager()->GetResAs<WrappedID3D12RootSignature>(rs.graphics.rootsig);
 
       // need to be able to add a descriptor table with our UAV without hitting the 64 DWORD limit
       RDCASSERT(sig->sig.dwordLength < 64);
@@ -116,16 +122,14 @@ struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
 
       cache.sigElem = uint32_t(modsig.Parameters.size() - 1);
 
-      ID3DBlob *root = m_pDevice->GetShaderCache()->MakeRootSig(modsig);
+      bytebuf root = EncodeRootSig(m_pDevice->RootSigVersion(), modsig);
 
-      hr = m_pDevice->CreateRootSignature(0, root->GetBufferPointer(), root->GetBufferSize(),
+      hr = m_pDevice->CreateRootSignature(0, root.data(), root.size(),
                                           __uuidof(ID3D12RootSignature), (void **)&cache.sig);
       RDCASSERTEQUAL(hr, S_OK);
 
-      SAFE_RELEASE(root);
-
       WrappedID3D12PipelineState *origPSO =
-          m_pDevice->GetResourceManager()->GetCurrentAs<WrappedID3D12PipelineState>(rs.pipe);
+          m_pDevice->GetResourceManager()->GetResAs<WrappedID3D12PipelineState>(rs.pipe);
 
       RDCASSERT(origPSO->IsGraphics());
 
@@ -167,10 +171,31 @@ struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
         return;
       }
 
-      pipeDesc.pRootSignature = cache.sig;
+      pipeDesc.SetRootSig(cache.sig);
 
       hr = m_pDevice->CreatePipeState(pipeDesc, &cache.pipe);
       RDCASSERTEQUAL(hr, S_OK);
+
+      if(comSig)
+      {
+        // Need to create a new command signature using our modified root signature if the command
+        // signature modifies the root arguments i.e. setting root constants, updating bindings.
+        if(DoesCommandSignatureModifyRootArgs(comSig))
+        {
+          WrappedID3D12CommandSignature *rdComSig = (WrappedID3D12CommandSignature *)comSig;
+          D3D12_COMMAND_SIGNATURE_DESC comSigDesc;
+          comSigDesc.ByteStride = rdComSig->sig.ByteStride;
+          comSigDesc.NodeMask = 0;
+          comSigDesc.NumArgumentDescs = (uint32_t)rdComSig->sig.arguments.size();
+          comSigDesc.pArgumentDescs = rdComSig->sig.arguments.data();
+
+          m_pDevice->CreateCommandSignature(
+              &comSigDesc, cache.sig, __uuidof(ID3D12CommandSignature), (void **)&cache.comSig);
+
+          RDCASSERT(cache.comSig);
+          comSig = cache.comSig;
+        }
+      }
 
       m_PipelineCache[rs.pipe] = cache;
     }
@@ -201,13 +226,17 @@ struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
                                                        Unwrap(m_MSDepth));
     }
 
-    AddDebugDescriptorsToRenderState(m_pDevice, rs, {m_UAV}, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-                                     cache.sigElem, m_CopiedHeaps);
+    AddDebugDescriptorsToRenderState(m_pDevice, rs, false, {m_UAV},
+                                     D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, cache.sigElem,
+                                     m_CopiedHeaps);
 
     // as we're changing the root signature, we need to reapply all elements,
     // so just apply all state
     if(cmd)
       rs.ApplyState(m_pDevice, cmd);
+
+    if(cmdData)
+      cmdData->m_IndirectData.commandSig = comSig;
   }
 
   bool PostDraw(uint32_t eid, ID3D12GraphicsCommandListX *cmd)
@@ -236,6 +265,10 @@ struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
 
     RDCASSERT(cmd);
     m_pDevice->GetQueue()->GetCommandData()->GetCurRenderState().ApplyState(m_pDevice, cmd);
+
+    D3D12CommandData *cmdData = m_pDevice->GetQueue()->GetCommandData();
+    if(cmdData)
+      cmdData->m_IndirectData.commandSig = m_PrevComSig;
 
     return true;
   }
@@ -271,10 +304,12 @@ struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
     ID3D12RootSignature *sig;
     uint32_t sigElem;
     ID3D12PipelineState *pipe;
+    ID3D12CommandSignature *comSig;
   };
   std::map<ResourceId, CachedPipeline> m_PipelineCache;
   std::set<ResourceId> m_CopiedHeaps;
   D3D12RenderState m_PrevState;
+  ID3D12CommandSignature *m_PrevComSig;
 };
 
 static void SetRTVDesc(D3D12_RENDER_TARGET_VIEW_DESC &rtDesc, const D3D12_RESOURCE_DESC &texDesc,
@@ -350,10 +385,8 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
   if(pipeDesc.MS.BytecodeLength > 0)
     rastFeeding = &pipeDesc.MS;
 
-  uint32_t hash[4];
-  DXBC::DXBCContainer::GetHash(hash, rastFeeding->pShaderBytecode, rastFeeding->BytecodeLength);
-
-  rdcfixedarray<uint32_t, 4> key = hash;
+  rdcfixedarray<uint32_t, 4> key;
+  DXBC::DXBCContainer::GetHash(key, false, rastFeeding->pShaderBytecode, rastFeeding->BytecodeLength);
 
   bytebuf &patchedPs = m_PatchedPSCache[key];
 
@@ -368,7 +401,7 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
   bytebuf rastFeedingBytes((const byte *)rastFeeding->pShaderBytecode, rastFeeding->BytecodeLength);
 
   // get the DXBC for the previous stage
-  DXBC::DXBCContainer rastFeedingDXBC(rastFeedingBytes, rdcstr(), GraphicsAPI::D3D12, ~0U, ~0U);
+  DXBC::DXBCContainer rastFeedingDXBC(rastFeedingBytes);
 
   bytebuf patchedDXBC((const byte *)quadWriteBlob->GetBufferPointer(),
                       quadWriteBlob->GetBufferSize());
@@ -389,7 +422,7 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
   if(!D3D12_Debug_OverlayDumpDirPath().empty())
     FileIO::WriteAll(D3D12_Debug_OverlayDumpDirPath() + "/before_quadps.dxbc", patchedDXBC);
 
-  DXBC::DXBCContainer quadOverdrawDXBC(patchedDXBC, rdcstr(), GraphicsAPI::D3D12, ~0U, ~0U);
+  DXBC::DXBCContainer quadOverdrawDXBC(patchedDXBC);
 
   if(dxil)
   {
@@ -600,189 +633,54 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
       }
     }
 
+    DXIL::PSVData rastFeedingPSV;
+    DXIL::PSVData patchedPSV;
+
+    if(rastFeedingDXBC.GetPipelineValidation(rastFeedingPSV) &&
+       quadOverdrawDXBC.GetPipelineValidation(patchedPSV))
     {
-      // do a horrible franken-patch to merge the PSV0 chunks. We use the header from the existing
-      // PS,
-      // change the number of declared input elements, then copy the signature elements from the
-      // last
-      // shader's chunk. We can't copy the whole string table because that will likely include other
-      // strings and then the damned thing won't match according to the runtime's validation.
-      size_t rastPsv0Size = 0;
-      const byte *rastPsv0Bytes =
-          DXBC::DXBCContainer::FindChunk(rastFeedingBytes, DXBC::FOURCC_PSV0, rastPsv0Size);
-      StreamReader rastPsv0(rastPsv0Bytes, rastPsv0Size);
+      DXIL::PSVData mergedPSV = patchedPSV;
 
-      size_t psPsv0Size = 0;
-      const byte *psPsv0Bytes =
-          DXBC::DXBCContainer::FindChunk(patchedDXBC, DXBC::FOURCC_PSV0, psPsv0Size);
-      StreamReader psPsv0(psPsv0Bytes, psPsv0Size);
-
-      StreamWriter mergedPsv0(1024);
-
-      uint32_t rastHeaderSize = 0;
-      if(!rastPsv0.Read<uint32_t>(rastHeaderSize))
-        return;
-
-      uint32_t psHeaderSize = 0;
-      if(!psPsv0.Read<uint32_t>(psHeaderSize))
-        return;
-
-      struct PSVHeader0
+      // if the previous shader only uses version0, use version0 ourselves as I don't know if it's
+      // safe to mix and match versions in a pipeline. Version 0 doesn't have signatures so we can
+      // basically stop here, the resources are already all set up as we based mergedPSV on patchedPSV
+      if(rastFeedingPSV.version == DXIL::PSVData::Version::Version0)
       {
-        uint32_t unused[6];
-      };
-
-      struct PSVHeader1 : public PSVHeader0
-      {
-        // other data
-        uint32_t unused1;
-
-        // signature element counts
-        uint8_t inputEls;
-        uint8_t outputEls;
-        uint8_t patchConstEls;
-
-        // signature vector counts
-        uint8_t inputVecs;
-        uint8_t outputVecs[4];
-      };
-
-      struct PSVHeader2 : public PSVHeader1
-      {
-        uint32_t NumThreadsX;
-        uint32_t NumThreadsY;
-        uint32_t NumThreadsZ;
-      };
-
-      bytebuf copyBuf;
-      PSVHeader2 rastHeader = {}, psHeader = {};
-
-      if(rastHeaderSize < sizeof(PSVHeader1))
-      {
-        // only copy the header0 part out of the ps one since we won't have signature data to copy,
-        // hope this is OK
-
-        // read the whole ps header
-        psPsv0.Read(&psHeader, psHeaderSize);
-
-        // write only the old sized header
-        mergedPsv0.Write(rastHeaderSize);
-        mergedPsv0.Write(&psHeader, rastHeaderSize);
+        mergedPSV.version = DXIL::PSVData::Version::Version0;
       }
       else
       {
-        rastPsv0.Read(&rastHeader, rastHeaderSize);
-        psPsv0.Read(&psHeader, psHeaderSize);
+        // newer versions, we need to patch the signature elements in our new patched PS reading
+        // from the right input signature element to match the previous signature's outputs
+        mergedPSV.inputSigElems = rastFeedingPSV.outputSigElems;
+        mergedPSV.inputSigVectors = rastFeedingPSV.outputSigVectors[0];
+        mergedPSV.inputSig = rastFeedingPSV.outputSig;
 
-        // copy the previous output signature into the ps input
-        psHeader.inputEls = rastHeader.outputEls;
-        psHeader.inputVecs = rastHeader.outputVecs[0];
-
-        // the ps header should have no other elements for us to worry about
-        RDCASSERT(psHeader.outputEls == 0);
-        RDCASSERT(psHeader.patchConstEls == 0);
-        RDCASSERT(psHeader.outputVecs[0] == 0);
-        RDCASSERT(psHeader.outputVecs[1] == 0);
-        RDCASSERT(psHeader.outputVecs[2] == 0);
-        RDCASSERT(psHeader.outputVecs[3] == 0);
-
-        // we should have a table offset for each output entry
-        RDCASSERT(rastHeader.outputEls == stringTableOffsets.size());
-        RDCASSERT(rastHeader.outputEls == semanticIndexTableOffsets.size());
-
-        mergedPsv0.Write(psHeaderSize);
-        mergedPsv0.Write(&psHeader, psHeaderSize);
-      }
-
-      // skip resource counts in raster side shader
-      uint32_t rastResCount = 0;
-      if(!rastPsv0.Read<uint32_t>(rastResCount))
-        return;
-
-      if(rastResCount > 0)
-      {
-        uint32_t resSize = 0;
-        if(!rastPsv0.Read<uint32_t>(resSize))
-          return;
-        rastPsv0.SkipBytes(rastResCount * resSize);
-      }
-
-      uint32_t psResCount = 0;
-      if(!psPsv0.Read<uint32_t>(psResCount))
-        return;
-      mergedPsv0.Write(psResCount);
-
-      // copy any resources in the pixel psv0
-      if(psResCount > 0)
-      {
-        uint32_t resSize = 0;
-        if(!psPsv0.Read<uint32_t>(resSize))
-          return;
-        mergedPsv0.Write(resSize);
-        copyBuf.resize(psResCount * resSize);
-        psPsv0.Read(copyBuf.data(), copyBuf.size());
-        mergedPsv0.Write(copyBuf.data(), copyBuf.size());
-      }
-
-      // if we have a new header with signature elements (what we expect)
-      if(rastHeaderSize >= sizeof(PSVHeader1))
-      {
-        // we're effectively done with the rest of the ps chunk here, we're just going to copy the
-        // old
-        // chunk except skipping the input signature. There might be data we don't need in the
-        // string/indices tables but that's fine.
-
-        // align string table to multiple of 4 size
-        stringTable.resize(AlignUp4(stringTable.size()));
-
-        // skip the old string table and semantic index table
-        uint32_t stringTableSize = 0;
-        if(!rastPsv0.Read<uint32_t>(stringTableSize))
-          return;
-        rastPsv0.SkipBytes(stringTableSize);
-
-        uint32_t indexTableSize = 0;
-        if(!rastPsv0.Read<uint32_t>(indexTableSize))
-          return;
-        rastPsv0.SkipBytes(indexTableSize * sizeof(uint32_t));
-
-        mergedPsv0.Write((uint32_t)stringTable.size());
-        mergedPsv0.Write(stringTable.data(), stringTable.size());
-
-        mergedPsv0.Write((uint32_t)semanticIndexTable.size());
-        mergedPsv0.Write(semanticIndexTable.data(), semanticIndexTable.byteSize());
-
-        uint32_t sigElSize = 0;
-        if(!rastPsv0.Read<uint32_t>(sigElSize))
-          return;
-        mergedPsv0.Write(sigElSize);
-
-        // skip any inputs from the previous stage, we don't want to copy that
-        rastPsv0.SkipBytes(rastHeader.inputEls * sigElSize);
-
-        struct PSVSigElement
+        // the PS header should have no other elements for us to worry about
+        RDCASSERT(mergedPSV.outputSigElems == 0);
+        RDCASSERT(mergedPSV.patchConstPrimSigElems == 0);
+        for(uint32_t i = 0; i < 4; i++)
         {
-          uint32_t stringTableOffset;
-          uint32_t semanticTableOffset;
-        };
-
-        // copy the output elements, this will become the input elements. We need to modify the
-        // table
-        // offsets to match the one we generated
-        for(uint8_t el = 0; el < rastHeader.outputEls; el++)
-        {
-          copyBuf.resize(sigElSize);
-          rastPsv0.Read(copyBuf.data(), copyBuf.size());
-          PSVSigElement *sigEl = (PSVSigElement *)copyBuf.data();
-          sigEl->stringTableOffset = stringTableOffsets[el];
-          sigEl->semanticTableOffset = semanticIndexTableOffsets[el];
-
-          mergedPsv0.Write(copyBuf.data(), copyBuf.size());
+          RDCASSERT(mergedPSV.outputSigVectors[i] == 0);
         }
+
+        // similarly we should have no I/O dependency tables
+        for(uint32_t i = 0; i < 4; i++)
+        {
+          RDCASSERT(mergedPSV.viewIDAffects.outputMask[i].bitmask[0] == 0);
+          RDCASSERT(mergedPSV.viewIDAffects.outputMask[i].bitmask[1] == 0);
+          RDCASSERT(mergedPSV.IODependencies[i].dependentOutputsForInput.empty());
+        }
+        RDCASSERT(mergedPSV.viewIDAffects.patchConstOrPrimMask.bitmask[0] == 0);
+        RDCASSERT(mergedPSV.viewIDAffects.patchConstOrPrimMask.bitmask[1] == 0);
+        RDCASSERT(mergedPSV.PCIODependencies.dependentPCOutputsForInput.empty());
       }
 
-      DXBC::DXBCContainer::ReplaceChunk(patchedDXBC, DXBC::FOURCC_PSV0, mergedPsv0.GetData(),
-                                        (size_t)mergedPsv0.GetOffset());
+      DXBC::DXBCContainer::SetPipelineValidation(patchedDXBC, mergedPSV);
+    }
+    else
+    {
+      RDCERR("Couldn't get PSV for raster feeding or quad write shader to patch");
     }
   }
   else    // dxbc bytecode not dxil
@@ -972,8 +870,6 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
   if(!D3D12_Debug_OverlayDumpDirPath().empty())
     FileIO::WriteAll(D3D12_Debug_OverlayDumpDirPath() + "/after_quadps.dxbc", patchedPs);
 
-  DXBC::DXBCContainer(patchedPs, rdcstr(), GraphicsAPI::D3D12, ~0U, ~0U).GetDisassembly(false);
-
   pipeDesc.PS.pShaderBytecode = patchedPs.data();
   pipeDesc.PS.BytecodeLength = patchedPs.size();
 }
@@ -1098,7 +994,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
   if(dsView.GetResResourceId() != ResourceId())
   {
     ID3D12Resource *realDepth =
-        m_pDevice->GetResourceManager()->GetCurrentAs<ID3D12Resource>(dsView.GetResResourceId());
+        m_pDevice->GetResourceManager()->GetResAs<ID3D12Resource>(dsView.GetResResourceId());
 
     dsViewDesc = dsView.GetDSV();
 
@@ -1180,7 +1076,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
   WrappedID3D12PipelineState *pipe = NULL;
 
   if(rs.pipe != ResourceId())
-    pipe = m_pDevice->GetResourceManager()->GetCurrentAs<WrappedID3D12PipelineState>(rs.pipe);
+    pipe = m_pDevice->GetResourceManager()->GetResAs<WrappedID3D12PipelineState>(rs.pipe);
 
   if(overlay == DebugOverlay::NaN || overlay == DebugOverlay::Clipping)
   {
@@ -1254,6 +1150,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
       D3D12RenderState prev = rs;
 
+      rs.predication = {};
       rs.pipe = GetResID(pso);
       rs.rts.resize(1);
       rs.rts[0] = *GetWrapped(rtv);
@@ -1415,6 +1312,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       psoDesc.SampleDesc.Count = RDCMAX(1U, psoDesc.SampleDesc.Count);
       psoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
 
+      psoDesc.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
       psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
       psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
       psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
@@ -1491,6 +1389,8 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       if(!list)
         return ResourceId();
 
+      Unwrap(list)->SetPredication(NULL, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+
       for(size_t i = 0; i < rts.size(); i++)
       {
         const D3D12Descriptor &desc = rts[i];
@@ -1504,7 +1404,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       if(rs.dsv.GetResResourceId() != ResourceId() && IsDepthFormat(resourceDesc.Format))
       {
         WrappedID3D12PipelineState *origPSO =
-            m_pDevice->GetResourceManager()->GetCurrentAs<WrappedID3D12PipelineState>(rs.pipe);
+            m_pDevice->GetResourceManager()->GetResAs<WrappedID3D12PipelineState>(rs.pipe);
         if(origPSO && origPSO->IsGraphics())
         {
           D3D12_COMPARISON_FUNC depthFunc = origPSO->graphics->DepthStencilState.DepthFunc;
@@ -1639,6 +1539,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       rs.ApplyState(m_pDevice, list);
 
       list->OMSetRenderTargets(1, &rtv, TRUE, NULL);
+      list->SetPredication(NULL, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
 
       D3D12_VIEWPORT viewport = rs.views[0];
       list->RSSetViewports(1, &viewport);
@@ -1652,7 +1553,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
       list->SetGraphicsRootSignature(m_General.CheckerboardRootSig);
 
-      CheckerboardCBuffer pixelData = {0};
+      CheckerboardCBuffer pixelData = {};
 
       pixelData.BorderWidth = 3;
       pixelData.CheckerSquareDimension = 16.0f;
@@ -1750,11 +1651,11 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
         m_pDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
       }
 
-      pipe = m_pDevice->GetResourceManager()->GetCurrentAs<WrappedID3D12PipelineState>(rs.pipe);
+      pipe = m_pDevice->GetResourceManager()->GetResAs<WrappedID3D12PipelineState>(rs.pipe);
 
       D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC pipeDesc;
       pipe->Fill(pipeDesc);
-      pipeDesc.pRootSignature = GetDebugManager()->GetMeshRootSig();
+      pipeDesc.SetRootSig(GetDebugManager()->GetMeshRootSig());
       pipeDesc.SampleMask = 0xFFFFFFFF;
       pipeDesc.SampleDesc = overlayTexDesc.SampleDesc;
       pipeDesc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
@@ -1820,7 +1721,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
         Vec4f viewport;
 
         if(!rs.views.empty())
-          viewport = Vec4f(rs.views[0].Width, rs.views[0].Height);
+          viewport = Vec4f(rs.views[0].Width, rs.views[0].Height, 0.0f, 0.0f);
 
         D3D12RenderState::SignatureElement viewportElem(eRootCBV, ResourceId(), 0);
         WrappedID3D12Resource::GetResIDFromAddr(
@@ -1880,7 +1781,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
             }
 
             ID3D12Resource *vb =
-                m_pDevice->GetResourceManager()->GetCurrentAs<ID3D12Resource>(fmt.vertexResourceId);
+                m_pDevice->GetResourceManager()->GetResAs<ID3D12Resource>(fmt.vertexResourceId);
 
             D3D12_VERTEX_BUFFER_VIEW vbView = {};
             vbView.BufferLocation = vb->GetGPUVirtualAddress() + fmt.vertexByteOffset;
@@ -1897,7 +1798,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
             if(fmt.indexByteStride && fmt.indexResourceId != ResourceId())
             {
               ID3D12Resource *ib =
-                  m_pDevice->GetResourceManager()->GetCurrentAs<ID3D12Resource>(fmt.indexResourceId);
+                  m_pDevice->GetResourceManager()->GetResAs<ID3D12Resource>(fmt.indexResourceId);
 
               D3D12_INDEX_BUFFER_VIEW view;
               view.BufferLocation = ib->GetGPUVirtualAddress() + fmt.indexByteOffset;
@@ -2019,7 +1920,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
       ResourceId res = rs.GetDSVID();
 
-      ID3D12Resource *curDepth = m_pDevice->GetResourceManager()->GetCurrentAs<ID3D12Resource>(res);
+      ID3D12Resource *curDepth = m_pDevice->GetResourceManager()->GetResAs<ID3D12Resource>(res);
       D3D12_RESOURCE_DESC curDepthDesc = curDepth ? curDepth->GetDesc() : D3D12_RESOURCE_DESC();
       if(curDepthDesc.SampleDesc.Count > 1)
       {
@@ -2106,6 +2007,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       {
         SAFE_RELEASE(it->second.pipe);
         SAFE_RELEASE(it->second.sig);
+        SAFE_RELEASE(it->second.comSig);
       }
 
       SAFE_RELEASE(overdrawTex);
@@ -2128,8 +2030,8 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
         WrappedID3D12PipelineState::ShaderEntry *wrappedPS = pipe->PS();
         if(wrappedPS)
         {
-          ShaderReflection &reflection = pipe->PS()->GetDetails();
-          for(SigParameter &output : reflection.outputSignature)
+          const ShaderReflection &reflection = pipe->PS()->GetDetails();
+          for(const SigParameter &output : reflection.outputSignature)
           {
             if(output.systemValue == ShaderBuiltin::DepthOutput)
               useDepthWriteStencilPass = true;
@@ -2346,6 +2248,12 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
           psoDesc.DepthStencilState.DepthBoundsTestEnable = FALSE;
         }
       }
+
+      if(dsViewDesc.Flags & D3D12_DSV_FLAG_READ_ONLY_DEPTH)
+        psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+      if(dsViewDesc.Flags & D3D12_DSV_FLAG_READ_ONLY_STENCIL)
+        psoDesc.DepthStencilState.FrontFace.StencilWriteMask =
+            psoDesc.DepthStencilState.BackFace.StencilWriteMask = 0;
 
       RDCEraseEl(psoDesc.RTVFormats.RTFormats);
       psoDesc.RTVFormats.RTFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;

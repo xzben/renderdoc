@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -92,6 +92,12 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
     if(imageInfo.levelCount > 1)
       estimatedSize *= 2;
   }
+  else if(type == eResAccelerationStructureKHR)
+  {
+    VkResourceRecord *record = GetResourceManager()->GetResourceRecord(id);
+    if(record && record->accelerationStructureInfo)
+      estimatedSize += record->accelerationStructureInfo->memSize;
+  }
 
   uint32_t softMemoryLimit = RenderDoc::Inst().GetCaptureOptions().softMemoryLimit;
   if(softMemoryLimit > 0 && !m_PreparedNotSerialisedInitStates.empty() &&
@@ -118,16 +124,19 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
     {
       VkInitialContents initData = GetResourceManager()->GetInitialContents(flushId);
 
-      GetResourceManager()->SetInitialContents(flushId, VkInitialContents());
-
       uint64_t start = ser.GetWriter()->GetOffset();
       {
-        uint64_t size = GetSize_InitialState(id, initData);
+        uint64_t size = GetSize_InitialState(flushId, initData);
 
         SCOPED_SERIALISE_CHUNK(SystemChunk::InitialContents, size);
 
         // record is not needed on vulkan
         Serialise_InitialState(ser, flushId, NULL, &initData);
+
+        // Clear the existing init contents, but retain the type
+        VkInitialContents clearedContents;
+        clearedContents.type = initData.type;
+        GetResourceManager()->SetInitialContents(flushId, clearedContents);
       }
       uint64_t end = ser.GetWriter()->GetOffset();
 
@@ -155,7 +164,7 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
 
     VkInitialContents initialContents(type, VkInitialContents::DescriptorSet);
 
-    if((layout.flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR) == 0)
+    if((layout.flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT) == 0)
     {
       record->descInfo->data.copy(initialContents.descriptorSlots, initialContents.numDescriptors,
                                   initialContents.inlineData, initialContents.inlineByteSize);
@@ -202,6 +211,7 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
     if(!state || !state->isMemoryBound)
       return true;
 
+    bool allUndef = true;
     for(auto it = state->subresourceStates.begin(); it != state->subresourceStates.end(); ++it)
     {
       if(it->state().newQueueFamilyIndex == VK_QUEUE_FAMILY_FOREIGN_EXT ||
@@ -211,6 +221,17 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
         // the initial contents.
         return true;
       }
+
+      const ImageSubresourceState &subState = it->state();
+      if(subState.newLayout != UNKNOWN_PREV_IMG_LAYOUT &&
+         subState.newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
+        allUndef = false;
+    }
+
+    if(allUndef && !imageInfo.isExternal)
+    {
+      RDCDEBUG("Ignoring init states for %s as it never left undefined", ToStr(im->id).c_str());
+      return true;
     }
 
     VkDevice d = GetDev();
@@ -224,7 +245,7 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
     VkBufferCreateInfo bufInfo = {
         VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         NULL,
-        0,
+        DefaultBufferCreateFlags(),
         0,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -316,7 +337,7 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
     VkBuffer dstBuf;
 
     vkr = ObjDisp(d)->CreateBuffer(Unwrap(d), &bufInfo, NULL, &dstBuf);
-    CheckVkResult(vkr);
+    CHECK_VKR(this, vkr);
 
     VkMemoryRequirements dstBufMrq = {};
     ObjDisp(d)->GetBufferMemoryRequirements(Unwrap(d), dstBuf, &dstBufMrq);
@@ -332,7 +353,7 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
     }
 
     vkr = ObjDisp(d)->BindBufferMemory(Unwrap(d), dstBuf, Unwrap(readbackmem.mem), readbackmem.offs);
-    CheckVkResult(vkr);
+    CHECK_VKR(this, vkr);
 
     VkImageAspectFlags aspectFlags = FormatImageAspects(imageInfo.format);
 
@@ -514,7 +535,7 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
     VkBufferCreateInfo bufInfo = {
         VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         NULL,
-        0,
+        DefaultBufferCreateFlags(),
         0,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     };
@@ -536,7 +557,7 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
 
     bufInfo.size = datasize;
     vkr = ObjDisp(d)->CreateBuffer(Unwrap(d), &bufInfo, NULL, &dstBuf);
-    CheckVkResult(vkr);
+    CHECK_VKR(this, vkr);
 
     VkMemoryRequirements dstBufMrq = {};
     ObjDisp(d)->GetBufferMemoryRequirements(Unwrap(d), dstBuf, &dstBufMrq);
@@ -551,9 +572,9 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
       return false;
     }
 
-    CheckVkResult(vkr);
+    CHECK_VKR(this, vkr);
     vkr = ObjDisp(d)->BindBufferMemory(Unwrap(d), dstBuf, Unwrap(readbackmem.mem), readbackmem.offs);
-    CheckVkResult(vkr);
+    CHECK_VKR(this, vkr);
 
     VkBufferCopy region = {0, 0, datasize};
 
@@ -577,24 +598,18 @@ bool WrappedVulkan::Prepare_InitialState(WrappedVkRes *res)
   else if(type == eResAccelerationStructureKHR)
   {
     VkResourceRecord *record = GetResourceManager()->GetResourceRecord(id);
-    if(!record->accelerationStructureBuilt)
+    if(!record->accelerationStructureInfo->accelerationStructureBuilt)
     {
       RDCDEBUG("Skipping AS %s as it has not been built", ToStr(id).c_str());
       return true;
     }
 
-    VulkanAccelerationStructureManager::ASMemory result;
-    VkAccelerationStructureKHR as = ToUnwrappedHandle<VkAccelerationStructureKHR>(res);
-    if(!GetAccelerationStructureManager()->Prepare(as, m_QueueFamilyIndices, result))
-    {
-      SET_ERROR_RESULT(m_LastCaptureError, ResultCode::OutOfMemory,
-                       "Couldn't allocate readback memory");
-      m_CaptureFailure = true;
-      return false;
-    }
-
-    VkInitialContents ic = VkInitialContents(type, result.alloc);
-    ic.isTLAS = result.isTLAS;
+    // The input buffers and metadata have all been created by this point, so we just need to
+    // assemble a VkInitialContents
+    VkInitialContents ic;
+    ic.type = type;
+    ic.accelerationStructureInfo = record->accelerationStructureInfo;
+    ic.accelerationStructureInfo->AddRef();
 
     GetResourceManager()->SetInitialContents(id, ic);
     m_PreparedNotSerialisedInitStates.push_back(id);
@@ -638,11 +653,14 @@ uint64_t WrappedVulkan::GetSize_InitialState(ResourceId id, const VkInitialConte
     // buffers only have initial states when they're sparse
     return ret;
   }
-  else if(initial.type == eResImage || initial.type == eResDeviceMemory ||
-          initial.type == eResAccelerationStructureKHR)
+  else if(initial.type == eResImage || initial.type == eResDeviceMemory)
   {
     // the size primarily comes from the buffer, the size of which we conveniently have stored.
     return ret + uint64_t(128 + initial.mem.size + WriteSerialiser::GetChunkAlignment());
+  }
+  else if(initial.type == eResAccelerationStructureKHR)
+  {
+    return GetAccelerationStructureManager()->GetSize_InitialState(id, initial);
   }
 
   RDCERR("Unhandled resource type %s", ToStr(initial.type).c_str());
@@ -711,7 +729,7 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkBuffer unwrappedBuffer,
     opaqueBinds[0].flags = 0;
     opaqueBinds[0].resourceOffset = 0;
     opaqueBinds[0].memory =
-        Unwrap(vk->GetResourceManager()->GetLiveHandle<VkDeviceMemory>(mapping.singleMapping.memory));
+        Unwrap(vk->GetResourceManager()->GetHandle<VkDeviceMemory>(mapping.singleMapping.memory));
     opaqueBinds[0].memoryOffset = mapping.singleMapping.offset;
     opaqueBinds[0].size = table.getMipTail().totalPackedByteSize;
   }
@@ -726,7 +744,7 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkBuffer unwrappedBuffer,
     for(size_t i = 0; i < mapping.pages.size(); i++)
     {
       bind.memory =
-          Unwrap(vk->GetResourceManager()->GetLiveHandle<VkDeviceMemory>(mapping.pages[i].memory));
+          Unwrap(vk->GetResourceManager()->GetHandle<VkDeviceMemory>(mapping.pages[i].memory));
       bind.memoryOffset = mapping.pages[i].offset;
 
       VkSparseMemoryBind &previousBind = opaqueBinds.back();
@@ -849,7 +867,7 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkImage unwrappedImage,
       return;
     }
 
-    Sparse::Coord blockSize = table.getPageTexelSize();
+    Sparse::Coord32 blockSize = table.getPageTexelSize();
     VkExtent3D gran = reqs[a].formatProperties.imageGranularity;
 
     // can't apply if the page texel dimension has changed
@@ -921,7 +939,7 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkImage unwrappedImage,
       if(aspect & VK_IMAGE_ASPECT_METADATA_BIT)
         bind.flags = VK_SPARSE_MEMORY_BIND_METADATA_BIT;
 
-      const Sparse::Coord texDim = table.getResourceSize();
+      const Sparse::Coord32 texDim = table.getResourceTexelDim();
 
       for(uint32_t slice = 0; slice < table.getArraySize(); slice++)
       {
@@ -937,13 +955,13 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkImage unwrappedImage,
 
           const Sparse::PageRangeMapping &mapping = table.getSubresource(sub);
 
-          Sparse::Coord mipDim = {
+          Sparse::Coord32 mipDim = {
               RDCMAX(1U, texDim.x >> mip),
               RDCMAX(1U, texDim.y >> mip),
               RDCMAX(1U, texDim.z >> mip),
           };
 
-          Sparse::Coord dim = table.calcSubresourcePageDim(sub);
+          Sparse::Coord32 dim = table.calcSubresourcePageDim32(sub);
 
           if(mapping.hasSingleMapping())
           {
@@ -955,8 +973,8 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkImage unwrappedImage,
             bind.extent.height = mipDim.y;
             bind.extent.depth = mipDim.z;
 
-            bind.memory = Unwrap(vk->GetResourceManager()->GetLiveHandle<VkDeviceMemory>(
-                mapping.singleMapping.memory));
+            bind.memory = Unwrap(
+                vk->GetResourceManager()->GetHandle<VkDeviceMemory>(mapping.singleMapping.memory));
             bind.memoryOffset = mapping.singleMapping.offset;
 
             imgBinds.push_back(bind);
@@ -991,7 +1009,7 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkImage unwrappedImage,
                   if(x == dim.x - 1)
                     bind.extent.width = RDCMIN(bind.extent.width, mipDim.x - bind.offset.x);
 
-                  bind.memory = Unwrap(vk->GetResourceManager()->GetLiveHandle<VkDeviceMemory>(
+                  bind.memory = Unwrap(vk->GetResourceManager()->GetHandle<VkDeviceMemory>(
                       mapping.pages[page].memory));
                   bind.memoryOffset = mapping.pages[page].offset;
 
@@ -1030,7 +1048,7 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkImage unwrappedImage,
         if(mapping.hasSingleMapping())
         {
           bind.memory = Unwrap(
-              vk->GetResourceManager()->GetLiveHandle<VkDeviceMemory>(mapping.singleMapping.memory));
+              vk->GetResourceManager()->GetHandle<VkDeviceMemory>(mapping.singleMapping.memory));
           bind.memoryOffset = mapping.singleMapping.offset;
 
           // if stride is 0, we bind the whole mip tail at once. Otherwise only bind the section of
@@ -1049,8 +1067,8 @@ SparseBinding::SparseBinding(WrappedVulkan *vk, VkImage unwrappedImage,
 
           for(size_t i = 0; i < mapping.pages.size(); i++)
           {
-            bind.memory = Unwrap(
-                vk->GetResourceManager()->GetLiveHandle<VkDeviceMemory>(mapping.pages[i].memory));
+            bind.memory =
+                Unwrap(vk->GetResourceManager()->GetHandle<VkDeviceMemory>(mapping.pages[i].memory));
             bind.memoryOffset = mapping.pages[i].offset;
 
             opaqueBinds.push_back(bind);
@@ -1167,15 +1185,13 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
     // while reading, fetch the binding information and allocate a VkWriteDescriptorSet array
     if(IsReplayingAndReading())
     {
-      WrappedVkRes *res = GetResourceManager()->GetLiveResource(id);
-      ResourceId liveid = GetResourceManager()->GetLiveID(id);
+      WrappedVkRes *res = GetResourceManager()->GetResource(id);
 
       VkDescriptorSet set = (VkDescriptorSet)(uint64_t)res;
 
-      const DescSetLayout &layout =
-          m_CreationInfo.m_DescSetLayout[m_DescriptorSetState[liveid].layout];
+      const DescSetLayout &layout = m_CreationInfo.m_DescSetLayout[m_DescriptorSetState[id].layout];
 
-      if(layout.flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR)
+      if(layout.flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT)
       {
         RDCERR("Push descriptor set with initial contents!");
         return true;
@@ -1193,7 +1209,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
           uint32_t descriptorCount = layoutBind.descriptorCount;
 
           if(layoutBind.variableSize)
-            descriptorCount = m_DescriptorSetState[liveid].data.variableDescriptorCount;
+            descriptorCount = m_DescriptorSetState[id].data.variableDescriptorCount;
 
           if(layoutBind.layoutDescType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
           {
@@ -1252,7 +1268,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
         uint32_t descriptorCount = layoutBind.descriptorCount;
 
         if(layoutBind.variableSize)
-          descriptorCount = m_DescriptorSetState[liveid].data.variableDescriptorCount;
+          descriptorCount = m_DescriptorSetState[id].data.variableDescriptorCount;
 
         if(descriptorCount == 0)
           continue;
@@ -1303,28 +1319,54 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
         }
         else if(layoutBind.layoutDescType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR)
         {
-          for(uint32_t i = 0; i < layoutBind.descriptorCount; ++i)
+          VulkanResourceManager *rm = GetResourceManager();
+
+          uint32_t i = 0;
+          while(i < descriptorCount)
           {
-            accelerationStructures[i] =
-                GetResourceManager()->GetLiveHandle<VkAccelerationStructureKHR>(slots[i].resource);
+            // seek to first non-null element if null descriptors are not allowed
+            if(!NULLDescriptorsAllowed())
+            {
+              while(i < descriptorCount &&
+                    !((slots[i].resource != ResourceId()) && rm->HasResource(slots[i].resource)))
+                i++;
+
+              if(i >= descriptorCount)
+                break;
+            }
+
+            const uint32_t start = i;
+            uint32_t len = 0;
+
+            // collect a contiguous batch of valid ASs
+            while(i < descriptorCount &&
+                  (NULLDescriptorsAllowed() ||
+                   ((slots[i].resource != ResourceId()) && rm->HasResource(slots[i].resource))))
+            {
+              accelerationStructures[len] =
+                  rm->GetHandle<VkAccelerationStructureKHR>(slots[i].resource);
+              len++;
+              i++;
+            }
+
+            dstAS->sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+            dstAS->pNext = NULL;
+            dstAS->accelerationStructureCount = len;
+            dstAS->pAccelerationStructures = accelerationStructures;
+
+            VkWriteDescriptorSet write = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.pNext = dstAS;
+            write.dstSet = set;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            write.dstBinding = bind;
+            write.dstArrayElement = start;
+            write.descriptorCount = len;
+
+            writes.push_back(write);
+
+            dstAS++;
+            accelerationStructures += len;
           }
-
-          dstAS->sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-          dstAS->pNext = NULL;
-          dstAS->accelerationStructureCount = layoutBind.descriptorCount;
-          dstAS->pAccelerationStructures = accelerationStructures;
-
-          VkWriteDescriptorSet write = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-          write.pNext = dstAS;
-          write.dstSet = set;
-          write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-          write.dstBinding = bind;
-          write.descriptorCount = layoutBind.descriptorCount;
-
-          writes.push_back(write);
-
-          dstAS++;
-          accelerationStructures += layoutBind.descriptorCount;
         }
         // quick check for slots that were completely uninitialised and so don't have valid data
         else if(!NULLDescriptorsAllowed() && descriptorCount == 1 &&
@@ -1401,7 +1443,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
     {
       VkInitialContents initialContents(type, VkInitialContents::SparseTableOnly);
 
-      WrappedVkRes *res = GetResourceManager()->GetLiveResource(id);
+      WrappedVkRes *res = GetResourceManager()->GetResource(id);
       initialContents.sparseBind =
           new SparseBinding(this, ToUnwrappedHandle<VkBuffer>(res), sparseTables);
 
@@ -1513,7 +1555,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
         mappedMem = initial->mem;
         vkr = ObjDisp(d)->MapMemory(Unwrap(d), Unwrap(mappedMem.mem), initial->mem.offs, size, 0,
                                     (void **)&Contents);
-        CheckVkResult(vkr);
+        CHECK_VKR(this, vkr);
 
         // invalidate the cpu cache for this memory range to avoid reading stale data
         VkMappedMemoryRange range = {
@@ -1525,7 +1567,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
         };
 
         vkr = ObjDisp(d)->InvalidateMappedMemoryRanges(Unwrap(d), 1, &range);
-        CheckVkResult(vkr);
+        CHECK_VKR(this, vkr);
       }
     }
     else if(IsReplayingAndReading() && !ser.IsErrored())
@@ -1536,7 +1578,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
           VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
 
       vkr = vkCreateBuffer(d, &bufInfo, NULL, &uploadBuf);
-      CheckVkResult(vkr);
+      CHECK_VKR(this, vkr);
 
       uploadMemory =
           AllocateMemoryForResource(uploadBuf, MemoryScope::InitialContents, MemoryType::Upload);
@@ -1545,19 +1587,19 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
         return false;
 
       vkr = vkBindBufferMemory(d, uploadBuf, uploadMemory.mem, uploadMemory.offs);
-      CheckVkResult(vkr);
+      CHECK_VKR(this, vkr);
 
       mappedMem = uploadMemory;
 
       vkr = ObjDisp(d)->MapMemory(Unwrap(d), Unwrap(mappedMem.mem), mappedMem.offs,
                                   AlignUp(mappedMem.size, nonCoherentAtomSize), 0,
                                   (void **)&Contents);
-      CheckVkResult(vkr);
+      CHECK_VKR(this, vkr);
 
       if(!Contents)
       {
         RDCERR("Manually reporting failed memory map");
-        CheckVkResult(VK_ERROR_MEMORY_MAP_FAILED);
+        CHECK_VKR(this, VK_ERROR_MEMORY_MAP_FAILED);
         return false;
       }
 
@@ -1584,7 +1626,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
         };
 
         vkr = ObjDisp(d)->FlushMappedMemoryRanges(Unwrap(d), 1, &range);
-        CheckVkResult(vkr);
+        CHECK_VKR(this, vkr);
       }
 
       ObjDisp(d)->UnmapMemory(Unwrap(d), Unwrap(mappedMem.mem));
@@ -1596,8 +1638,6 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
     // the end of the program, and store the buffer to copy off in Apply
     if(IsReplayingAndReading() && ContentsSize > 0)
     {
-      ResourceId liveid = GetResourceManager()->GetLiveID(id);
-
       if(type == eResDeviceMemory)
       {
         VkInitialContents initialContents(type, uploadMemory);
@@ -1612,7 +1652,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
         // if we have sparse page tables, store them here now
         if(!sparseTables.empty())
         {
-          WrappedVkRes *res = GetResourceManager()->GetLiveResource(id);
+          WrappedVkRes *res = GetResourceManager()->GetResource(id);
           initialContents.sparseBind =
               new SparseBinding(this, ToUnwrappedHandle<VkImage>(res), sparseTables);
 
@@ -1624,7 +1664,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
           }
         }
 
-        VulkanCreationInfo::Image &c = m_CreationInfo.m_Image[liveid];
+        VulkanCreationInfo::Image &c = m_CreationInfo.m_Image[id];
 
         // for non-MSAA images, we're done - we'll do buffer-to-image copies with appropriate
         // offsets to copy out the subresources into the image itself.
@@ -1648,7 +1688,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
           };
 
           vkr = vkCreateBuffer(d, &gpuBufInfo, NULL, &gpuBuf);
-          CheckVkResult(vkr);
+          CHECK_VKR(this, vkr);
 
           MemoryAllocation gpuUploadMemory =
               AllocateMemoryForResource(gpuBuf, MemoryScope::InitialContents, MemoryType::GPULocal);
@@ -1657,7 +1697,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
             return false;
 
           vkr = vkBindBufferMemory(d, gpuBuf, gpuUploadMemory.mem, gpuUploadMemory.offs);
-          CheckVkResult(vkr);
+          CHECK_VKR(this, vkr);
 
           VkCommandBuffer cmd = GetNextCmd();
 
@@ -1668,7 +1708,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
                                                 VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
 
           vkr = ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-          CheckVkResult(vkr);
+          CHECK_VKR(this, vkr);
 
           VkBufferCopy bufCopy = {0, 0, ContentsSize};
           ObjDisp(cmd)->CmdCopyBuffer(Unwrap(cmd), Unwrap(uploadBuf), Unwrap(gpuBuf), 1, &bufCopy);
@@ -1688,7 +1728,7 @@ bool WrappedVulkan::Serialise_InitialState(SerialiserType &ser, ResourceId id, V
           DoPipelineBarrier(cmd, 1, &bufBarrier);
 
           vkr = ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
-          CheckVkResult(vkr);
+          CHECK_VKR(this, vkr);
 
           SubmitCmds();
           FlushQ();
@@ -1725,12 +1765,12 @@ template bool WrappedVulkan::Serialise_InitialState(WriteSerialiser &ser, Resour
                                                     VkResourceRecord *record,
                                                     const VkInitialContents *initial);
 
-void WrappedVulkan::Create_InitialState(ResourceId id, WrappedVkRes *live, bool)
+void WrappedVulkan::Create_InitialState(ResourceId id, WrappedVkRes *res, bool)
 {
   if(IsStructuredExporting(m_State))
     return;
 
-  VkResourceType type = IdentifyTypeByPtr(live);
+  VkResourceType type = IdentifyTypeByPtr(res);
 
   if(type == eResDescriptorSet)
   {
@@ -1748,10 +1788,8 @@ void WrappedVulkan::Create_InitialState(ResourceId id, WrappedVkRes *live, bool)
   }
   else if(type == eResImage)
   {
-    ResourceId liveid = GetResourceManager()->GetLiveID(id);
-
     VkInitialContents::Tag tag = VkInitialContents::ClearColorImage;
-    LockedImageStateRef state = FindImageState(liveid);
+    LockedImageStateRef state = FindImageState(id);
     if(!state)
     {
       RDCERR("Couldn't find image info for %s", ToStr(id).c_str());
@@ -1764,7 +1802,25 @@ void WrappedVulkan::Create_InitialState(ResourceId id, WrappedVkRes *live, bool)
       tag = VkInitialContents::ClearDepthStencilImage;
     }
 
+    // if this image is pre-initialized we need to do some special handling, we will rely on memory
+    // initial contents being applied before images and duplicate the image contents on first load,
+    // so that we can re-apply on subsequent replays after an image may have left PREINITIALIZED and been modified
+    if(state->GetImageInfo().initialLayout == VK_IMAGE_LAYOUT_PREINITIALIZED)
+    {
+      tag = VkInitialContents::PreInit;
+    }
+
+    // zero-initialised images here will just go through the discard+clear path - which works out
+    // for their expected contents
+
     GetResourceManager()->SetInitialContents(id, VkInitialContents(type, tag));
+  }
+  else if(type == eResDeviceMemory)
+  {
+    VkBuffer dstBuf = m_CreationInfo.m_Memory[id].wholeMemBuf;
+    // need to ensure there are initial contents to apply though we don't create any memory
+    if(dstBuf != VK_NULL_HANDLE)
+      GetResourceManager()->SetInitialContents(id, VkInitialContents(type, MemoryAllocation()));
   }
   else if(type == eResDeviceMemory || type == eResBuffer || type == eResAccelerationStructureKHR)
   {
@@ -1776,14 +1832,14 @@ void WrappedVulkan::Create_InitialState(ResourceId id, WrappedVkRes *live, bool)
   }
 }
 
-void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialContents &initial)
+void WrappedVulkan::Apply_InitialState(WrappedVkRes *res, VkInitialContents &initial)
 {
   if(HasFatalError())
     return;
 
   VkResourceType type = initial.type;
 
-  ResourceId id = GetResourceManager()->GetID(live);
+  ResourceId id = GetResourceManager()->GetID(res);
 
   if(type == eResDescriptorSet)
   {
@@ -1811,8 +1867,8 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
 
       if(writes[i].descriptorType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
       {
-        VkWriteDescriptorSetInlineUniformBlock *inlineWrite =
-            (VkWriteDescriptorSetInlineUniformBlock *)FindNextStruct(
+        const VkWriteDescriptorSetInlineUniformBlock *inlineWrite =
+            (const VkWriteDescriptorSetInlineUniformBlock *)FindNextStruct(
                 &writes[i], VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK);
         memcpy(inlineData.data() + bind->offset + writes[i].dstArrayElement, inlineWrite->pData,
                inlineWrite->dataSize);
@@ -1820,12 +1876,13 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
       }
       else if(writes[i].descriptorType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR)
       {
-        VkWriteDescriptorSetAccelerationStructureKHR *asWrite =
-            (VkWriteDescriptorSetAccelerationStructureKHR *)FindNextStruct(
+        const VkWriteDescriptorSetAccelerationStructureKHR *asWrite =
+            (const VkWriteDescriptorSetAccelerationStructureKHR *)FindNextStruct(
                 &writes[i], VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR);
-        RDCASSERTEQUAL(initial.numAccelerationStructures, writes[i].descriptorCount);
-        memcpy(asData + bind->offset + writes[i].dstArrayElement, asWrite->pAccelerationStructures,
+        RDCASSERTEQUAL(asWrite->accelerationStructureCount, writes[i].descriptorCount);
+        memcpy(asData, asWrite->pAccelerationStructures,
                sizeof(VkAccelerationStructureKHR) * asWrite->accelerationStructureCount);
+        asData += asWrite->accelerationStructureCount;
       }
 
       for(uint32_t d = 0; d < writes[i].descriptorCount; d++)
@@ -1846,8 +1903,8 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
         }
         else if(writes[i].descriptorType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR)
         {
-          VkWriteDescriptorSetAccelerationStructureKHR *asWrite =
-              (VkWriteDescriptorSetAccelerationStructureKHR *)FindNextStruct(
+          const VkWriteDescriptorSetAccelerationStructureKHR *asWrite =
+              (const VkWriteDescriptorSetAccelerationStructureKHR *)FindNextStruct(
                   &writes[i], VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR);
           bind[idx].SetAccelerationStructure(writes[i].descriptorType,
                                              asWrite->pAccelerationStructures[d]);
@@ -1875,7 +1932,7 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
   }
   else if(type == eResImage)
   {
-    ResourceId orig = GetResourceManager()->GetOriginalID(id);
+    ResourceId orig = id;
 
     bool initialized = false;
     InitPolicy policy = GetResourceManager()->GetInitPolicy();
@@ -1906,7 +1963,7 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
     }
     else if(initialized && boundMemory != ResourceId())
     {
-      ResourceId origMem = GetResourceManager()->GetOriginalID(boundMemory);
+      ResourceId origMem = boundMemory;
       if(origMem != ResourceId())
       {
         MemRefs *memRefs = GetResourceManager()->FindMemRefs(origMem);
@@ -1939,139 +1996,14 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
       }
     }
 
-    // handle any 'created' initial states, without an actual image with contents
-    if(initial.tag != VkInitialContents::BufferCopy)
-    {
-      // ignore images with no memory bound
-      if(boundMemory == ResourceId())
-        return;
+    const VulkanCreationInfo::Image &c = m_CreationInfo.m_Image[id];
 
-      if(initial.tag == VkInitialContents::ClearColorImage)
-      {
-        VkFormat format = imageInfo.format;
-
-        // can't clear these, so leave them alone.
-        if(IsBlockFormat(format) || IsYUVFormat(format))
-          return;
-
-        VkCommandBuffer cmd = GetInitStateCmd();
-
-        VkMarkerRegion::Begin(StringFormat::Fmt("Clear colour state for %s", ToStr(orig).c_str()),
-                              cmd);
-
-        ImageBarrierSequence setupBarriers;
-        state->DiscardContents();
-        state->Transition(m_QueueFamilyIdx, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, setupBarriers,
-                          GetImageTransitionInfo());
-        InlineSetupImageBarriers(cmd, setupBarriers);
-        m_setupImageBarriers.Merge(setupBarriers);
-
-        VkClearColorValue clearval = {};
-        VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0,
-                                         VK_REMAINING_ARRAY_LAYERS};
-
-        ObjDisp(cmd)->CmdClearColorImage(Unwrap(cmd), ToUnwrappedHandle<VkImage>(live),
-                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearval, 1, &range);
-
-        VkMarkerRegion::End(cmd);
-
-        if(Vulkan_Debug_SingleSubmitFlushing())
-        {
-          CloseInitStateCmd();
-          SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
-          SubmitCmds();
-          FlushQ();
-          SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
-        }
-      }
-      else if(initial.tag == VkInitialContents::ClearDepthStencilImage)
-      {
-        VkCommandBuffer cmd = GetInitStateCmd();
-
-        VkMarkerRegion::Begin(StringFormat::Fmt("Clear depth state for %s", ToStr(orig).c_str()),
-                              cmd);
-
-        ImageBarrierSequence setupBarriers;    // , cleanupBarriers;
-        state->DiscardContents();
-        state->Transition(m_QueueFamilyIdx, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, setupBarriers,
-                          GetImageTransitionInfo());
-        InlineSetupImageBarriers(cmd, setupBarriers);
-        m_setupImageBarriers.Merge(setupBarriers);
-
-        VkClearDepthStencilValue clearval = {1.0f, 0};
-        VkImageSubresourceRange range = imageInfo.FullRange();
-
-        ObjDisp(cmd)->CmdClearDepthStencilImage(Unwrap(cmd), ToUnwrappedHandle<VkImage>(live),
-                                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearval, 1,
-                                                &range);
-
-        VkMarkerRegion::End(cmd);
-
-        if(Vulkan_Debug_SingleSubmitFlushing())
-        {
-          CloseInitStateCmd();
-          SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
-          SubmitCmds();
-          FlushQ();
-          SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
-        }
-      }
-      else
-      {
-        RDCERR("Unexpected initial state tag %u", initial.tag);
-      }
-
-      return;
-    }
-
-    if(m_CreationInfo.m_Image[id].samples != VK_SAMPLE_COUNT_1_BIT)
-    {
-      VkCommandBuffer cmd = GetInitStateCmd();
-
-      if(cmd == VK_NULL_HANDLE)
-        return;
-
-      VulkanCreationInfo::Image &c = m_CreationInfo.m_Image[id];
-
-      VkFormat fmt = c.format;
-
-      ImageBarrierSequence setupBarriers;    // , cleanupBarriers;
-      state->DiscardContents();
-      state->Transition(m_QueueFamilyIdx, VK_IMAGE_LAYOUT_GENERAL,
-                        VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                        VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                        setupBarriers, GetImageTransitionInfo());
-      InlineSetupImageBarriers(cmd, setupBarriers);
-      m_setupImageBarriers.Merge(setupBarriers);
-
-      VkBuffer buf = initial.buf;
-
-      GetDebugManager()->CopyBufferToTex2DMS(cmd, ToUnwrappedHandle<VkImage>(live), Unwrap(buf),
-                                             c.extent, c.arrayLayers, (uint32_t)c.samples, fmt);
-
-      if(Vulkan_Debug_SingleSubmitFlushing())
-      {
-        CloseInitStateCmd();
-        SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
-        SubmitCmds();
-        FlushQ();
-        SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
-      }
-      return;
-    }
-
-    VkBuffer buf = initial.buf;
-
-    VkExtent3D extent = m_CreationInfo.m_Image[id].extent;
-
-    VkFormat fmt = m_CreationInfo.m_Image[id].format;
-    uint32_t planeCount = GetYUVPlaneCount(fmt);
+    const VkFormat fmt = c.format;
+    const uint32_t planeCount = GetYUVPlaneCount(fmt);
     uint32_t horizontalPlaneShift = 0;
     uint32_t verticalPlaneShift = 0;
 
-    VkImageAspectFlags aspectFlags = FormatImageAspects(fmt);
+    const VkImageAspectFlags aspectFlags = FormatImageAspects(fmt);
 
     if(planeCount > 1)
     {
@@ -2106,6 +2038,214 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
         default: break;
       }
     }
+
+    // preinitialized images we
+    if(initial.tag == VkInitialContents::PreInit)
+    {
+      // ignore images with no memory bound
+      if(boundMemory == ResourceId())
+        return;
+
+      // pre-initialised images should not be MSAA
+      RDCASSERT(c.samples == VK_SAMPLE_COUNT_1_BIT);
+
+      // create a buffer with memory attached, which we will fill with the initial contents
+      VkBufferCreateInfo bufInfo = {
+          VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, 0, boundMemorySize,
+          VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+
+      VkDevice d = !IsStructuredExporting(m_State) ? GetDev() : VK_NULL_HANDLE;
+
+      VkResult vkr = vkCreateBuffer(d, &bufInfo, NULL, &initial.buf);
+      CHECK_VKR(this, vkr);
+
+      initial.mem =
+          AllocateMemoryForResource(initial.buf, MemoryScope::InitialContents, MemoryType::GPULocal);
+
+      if(initial.mem.mem == VK_NULL_HANDLE)
+      {
+        RDCERR("Couldn't create memory for preinitialised duplicate");
+        return;
+      }
+
+      vkr = vkBindBufferMemory(d, initial.buf, initial.mem.mem, initial.mem.offs);
+      CHECK_VKR(this, vkr);
+
+      VkCommandBuffer cmd = GetInitStateCmd();
+
+      VkMarkerRegion::Begin(
+          StringFormat::Fmt("First-time preinit contents save for %s", ToStr(orig).c_str()), cmd);
+
+      VkBuffer srcBuf = m_CreationInfo.m_Memory[boundMemory].wholeMemBuf;
+
+      if(srcBuf == VK_NULL_HANDLE)
+      {
+        RDCERR("Whole memory buffer not present for %s", ToStr(orig).c_str());
+      }
+      else
+      {
+        // srcBuf was initilized with a vkCmdCopyBuffer() or vkCmdFillBuffer() earlier
+        // in this command buffer. Add a barrier to make sure that command finishes
+        // before this copy.
+        VkBufferMemoryBarrier srcBufBarrier = {
+            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            NULL,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            Unwrap(srcBuf),
+            0,
+            VK_WHOLE_SIZE,
+        };
+        DoPipelineBarrier(cmd, 1, &srcBufBarrier);
+
+        VkBufferCopy bufCopy;
+        bufCopy.srcOffset = boundMemoryOffset;
+        bufCopy.size = boundMemorySize;
+        bufCopy.dstOffset = 0;
+        ObjDisp(cmd)->CmdCopyBuffer(Unwrap(cmd), Unwrap(srcBuf), Unwrap(initial.buf), 1, &bufCopy);
+      }
+
+      VkMarkerRegion::End(cmd);
+
+      if(Vulkan_Debug_SingleSubmitFlushing())
+      {
+        CloseInitStateCmd();
+        SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
+        SubmitCmds();
+        FlushQ();
+        SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
+      }
+
+      initial.tag = VkInitialContents::BufferCopy;
+
+      // don't immediately re-apply, it's a no-op and would need extra barriers
+      return;
+    }
+
+    // handle any 'created' initial states, without an actual image with contents
+    if(initial.tag != VkInitialContents::BufferCopy)
+    {
+      // ignore images with no memory bound
+      if(boundMemory == ResourceId())
+        return;
+
+      if(initial.tag == VkInitialContents::ClearColorImage)
+      {
+        VkFormat format = imageInfo.format;
+
+        // can't clear these, so leave them alone.
+        if(IsBlockFormat(format) || IsYUVFormat(format))
+          return;
+
+        VkCommandBuffer cmd = GetInitStateCmd();
+
+        VkMarkerRegion::Begin(StringFormat::Fmt("Clear colour state for %s", ToStr(orig).c_str()),
+                              cmd);
+
+        ImageBarrierSequence setupBarriers;
+        state->DiscardContents();
+        state->Transition(m_QueueFamilyIdx, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, setupBarriers,
+                          GetImageTransitionInfo());
+        InlineSetupImageBarriers(cmd, setupBarriers);
+        m_setupImageBarriers.Merge(setupBarriers);
+
+        VkClearColorValue clearval = {};
+        VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0,
+                                         VK_REMAINING_ARRAY_LAYERS};
+
+        ObjDisp(cmd)->CmdClearColorImage(Unwrap(cmd), ToUnwrappedHandle<VkImage>(res),
+                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearval, 1, &range);
+
+        VkMarkerRegion::End(cmd);
+
+        if(Vulkan_Debug_SingleSubmitFlushing())
+        {
+          CloseInitStateCmd();
+          SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
+          SubmitCmds();
+          FlushQ();
+          SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
+        }
+      }
+      else if(initial.tag == VkInitialContents::ClearDepthStencilImage)
+      {
+        VkCommandBuffer cmd = GetInitStateCmd();
+
+        VkMarkerRegion::Begin(StringFormat::Fmt("Clear depth state for %s", ToStr(orig).c_str()),
+                              cmd);
+
+        ImageBarrierSequence setupBarriers;    // , cleanupBarriers;
+        state->DiscardContents();
+        state->Transition(m_QueueFamilyIdx, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, setupBarriers,
+                          GetImageTransitionInfo());
+        InlineSetupImageBarriers(cmd, setupBarriers);
+        m_setupImageBarriers.Merge(setupBarriers);
+
+        VkClearDepthStencilValue clearval = {1.0f, 0};
+        VkImageSubresourceRange range = imageInfo.FullRange();
+
+        ObjDisp(cmd)->CmdClearDepthStencilImage(Unwrap(cmd), ToUnwrappedHandle<VkImage>(res),
+                                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearval, 1,
+                                                &range);
+
+        VkMarkerRegion::End(cmd);
+
+        if(Vulkan_Debug_SingleSubmitFlushing())
+        {
+          CloseInitStateCmd();
+          SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
+          SubmitCmds();
+          FlushQ();
+          SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
+        }
+      }
+      else
+      {
+        RDCERR("Unexpected initial state tag %u", initial.tag);
+      }
+
+      return;
+    }
+
+    if(c.samples != VK_SAMPLE_COUNT_1_BIT)
+    {
+      VkCommandBuffer cmd = GetInitStateCmd();
+
+      if(cmd == VK_NULL_HANDLE)
+        return;
+
+      ImageBarrierSequence setupBarriers;    // , cleanupBarriers;
+      state->DiscardContents();
+      state->Transition(m_QueueFamilyIdx, VK_IMAGE_LAYOUT_GENERAL,
+                        VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        setupBarriers, GetImageTransitionInfo());
+      InlineSetupImageBarriers(cmd, setupBarriers);
+      m_setupImageBarriers.Merge(setupBarriers);
+
+      VkBuffer buf = initial.buf;
+
+      GetDebugManager()->CopyBufferToTex2DMS(cmd, ToUnwrappedHandle<VkImage>(res), Unwrap(buf),
+                                             c.extent, c.arrayLayers, (uint32_t)c.samples, fmt);
+
+      if(Vulkan_Debug_SingleSubmitFlushing())
+      {
+        CloseInitStateCmd();
+        SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
+        SubmitCmds();
+        FlushQ();
+        SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
+      }
+      return;
+    }
+
+    VkBuffer buf = initial.buf;
+
+    VkExtent3D extent = m_CreationInfo.m_Image[id].extent;
 
     VkDeviceSize bufOffset = 0;
 
@@ -2261,9 +2401,9 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
       m_setupImageBarriers.Merge(setupBarriers);
 
       if(copyRegions.size() > 0)
-        ObjDisp(cmd)->CmdCopyBufferToImage(
-            Unwrap(cmd), Unwrap(buf), ToUnwrappedHandle<VkImage>(live),
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)copyRegions.size(), copyRegions.data());
+        ObjDisp(cmd)->CmdCopyBufferToImage(Unwrap(cmd), Unwrap(buf), ToUnwrappedHandle<VkImage>(res),
+                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           (uint32_t)copyRegions.size(), copyRegions.data());
 
       if(clearRegions.size() > 0)
       {
@@ -2271,14 +2411,14 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
         {
           VkClearDepthStencilValue val = {0, 0};
           ObjDisp(cmd)->CmdClearDepthStencilImage(
-              Unwrap(cmd), ToUnwrappedHandle<VkImage>(live), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+              Unwrap(cmd), ToUnwrappedHandle<VkImage>(res), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
               &val, (uint32_t)clearRegions.size(), clearRegions.data());
         }
         else
         {
           VkClearColorValue val;
           memset(&val, 0, sizeof(val));
-          ObjDisp(cmd)->CmdClearColorImage(Unwrap(cmd), ToUnwrappedHandle<VkImage>(live),
+          ObjDisp(cmd)->CmdClearColorImage(Unwrap(cmd), ToUnwrappedHandle<VkImage>(res),
                                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &val,
                                            (uint32_t)clearRegions.size(), clearRegions.data());
         }
@@ -2299,7 +2439,7 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
   else if(type == eResDeviceMemory)
   {
     Intervals<InitReqType> resetReq;
-    ResourceId orig = GetResourceManager()->GetOriginalID(id);
+    ResourceId orig = id;
     MemRefs *memRefs = GetResourceManager()->FindMemRefs(orig);
 
     if(!memRefs)
@@ -2311,8 +2451,8 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
     }
     else
     {
-      bool initialized = memRefs->initializedLiveRes == live;
-      memRefs->initializedLiveRes = live;
+      bool initialized = memRefs->initializedLiveRes == res;
+      memRefs->initializedLiveRes = res;
       InitPolicy policy = GetResourceManager()->GetInitPolicy();
       for(auto it = memRefs->rangeRefs.begin(); it != memRefs->rangeRefs.end(); it++)
       {
@@ -2329,7 +2469,12 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
     VkBuffer srcBuf = initial.buf;
 
     VkBuffer dstBuf = m_CreationInfo.m_Memory[id].wholeMemBuf;
-    VkDeviceSize dstBufSize = RDCMIN(initial.mem.size, m_CreationInfo.m_Memory[id].wholeMemBufSize);
+    VkDeviceSize dstBufSize = m_CreationInfo.m_Memory[id].wholeMemBufSize;
+
+    // may have no initial memory if this is a created initial contents which we only clear
+    if(initial.mem.size != 0)
+      dstBufSize = RDCMIN(initial.mem.size, dstBufSize);
+
     if(dstBuf == VK_NULL_HANDLE)
     {
       RDCERR("Whole memory buffer not present for %s", ToStr(orig).c_str());
@@ -2358,7 +2503,14 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live, const VkInitialConten
       VkDeviceSize start = it->start();
       VkDeviceSize finish = RDCMIN(it->finish(), dstBufSize);
       VkDeviceSize size = finish - start;
-      switch(it->value())
+      InitReqType req = it->value();
+
+      // if we would copy, but we don't have a source buffer then there were no saved initial
+      // contents because this buffer was created mid-frame. Clear instead
+      if(req == eInitReq_Copy && srcBuf == VK_NULL_HANDLE)
+        req = eInitReq_Clear;
+
+      switch(req)
       {
         case eInitReq_Clear:
           if(finish >= dstBufSize)

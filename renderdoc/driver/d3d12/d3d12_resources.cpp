@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,8 +24,10 @@
 
 #include "d3d12_resources.h"
 #include "driver/shaders/dxbc/dxbc_reflect.h"
+#include "driver/shaders/dxil/dxil_metadata.h"
 #include "d3d12_command_list.h"
 #include "d3d12_command_queue.h"
+#include "d3d12_rootsig.h"
 #include "d3d12_shader_cache.h"
 
 GPUAddressRangeTracker WrappedID3D12Resource::m_Addresses;
@@ -40,7 +42,7 @@ const GUID RENDERDOC_ID3D12ShaderGUID_ShaderDebugMagicValue = RENDERDOC_ShaderDe
 
 ALL_D3D12_TYPES;
 
-D3D12ResourceType IdentifyTypeByPtr(ID3D12Object *ptr)
+D3D12ResourceType TryIdentifyTypeByPtr(ID3D12Object *ptr)
 {
   if(ptr == NULL)
     return Resource_Unknown;
@@ -62,6 +64,16 @@ D3D12ResourceType IdentifyTypeByPtr(ID3D12Object *ptr)
   RDCERR("Unknown type for ptr 0x%p", ptr);
 
   return Resource_Unknown;
+}
+
+D3D12ResourceType IdentifyTypeByPtr(ID3D12Object *ptr)
+{
+  D3D12ResourceType ret = TryIdentifyTypeByPtr(ptr);
+
+  if(ret == Resource_Unknown)
+    RDCERR("Unknown type for ptr 0x%p", ptr);
+
+  return ret;
 }
 
 TrackedResource12 *GetTracked(ID3D12Object *ptr)
@@ -139,49 +151,82 @@ ID3D12DeviceChild *Unwrap(ID3D12DeviceChild *ptr)
 
 WRAPPED_POOL_INST(D3D12AccelerationStructure);
 
-D3D12AccelerationStructure::D3D12AccelerationStructure(WrappedID3D12Device *wrappedDevice,
-                                                       WrappedID3D12Resource *bufferRes,
-                                                       D3D12BufferOffset bufferOffset,
-                                                       UINT64 byteSize)
-    : WrappedDeviceChild12(NULL, wrappedDevice),
+D3D12AccelerationStructure::D3D12AccelerationStructure(
+    ResourceId id, WrappedID3D12Device *wrappedDevice, WrappedID3D12Resource *bufferRes,
+    D3D12BufferOffset bufferOffset, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE type,
+    UINT64 byteSize)
+    : WrappedDeviceChild12(id, NULL, wrappedDevice),
       m_asbWrappedResource(bufferRes),
       m_asbWrappedResourceBufferOffset(bufferOffset),
+      type(type),
       byteSize(byteSize)
 {
 }
 
 D3D12AccelerationStructure::~D3D12AccelerationStructure()
 {
+  SAFE_RELEASE(buildData);
   Shutdown();
 }
 
-bool WrappedID3D12Resource::CreateAccStruct(D3D12BufferOffset bufferOffset, UINT64 byteSize,
-                                            D3D12AccelerationStructure **accStruct)
+WrappedID3D12Heap::WrappedID3D12Heap(ResourceId id, ID3D12Heap *real, WrappedID3D12Device *device)
+    : WrappedDeviceChild12(id, real, device)
+{
+  D3D12_HEAP_DESC desc = GetDesc();
+  if((desc.Flags & D3D12_HEAP_FLAG_DENY_BUFFERS) == 0)
+  {
+    D3D12_RESOURCE_DESC resDesc = {};
+    resDesc.Width = GetDesc().SizeInBytes;
+    resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resDesc.Height = 1;
+    resDesc.DepthOrArraySize = 1;
+    resDesc.MipLevels = 1;
+    resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    resDesc.SampleDesc.Count = 1;
+
+    if(desc.Flags & D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER)
+      resDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER;
+
+    D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
+    if(desc.Properties.Type == D3D12_HEAP_TYPE_UPLOAD)
+      state = D3D12_RESOURCE_STATE_GENERIC_READ;
+    else if(desc.Properties.Type == D3D12_HEAP_TYPE_READBACK)
+      state = D3D12_RESOURCE_STATE_COPY_DEST;
+
+    HRESULT hr = device->GetReal()->CreatePlacedResource(
+        real, 0, &resDesc, state, NULL, __uuidof(ID3D12Resource), (void **)&m_WholeMem);
+
+    RDCASSERT(SUCCEEDED(hr));
+  }
+}
+
+bool WrappedID3D12Resource::CreateAccStruct(ResourceId id, D3D12BufferOffset bufferOffset,
+                                            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE type,
+                                            UINT64 byteSize, D3D12AccelerationStructure **accStruct)
 {
   SCOPED_LOCK(m_accStructResourcesCS);
-  if(m_accelerationStructMap.find(bufferOffset) == m_accelerationStructMap.end())
+  auto existing = m_accelerationStructMap.find(bufferOffset);
+  if(existing != m_accelerationStructMap.end())
   {
-    m_accelerationStructMap[bufferOffset] =
-        new D3D12AccelerationStructure(m_pDevice, this, bufferOffset, byteSize);
-
-    if(accStruct)
-    {
-      *accStruct = m_accelerationStructMap[bufferOffset];
-
-      if(IsCaptureMode(m_pDevice->GetState()))
-      {
-        DeleteOverlappingAccStructsInRangeAtOffset(bufferOffset);
-      }
-    }
-
-    return true;
+    if(IsCaptureMode(m_pDevice->GetState()))
+      RDCASSERTEQUAL((uint32_t)existing->second->Release(), 0);
+    m_accelerationStructMap.erase(existing);
   }
 
-  return false;
+  m_accelerationStructMap[bufferOffset] =
+      new D3D12AccelerationStructure(id, m_pDevice, this, bufferOffset, type, byteSize);
+
+  *accStruct = m_accelerationStructMap[bufferOffset];
+
+  if(IsCaptureMode(m_pDevice->GetState()))
+    DeleteOverlappingAccStructsInRangeAtOffset(bufferOffset);
+
+  return true;
 }
 
 WrappedID3D12Resource::~WrappedID3D12Resource()
 {
+  SAFE_RELEASE(m_Pageable);
   SAFE_RELEASE(m_Heap);
 
   // perform an implicit unmap on release
@@ -211,18 +256,15 @@ WrappedID3D12Resource::~WrappedID3D12Resource()
       SAFE_RELEASE(it->second);
   }
 
+  m_pDevice->GetResourceManager()->RemovePlacedResource(GetResourceID());
+
   if(IsReplayMode(m_pDevice->GetState()))
     m_pDevice->RemoveReplayResource(GetResourceID());
 
   // assuming only valid for buffers
   if(m_pReal->GetDesc().Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
   {
-    GPUAddressRange range;
-    range.start = m_pReal->GetGPUVirtualAddress();
-    // realEnd and oobEnd are not used for removing, just start + id
-    range.id = GetResourceID();
-
-    m_Addresses.RemoveFrom(range);
+    m_Addresses.RemoveFrom(m_pReal->GetGPUVirtualAddress(), GetResourceID());
   }
 
   Shutdown();
@@ -350,7 +392,7 @@ HRESULT STDMETHODCALLTYPE WrappedID3D12Resource::Map(UINT Subresource,
     map[Subresource].realPtr = (byte *)mapPtr;
     map[Subresource].refcount++;
 
-    // on the first map, register this so we can flush any updates in case it's left persistant
+    // on the first map, register this so we can flush any updates in case it's left persistent
     if(map[Subresource].refcount == 1)
       m_pDevice->Map(this, Subresource);
   }
@@ -431,10 +473,8 @@ bool WrappedID3D12Resource::DeleteAccStructAtOffset(D3D12BufferOffset bufferOffs
   D3D12AccelerationStructure *accStruct = NULL;
   if(GetAccStructIfExist(bufferOffset, &accStruct))
   {
-    if(m_accelerationStructMap[bufferOffset]->Release() == 0)
-    {
-      m_accelerationStructMap.erase(bufferOffset);
-    }
+    RDCASSERTEQUAL((uint32_t)accStruct->Release(), 0);
+    m_accelerationStructMap.erase(bufferOffset);
 
     return true;
   }
@@ -445,22 +485,19 @@ bool WrappedID3D12Resource::DeleteAccStructAtOffset(D3D12BufferOffset bufferOffs
 void WrappedID3D12Resource::RefBuffers(D3D12ResourceManager *rm)
 {
   // only buffers go into m_Addresses
-  SCOPED_READLOCK(m_Addresses.addressLock);
-  for(size_t i = 0; i < m_Addresses.addresses.size(); i++)
-    rm->MarkResourceFrameReferenced(m_Addresses.addresses[i].id, eFrameRef_Read);
+  for(ResourceId id : m_Addresses.GetIDs())
+    rm->MarkResourceFrameReferenced(id, eFrameRef_Read);
 }
 
 void WrappedID3D12Resource::GetMappableIDs(D3D12ResourceManager *rm,
                                            const std::unordered_set<ResourceId> &refdIDs,
                                            std::unordered_set<ResourceId> &mappableIDs)
 {
-  SCOPED_READLOCK(m_Addresses.addressLock);
-  for(size_t i = 0; i < m_Addresses.addresses.size(); i++)
+  for(ResourceId id : m_Addresses.GetIDs())
   {
-    if(refdIDs.find(m_Addresses.addresses[i].id) != refdIDs.end())
+    if(refdIDs.find(id) != refdIDs.end())
     {
-      WrappedID3D12Resource *resource =
-          (WrappedID3D12Resource *)rm->GetCurrentResource(m_Addresses.addresses[i].id);
+      WrappedID3D12Resource *resource = (WrappedID3D12Resource *)rm->GetResource(id);
       mappableIDs.insert(resource->GetMappableID());
     }
   }
@@ -470,15 +507,11 @@ rdcarray<ID3D12Resource *> WrappedID3D12Resource::AddRefBuffersBeforeCapture(D3D
 {
   rdcarray<ID3D12Resource *> ret;
 
-  rdcarray<GPUAddressRange> addresses;
-  {
-    SCOPED_READLOCK(m_Addresses.addressLock);
-    addresses = m_Addresses.addresses;
-  }
+  rdcarray<GPUAddressRange> addresses = m_Addresses.GetAddresses();
 
   for(size_t i = 0; i < addresses.size(); i++)
   {
-    ID3D12Resource *resource = (ID3D12Resource *)rm->GetCurrentResource(addresses[i].id);
+    ID3D12Resource *resource = (ID3D12Resource *)rm->GetResource(addresses[i].id);
     if(resource)
     {
       resource->AddRef();
@@ -547,11 +580,11 @@ void WrappedID3D12DescriptorHeap::SetToDescriptorCache(uint32_t index, const Des
   cachedDescriptors[index] = view;
 }
 
-WrappedID3D12DescriptorHeap::WrappedID3D12DescriptorHeap(ID3D12DescriptorHeap *real,
+WrappedID3D12DescriptorHeap::WrappedID3D12DescriptorHeap(ResourceId id, ID3D12DescriptorHeap *real,
                                                          WrappedID3D12Device *device,
                                                          const D3D12_DESCRIPTOR_HEAP_DESC &desc,
                                                          UINT UnpatchedNumDescriptors)
-    : WrappedDeviceChild12(real, device)
+    : WrappedDeviceChild12(id, real, device)
 {
   realCPUBase = real->GetCPUDescriptorHandleForHeapStart();
   if(desc.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE)
@@ -602,6 +635,37 @@ void WrappedID3D12PipelineState::ShaderEntry::BuildReflection()
 
   MakeShaderReflection(m_DXBCFile, {}, m_Details);
   m_Details->resourceId = GetResourceID();
+}
+
+void WrappedID3D12PipelineState::ShaderEntry::ReloadShaderDebugInformation()
+{
+  for(auto it = m_Shaders.begin(); it != m_Shaders.end(); ++it)
+  {
+    ShaderEntry *shad = it->second;
+    if(ResourceIDGen::IsReplayOnlyID(shad->GetResourceID()))
+      continue;
+    shad->Reload();
+  }
+}
+
+void WrappedID3D12PipelineState::ShaderEntry::Reload()
+{
+  bool wasBuilt = m_Built;
+  m_Built = false;
+  *m_Details = ShaderReflection();
+
+  if(m_DXBCFile)
+  {
+    // recreate the DXBC file, this will pull any old debug info over
+    m_DXBCFile = new DXBC::DXBCContainer(m_DXBCFile, rdcstr());
+    m_DXBCFile->SetShaderExts(GraphicsAPI::D3D12, m_ShaderExtSlot, m_ShaderExtSpace);
+  }
+
+  if(wasBuilt)
+  {
+    BuildReflection();
+    m_Built = true;
+  }
 }
 
 rdcpair<uint32_t, uint32_t> FindMatchingRootParameter(const D3D12RootSignature &sig,
@@ -678,16 +742,21 @@ void WrappedID3D12PipelineState::FetchRootSig(D3D12ShaderCache *shaderCache)
 {
   if(compute)
   {
-    if(compute->pRootSignature)
+    if(compute->GetRootSigBlob().SerializedBlobSizeInBytes > 0)
     {
-      usedSig = ((WrappedID3D12RootSignature *)compute->pRootSignature)->sig;
+      usedSig = DecodeRootSig(compute->GetRootSigBlob().pSerializedBlob,
+                              compute->GetRootSigBlob().SerializedBlobSizeInBytes);
+    }
+    else if(compute->GetRootSigIfPresent())
+    {
+      usedSig = ((WrappedID3D12RootSignature *)compute->GetRootSigIfPresent())->sig;
     }
     else
     {
       D3D12_SHADER_BYTECODE desc = CS()->GetDesc();
       if(DXBC::DXBCContainer::CheckForRootSig(desc.pShaderBytecode, desc.BytecodeLength))
       {
-        usedSig = shaderCache->GetRootSig(desc.pShaderBytecode, desc.BytecodeLength);
+        usedSig = DecodeRootSig(desc.pShaderBytecode, desc.BytecodeLength);
       }
       else
       {
@@ -697,9 +766,14 @@ void WrappedID3D12PipelineState::FetchRootSig(D3D12ShaderCache *shaderCache)
   }
   else if(graphics)
   {
-    if(graphics->pRootSignature)
+    if(graphics->GetRootSigBlob().SerializedBlobSizeInBytes > 0)
     {
-      usedSig = ((WrappedID3D12RootSignature *)graphics->pRootSignature)->sig;
+      usedSig = DecodeRootSig(graphics->GetRootSigBlob().pSerializedBlob,
+                              graphics->GetRootSigBlob().SerializedBlobSizeInBytes);
+    }
+    else if(graphics->GetRootSigIfPresent())
+    {
+      usedSig = ((WrappedID3D12RootSignature *)graphics->GetRootSigIfPresent())->sig;
     }
     else
     {
@@ -712,7 +786,7 @@ void WrappedID3D12PipelineState::FetchRootSig(D3D12ShaderCache *shaderCache)
 
           if(DXBC::DXBCContainer::CheckForRootSig(desc.pShaderBytecode, desc.BytecodeLength))
           {
-            usedSig = shaderCache->GetRootSig(desc.pShaderBytecode, desc.BytecodeLength);
+            usedSig = DecodeRootSig(desc.pShaderBytecode, desc.BytecodeLength);
             return;
           }
         }
@@ -837,10 +911,8 @@ void WrappedID3D12PipelineState::ProcessDescriptorAccess()
   }
 }
 
-D3D12ShaderExportDatabase::D3D12ShaderExportDatabase(ResourceId id,
-                                                     D3D12RaytracingResourceAndUtilHandler *rayManager,
-                                                     ID3D12StateObjectProperties *obj)
-    : RefCounter12(NULL), objectOriginalId(id), m_RayManager(rayManager), m_StateObjectProps(obj)
+D3D12ShaderExportDatabase::D3D12ShaderExportDatabase(ResourceId id, D3D12RTManager *rayManager)
+    : RefCounter12(NULL), objectId(id), m_RayManager(rayManager)
 {
   m_RayManager->RegisterExportDatabase(this);
 }
@@ -859,10 +931,11 @@ void D3D12ShaderExportDatabase::PopulateDatabase(size_t NumSubobjects,
                                                  const D3D12_STATE_SUBOBJECT *subobjects)
 {
   // store the default local root signature - if we only find one in the whole state object then it becomes default
-  ID3D12RootSignature *defaultRoot = NULL;
+  uint32_t defaultRoot = ~0U;
   bool unassocDefaultValid = false;
   bool explicitDefault = false;
   bool unassocDXILDefaultValid = false;
+  bool explicitDXILDefault = false;
   uint32_t dxilDefaultRoot = ~0U;
 
   rdcarray<rdcpair<rdcstr, uint32_t>> explicitRootSigAssocs;
@@ -902,6 +975,14 @@ void D3D12ShaderExportDatabase::PopulateDatabase(size_t NumSubobjects,
     {
       D3D12_DXIL_LIBRARY_DESC *dxil = (D3D12_DXIL_LIBRARY_DESC *)subobjects[i].pDesc;
 
+      size_t rdatSize = 0;
+      const byte *rdatData = DXBC::DXBCContainer::FindChunk(
+          (const byte *)dxil->DXILLibrary.pShaderBytecode, dxil->DXILLibrary.BytecodeLength,
+          DXBC::FOURCC_RDAT, rdatSize);
+      DXIL::RDATData rdat;
+      bool haveRDAT = DXBC::DXBCContainer::GetRuntimeData(rdatData, rdatSize, rdat);
+
+      rdcarray<rdcstr> exports;
       if(dxil->NumExports > 0)
       {
         for(UINT e = 0; e < dxil->NumExports; e++)
@@ -909,23 +990,77 @@ void D3D12ShaderExportDatabase::PopulateDatabase(size_t NumSubobjects,
           // Name is always the name used for exports - if renaming then the renamed-from name
           // is only used to lookup in the dxil library and not for any associations-by-name
           AddExport(StringFormat::Wide2UTF8(dxil->pExports[e].Name));
+          exports.push_back(StringFormat::Wide2UTF8(dxil->pExports[e].Name));
         }
       }
       else
       {
         // hard part, we need to parse the DXIL to get the entry points
-        DXBC::DXBCContainer container(
-            bytebuf((byte *)dxil->DXILLibrary.pShaderBytecode, dxil->DXILLibrary.BytecodeLength),
-            rdcstr(), GraphicsAPI::D3D12, ~0U, ~0U);
+        rdcarray<ShaderEntryPoint> entries;
 
-        rdcarray<ShaderEntryPoint> entries = container.GetEntryPoints();
+        if(haveRDAT)
+        {
+          entries = rdat.GetEntryPoints();
+        }
+        else
+        {
+          RDCERR("Falling back to expensive container-based enumeration of entry points");
+
+          DXBC::DXBCContainer container(
+              bytebuf((byte *)dxil->DXILLibrary.pShaderBytecode, dxil->DXILLibrary.BytecodeLength));
+
+          entries = container.GetEntryPoints();
+        }
 
         for(const ShaderEntryPoint &e : entries)
           AddExport(e.name);
       }
 
-      // TODO: register local root signature subobjects into dxilLocalRootSigs. Override
-      // anything in there, unlike the import from a collection below.
+      // import local root signature subobjects
+      rdcarray<rdcstr> localRSs;
+      if(haveRDAT)
+      {
+        for(const DXIL::RDATData::SubobjectInfo &sub : rdat.subobjectsInfo)
+        {
+          if(sub.type == DXIL::RDATData::SubobjectInfo::SubobjectType::Hitgroup)
+          {
+            if(dxil->NumExports == 0)
+              AddExport(sub.name);
+          }
+          else if(sub.type == DXIL::RDATData::SubobjectInfo::SubobjectType::LocalRS)
+          {
+            if(exports.contains(sub.name) || exports.empty())
+            {
+              localRSs.push_back(sub.name);
+              uint32_t rsIndex = m_RayManager->RegisterLocalRootSig(
+                  DecodeRootSig(sub.rs.data.data(), sub.rs.data.size(), false));
+
+              // ignore these if an explicit default association has been made
+              if(!explicitDXILDefault)
+              {
+                // if multiple root signatures are defined, then there can't be an unspecified default
+                unassocDXILDefaultValid = dxilLocalRootSigs.empty();
+                dxilDefaultRoot = rsIndex;
+              }
+
+              dxilLocalRootSigs[sub.name] = rsIndex;
+            }
+          }
+          else if(sub.type == DXIL::RDATData::SubobjectInfo::SubobjectType::SubobjectToExportsAssoc)
+          {
+            // only care about local RS associations
+            if(localRSs.contains(sub.assoc.subobject))
+            {
+              if(sub.assoc.exports.empty())
+              {
+                explicitDXILDefault = true;
+                // TODO do we need a different level of priority for this vs an explicit default in code?
+                explicitDefaultDxilAssocs.push_back(sub.assoc.subobject);
+              }
+            }
+          }
+        }
+      }
     }
     else if(subobjects[i].Type == D3D12_STATE_SUBOBJECT_TYPE_EXISTING_COLLECTION)
     {
@@ -965,8 +1100,25 @@ void D3D12ShaderExportDatabase::PopulateDatabase(size_t NumSubobjects,
       if(!explicitDefault)
       {
         // if multiple root signatures are defined, then there can't be an unspecified default
-        unassocDefaultValid = defaultRoot == NULL;
-        defaultRoot = ((D3D12_LOCAL_ROOT_SIGNATURE *)subobjects[i].pDesc)->pLocalRootSignature;
+        unassocDefaultValid = (defaultRoot == ~0U);
+        WrappedID3D12RootSignature *wrappedRoot =
+            (WrappedID3D12RootSignature *)((D3D12_LOCAL_ROOT_SIGNATURE *)subobjects[i].pDesc)
+                ->pLocalRootSignature;
+
+        defaultRoot = wrappedRoot->localRootSigIdx;
+      }
+    }
+    else if(subobjects[i].Type == D3D12_STATE_SUBOBJECT_TYPE_LOCAL_SERIALIZED_ROOT_SIGNATURE)
+    {
+      // ignore these if an explicit default association has been made
+      if(!explicitDefault)
+      {
+        // if multiple root signatures are defined, then there can't be an unspecified default
+        unassocDefaultValid = (defaultRoot == ~0U);
+        D3D12_SERIALIZED_ROOT_SIGNATURE_DESC &RootDesc =
+            ((D3D12_LOCAL_SERIALIZED_ROOT_SIGNATURE *)subobjects[i].pDesc)->Desc;
+        defaultRoot = m_RayManager->RegisterLocalRootSig(
+            DecodeRootSig(RootDesc.pSerializedBlob, RootDesc.SerializedBlobSizeInBytes));
       }
     }
     else if(subobjects[i].Type == D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION)
@@ -977,26 +1129,40 @@ void D3D12ShaderExportDatabase::PopulateDatabase(size_t NumSubobjects,
       const D3D12_STATE_SUBOBJECT *other = assoc->pSubobjectToAssociate;
 
       // only care about associating local root signatures
-      if(other->Type == D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE)
+      if(other->Type == D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE ||
+         other->Type == D3D12_STATE_SUBOBJECT_TYPE_LOCAL_SERIALIZED_ROOT_SIGNATURE)
       {
-        ID3D12RootSignature *root = ((D3D12_LOCAL_ROOT_SIGNATURE *)other->pDesc)->pLocalRootSignature;
+        uint32_t localRSIdx = ~0U;
 
-        WrappedID3D12RootSignature *wrappedRoot = (WrappedID3D12RootSignature *)root;
+        if(other->Type == D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE)
+        {
+          ID3D12RootSignature *root =
+              ((D3D12_LOCAL_ROOT_SIGNATURE *)other->pDesc)->pLocalRootSignature;
+
+          WrappedID3D12RootSignature *wrappedRoot = (WrappedID3D12RootSignature *)root;
+          localRSIdx = wrappedRoot->localRootSigIdx;
+        }
+        else if(other->Type == D3D12_STATE_SUBOBJECT_TYPE_LOCAL_SERIALIZED_ROOT_SIGNATURE)
+        {
+          D3D12_SERIALIZED_ROOT_SIGNATURE_DESC &RootDesc =
+              ((D3D12_LOCAL_SERIALIZED_ROOT_SIGNATURE *)other->pDesc)->Desc;
+          localRSIdx = m_RayManager->RegisterLocalRootSig(
+              DecodeRootSig(RootDesc.pSerializedBlob, RootDesc.SerializedBlobSizeInBytes));
+        }
 
         // if there are no exports this is an explicit default association. We assume this
         // matches and doesn't conflict
         if(assoc->NumExports == NULL)
         {
           explicitDefault = true;
-          defaultRoot = root;
+          defaultRoot = localRSIdx;
         }
         else
         {
           // otherwise record the explicit associations - these may refer to exports that
           // haven't been seen yet so we record them locally
           for(UINT e = 0; e < assoc->NumExports; e++)
-            explicitRootSigAssocs.push_back(
-                {StringFormat::Wide2UTF8(assoc->pExports[e]), wrappedRoot->localRootSigIdx});
+            explicitRootSigAssocs.push_back({StringFormat::Wide2UTF8(assoc->pExports[e]), localRSIdx});
         }
       }
     }
@@ -1037,16 +1203,12 @@ void D3D12ShaderExportDatabase::PopulateDatabase(size_t NumSubobjects,
 
   if(explicitDefault)
   {
-    WrappedID3D12RootSignature *wrappedRoot = (WrappedID3D12RootSignature *)defaultRoot;
-
-    ApplyDefaultRoot(SubObjectPriority::CodeExplicitDefault, wrappedRoot->localRootSigIdx);
+    ApplyDefaultRoot(SubObjectPriority::CodeExplicitDefault, defaultRoot);
   }
   // shouldn't be possible to have both explicit and implicit defaults?
   else if(unassocDefaultValid)
   {
-    WrappedID3D12RootSignature *wrappedRoot = (WrappedID3D12RootSignature *)defaultRoot;
-
-    ApplyDefaultRoot(SubObjectPriority::CodeImplicitDefault, wrappedRoot->localRootSigIdx);
+    ApplyDefaultRoot(SubObjectPriority::CodeImplicitDefault, defaultRoot);
   }
 
   for(size_t i = 0; i < explicitDxilAssocs.size(); i++)
@@ -1135,7 +1297,7 @@ void D3D12ShaderExportDatabase::AddExport(const rdcstr &exportName)
   {
     // store the wrapped identifier here in this database, ready to return to the application in
     // this object or any child objects.
-    wrappedIdentifiers.push_back({objectOriginalId, (uint32_t)ownExports.size()});
+    wrappedIdentifiers.push_back({objectId, (uint32_t)ownExports.size()});
 
     // store the unwrapping information to go into the giant lookup table
     ownExports.push_back({});
@@ -1205,7 +1367,7 @@ void D3D12ShaderExportDatabase::InheritExport(const rdcstr &exportName,
     ownExports.push_back({});
 
     // we expect this identifier to have come from the object we're inheriting
-    RDCASSERTEQUAL(wrappedIdentifiers.back().id, existing->objectOriginalId);
+    RDCASSERTEQUAL(wrappedIdentifiers.back().id, existing->objectId);
     // which means we can copy any root signature it had associated even if it wasn't complete
     ownExports.back() = existing->ownExports[wrappedIdentifiers.back().index];
 
@@ -1214,7 +1376,7 @@ void D3D12ShaderExportDatabase::InheritExport(const rdcstr &exportName,
       memcpy(ownExports.back().real, identifier, sizeof(ShaderIdentifier));
 
     // and re-point this to point to ourselves when queried as we have the best data for it.
-    wrappedIdentifiers.back() = {objectOriginalId, (uint32_t)ownExports.size()};
+    wrappedIdentifiers.back() = {objectId, (uint32_t)ownExports.size() - 1};
 
     // if this is an incomplete hitgroup, also grab the hitgroup component data
     if(exportLookups.back().hitgroup)
@@ -1247,7 +1409,7 @@ void D3D12ShaderExportDatabase::ApplyRoot(SubObjectPriority priority, const rdcs
 void D3D12ShaderExportDatabase::ApplyRoot(const ShaderIdentifier &identifier,
                                           SubObjectPriority priority, uint32_t localRootSigIndex)
 {
-  if(identifier.id == objectOriginalId)
+  if(identifier.id == objectId)
   {
     // set this anywhere we have a looser/lower priority association already (including the most
     // common case presumably where one isn't set at all)
@@ -1278,7 +1440,7 @@ void D3D12ShaderExportDatabase::UpdateHitGroupAssociations()
       {
         // if the export is our own (ie. not complete and finished in a parent), we might need to
         // update its root sig
-        if(wrappedIdentifiers[e].id == objectOriginalId)
+        if(wrappedIdentifiers[e].id == objectId)
         {
           // if the hit group got a code association already we assume it must match, but a DXIL
           // association or a default association could be overridden since it's unclear if a
@@ -1293,7 +1455,7 @@ void D3D12ShaderExportDatabase::UpdateHitGroupAssociations()
               {
                 if(shaderExport == exportLookups[e2].name || shaderExport == exportLookups[e2].altName)
                 {
-                  RDCASSERTEQUAL(wrappedIdentifiers[e2].id, objectOriginalId);
+                  RDCASSERTEQUAL(wrappedIdentifiers[e2].id, objectId);
                   uint32_t idx = wrappedIdentifiers[e2].index;
                   ApplyRoot(wrappedIdentifiers[e], ownExports[idx].rootSigPrio,
                             ownExports[idx].localRootSigIndex);
@@ -1454,9 +1616,9 @@ D3D12_SHADER_RESOURCE_VIEW_DESC MakeSRVDesc(const D3D12_RESOURCE_DESC &desc)
 
     ret.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
     ret.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-    ret.Buffer.StructureByteStride = 0;
+    ret.Buffer.StructureByteStride = 16;
     ret.Buffer.FirstElement = 0;
-    ret.Buffer.NumElements = (UINT)desc.Width;
+    ret.Buffer.NumElements = (UINT)desc.Width / 16;
   }
   else if(desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE1D)
   {
@@ -1550,4 +1712,92 @@ D3D12_UNORDERED_ACCESS_VIEW_DESC MakeUAVDesc(const D3D12_RESOURCE_DESC &desc)
   }
 
   return ret;
+}
+
+UINT64 WrappedID3D12QueryHeap::GetResolveDataSize() const
+{
+  switch(m_Type)
+  {
+    case D3D12_QUERY_HEAP_TYPE_OCCLUSION: return sizeof(UINT64); break;
+    case D3D12_QUERY_HEAP_TYPE_TIMESTAMP: return sizeof(UINT64); break;
+    case D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS:
+      return sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS);
+      break;
+    case D3D12_QUERY_HEAP_TYPE_SO_STATISTICS: return sizeof(D3D12_QUERY_DATA_SO_STATISTICS); break;
+    case D3D12_QUERY_HEAP_TYPE_VIDEO_DECODE_STATISTICS:
+      // return sizeof(D3D12_QUERY_DATA_VIDEO_DECODE_STATISTICS);
+      return sizeof(UINT64) * 3;
+      break;
+    case D3D12_QUERY_HEAP_TYPE_COPY_QUEUE_TIMESTAMP: return sizeof(UINT64); break;
+    case D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS1:
+      return sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS1);
+      break;
+  }
+
+  return sizeof(UINT64);
+}
+
+UINT64 WrappedID3D12QueryHeap::GetResolveBufferSize() const
+{
+  return m_Valid.size() * GetResolveDataSize();
+}
+
+void WrappedID3D12QueryHeap::SaveValidQueries(ID3D12GraphicsCommandList *unwrappedList,
+                                              ID3D12Resource *unwrappedDestBuf)
+{
+  UINT64 stride = GetResolveDataSize();
+
+  // find contiguous ranges, for sensible applications there should only be a few ranges rather than scattered queries.
+  for(UINT i = 0; i < m_Valid.size();)
+  {
+    // if we found a valid query, get the size of the range
+    if(m_Valid[i] != InvalidQueryType)
+    {
+      UINT start = i;
+
+      // find the range of queries of the same type - even in an 'occlusion' query heap there could
+      // be a mix of binary and non-binary occlusion
+      for(; i < m_Valid.size(); i++)
+        if(m_Valid[i] != m_Valid[start])
+          break;
+
+      UINT num = i - start;
+
+      unwrappedList->ResolveQueryData(GetReal(), m_Valid[start], start, num, unwrappedDestBuf,
+                                      stride * start);
+    }
+    else
+    {
+      i++;
+    }
+  }
+}
+
+void WrappedID3D12QueryHeap::ResolveValidQueryData(ID3D12GraphicsCommandList *list,
+                                                   D3D12_QUERY_TYPE Type, UINT StartIndex,
+                                                   UINT NumQueries, ID3D12Resource *destBuf,
+                                                   UINT64 destOffs)
+{
+  UINT64 stride = GetResolveDataSize();
+
+  // find contiguous ranges, for sensible applications there should only be a few ranges rather than scattered queries.
+  for(UINT i = StartIndex, end = StartIndex + NumQueries; i < end;)
+  {
+    // doesn't matter if the query is valid or not we will still need to resolve it
+    UINT start = i;
+
+    for(; i < m_Valid.size(); i++)
+      if(m_Valid[i] != m_Valid[start])
+        break;
+
+    UINT num = i - start;
+
+    // if the query range is valid, resolve it normally
+    if(m_Valid[start] != InvalidQueryType)
+      Unwrap(list)->ResolveQueryData(GetReal(), m_Valid[start], start, num, Unwrap(destBuf),
+                                     destOffs + stride * (start - StartIndex));
+    else if(m_SavedResults)
+      Unwrap(list)->CopyBufferRegion(Unwrap(destBuf), destOffs + stride * (start - StartIndex),
+                                     Unwrap(m_SavedResults), stride * start, stride * num);
+  }
 }

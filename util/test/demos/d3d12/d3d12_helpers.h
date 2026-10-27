@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -80,6 +80,11 @@ COM_SMARTPTR(ID3D12InfoQueue);
 
 COM_SMARTPTR(ID3D12CommandQueueDownlevel);
 
+COM_SMARTPTR(ID3D12StateObject);
+COM_SMARTPTR(ID3D12StateObjectProperties);
+
+COM_SMARTPTR(ID3D12QueryHeap);
+
 struct D3D12GraphicsTest;
 
 class D3D12PSOCreator
@@ -88,6 +93,8 @@ public:
   D3D12PSOCreator(ID3D12DevicePtr dev);
 
   D3D12PSOCreator &VS(ID3DBlobPtr blob);
+  D3D12PSOCreator &AS(ID3DBlobPtr blob);
+  D3D12PSOCreator &MS(ID3DBlobPtr blob);
   D3D12PSOCreator &HS(ID3DBlobPtr blob);
   D3D12PSOCreator &DS(ID3DBlobPtr blob);
   D3D12PSOCreator &GS(ID3DBlobPtr blob);
@@ -113,8 +120,15 @@ public:
   D3D12_GRAPHICS_PIPELINE_STATE_DESC GraphicsDesc = {};
   D3D12_COMPUTE_PIPELINE_STATE_DESC ComputeDesc = {};
 
+  const D3D12_SHADER_BYTECODE &GetAS() const { return m_AS; };
+  const D3D12_SHADER_BYTECODE &GetMS() const { return m_MS; };
+
 private:
+  D3D12_SHADER_BYTECODE m_AS = {};
+  D3D12_SHADER_BYTECODE m_MS = {};
   ID3D12DevicePtr m_Dev;
+
+  ID3DBlobPtr vsblob, psblob, hsblob, dsblob, gsblob, csblob, asblob, msblob;
 };
 
 class D3D12BufferCreator
@@ -123,7 +137,9 @@ public:
   D3D12BufferCreator(ID3D12DevicePtr dev, D3D12GraphicsTest *test);
 
   D3D12BufferCreator &UAV();
+  D3D12BufferCreator &ASB();
 
+  D3D12BufferCreator &GPUUpload();
   D3D12BufferCreator &Upload();
   D3D12BufferCreator &Readback();
 
@@ -306,3 +322,9 @@ D3D12_INDIRECT_ARGUMENT_DESC dispatchArg();
       exit(1);                                                                            \
     }                                                                                     \
   }
+
+template <typename T>
+void setName(T obj, const std::string &name)
+{
+  obj->SetName(UTF82Wide(name).c_str());
+}

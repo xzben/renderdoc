@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2020-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +23,12 @@
  ******************************************************************************/
 
 #pragma once
+
+namespace DXBC
+{
+enum class ShaderType : uint8_t;
+enum class GlobalShaderFlags : int64_t;
+};
 
 namespace DXIL
 {
@@ -83,6 +89,58 @@ enum class ResourceKind
   SamplerComparison,
 };
 
+// different semantic enum
+enum class SigSemantic : uint8_t
+{
+  Undefined = 0,
+  VertexIndex,
+  InstanceIndex,
+  Position,
+  RTIndex,
+  ViewportIndex,
+  ClipDistance,
+  CullDistance,
+  OutputControlPointIndex,
+  DomainLocation,
+  PrimitiveIndex,
+  GSInstanceIndex,
+  MSAASampleIndex,
+  IsFrontFace,
+  MSAACoverage,
+  IsFullyCovered,
+  ColorOutput,
+  DepthOutput,
+  DepthOutputLessEqual,
+  DepthOutputGreaterEqual,
+  StencilReference,
+  DispatchThreadIndex,
+  GroupIndex,
+  GroupFlatIndex,
+  GroupThreadIndex,
+  OuterTessFactor,
+  InsideTessFactor,
+  MultiViewIndex,
+  Barycentrics,
+  PackedFragRate,
+  CullPrimitive,
+  BaseVertex,
+  BaseInstance,
+};
+
+enum class DXILResourceType : uint32_t
+{
+  Unknown,
+  Sampler,
+  CBuffer,
+  TypedSRV,
+  ByteAddressSRV,
+  StructuredSRV,
+  TypedUAV,
+  ByteAddressUAV,
+  StructuredUAV,
+  StructuredUAVWithCounter,
+};
+
 enum class SamplerKind
 {
   Default = 0,
@@ -100,6 +158,7 @@ enum class ShaderEntryTag
   Compute = 4,
   Mesh = 9,
   Amplification = 10,
+  WaveSize = 11,
 };
 
 enum class ResField
@@ -150,3 +209,4 @@ enum class SamplerFeedbackType : uint8_t
 
 DECLARE_STRINGISE_TYPE(DXIL::ComponentType);
 DECLARE_STRINGISE_TYPE(DXIL::ResourceClass);
+DECLARE_STRINGISE_TYPE(DXIL::ResourceKind);

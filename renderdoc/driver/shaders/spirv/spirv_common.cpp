@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -185,6 +185,7 @@ ShaderBuiltin MakeShaderBuiltin(ShaderStage stage, const rdcspv::BuiltIn el)
     case rdcspv::BuiltIn::PrimitiveLineIndicesEXT: return ShaderBuiltin::OutputIndices;
     case rdcspv::BuiltIn::PrimitiveTriangleIndicesEXT: return ShaderBuiltin::OutputIndices;
     case rdcspv::BuiltIn::CullPrimitiveEXT: return ShaderBuiltin::CullPrimitive;
+    case rdcspv::BuiltIn::PrimitiveShadingRateKHR:
     case rdcspv::BuiltIn::ShadingRateKHR: return ShaderBuiltin::PackedFragRate;
     default: break;
   }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -49,6 +49,9 @@ void ImageSubresourceState::Update(const ImageSubresourceState &other, FrameRefC
 
   if(other.newLayout != UNKNOWN_PREV_IMG_LAYOUT)
     newLayout = other.newLayout;
+
+  if(refType == eFrameRef_Unknown)
+    refType = other.refType;
 
   refType = compose(refType, other.refType);
 }
@@ -938,7 +941,15 @@ void ImageState::Merge(rdcflatmap<ResourceId, ImageState> &states,
   {
     if(it == states.end() || dstIt->first < it->first)
     {
-      it = states.insert(it, {dstIt->first, dstIt->second.InitialState()});
+      // If we're merging in an image state our source hasn't seen before, we first add an initial
+      // state for that image, then merge in the current image state. However, if the destination
+      // only referenced the image and never recorded an explicit layout transition the layout of
+      // that image will be unknown. In that case we copy it as-is to avoid improperly recording a
+      // transition back to initial state.
+      if(dstIt->second.subresourceStates.IsInitialised())
+        it = states.insert(it, {dstIt->first, dstIt->second.InitialState()});
+      else
+        it = states.insert(it, *dstIt);
     }
     else if(it->first < dstIt->first)
     {
@@ -1136,6 +1147,11 @@ void ImageState::ResetToOldState(ImageBarrierSequence &barriers, ImageTransition
       // Transitioning back to PREINITIALIZED; this is impossible, so transition to GENERAL instead.
       newLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
+    if(oldLayout != VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT &&
+       newLayout == VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT)
+    {
+      newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
 
     uint32_t srcQueueFamilyIndex = subIt->state().newQueueFamilyIndex;
     uint32_t dstQueueFamilyIndex = subIt->state().oldQueueFamilyIndex;
@@ -1223,6 +1239,12 @@ void ImageState::ResetToOldState(ImageBarrierSequence &barriers, ImageTransition
         /* image = */ wrappedHandle,
         /* subresourceRange = */ subRange,
     };
+    if(GetImageInfo().imageType == VK_IMAGE_TYPE_3D)
+    {
+      RDCASSERTEQUAL(subRange.baseArrayLayer, 0);
+      RDCASSERTEQUAL(subRange.layerCount, 1);
+      barrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    }
     barriers.AddWrapped(MAIN_BATCH_INDEX, submitQueueFamilyIndex, barrier);
 
     // acquire the subresource in the dstQueueFamily, if necessary
@@ -1288,6 +1310,13 @@ void ImageState::Transition(const ImageState &dstState, VkAccessFlags srcAccessM
         // Transitioning to PREINITIALIZED, which is invalid. This happens when we are resetting to
         // an earlier image state.
         // Instead, we transition to GENERAL, and make the image owned by oldQueueFamilyIndex.
+        newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        dstQueueFamilyIndex = srcSub.oldQueueFamilyIndex;
+        RDCASSERT(dstQueueFamilyIndex != VK_QUEUE_FAMILY_IGNORED);
+      }
+      if(newLayout == VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT &&
+         oldLayout != VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT)
+      {
         newLayout = VK_IMAGE_LAYOUT_GENERAL;
         dstQueueFamilyIndex = srcSub.oldQueueFamilyIndex;
         RDCASSERT(dstQueueFamilyIndex != VK_QUEUE_FAMILY_IGNORED);
@@ -1379,6 +1408,13 @@ void ImageState::Transition(const ImageState &dstState, VkAccessFlags srcAccessM
               /* layerCount = */ endArrayLayer - baseArrayLayer,
           },
       };
+      if(GetImageInfo().imageType == VK_IMAGE_TYPE_3D)
+      {
+        RDCASSERTEQUAL(baseArrayLayer, 0);
+        RDCASSERTEQUAL(barrier.subresourceRange.layerCount, 1);
+        barrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+      }
+
       barriers.AddWrapped(MAIN_BATCH_INDEX, submitQueueFamilyIndex, barrier);
 
       // acquire the subresource in the dstQueueFamily, if necessary

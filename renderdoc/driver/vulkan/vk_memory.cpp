@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,114 @@
 
 RDOC_CONFIG(bool, Vulkan_Debug_MemoryAllocationLogging, false,
             "Output verbose debug logging messages when allocating internal memory.");
+
+GPUAddressRange WrappedVulkan::CreateAddressRange(VkDevice device, VkBuffer buffer)
+{
+  VkResourceRecord *record = GetRecord(buffer);
+  if(!record->hasBDA)
+    return {};
+
+  VkResourceRecord *memrecord = GetResourceManager()->GetResourceRecord(record->baseResourceMem);
+
+  const bool isSparse = record->resInfo && record->resInfo->IsSparse();
+
+  // If the buffer is not sparse and there's no baseResourceMem, then the buffer is being destroyed
+  // without being bound so exit early as there's nothing to do
+  if(!isSparse && !memrecord)
+    return {};
+
+  // Sparse buffers may not have a single device allocation so set the OOB size to the same as the
+  // buffer
+  VkDeviceSize oobSize = record->memSize;
+  if(!isSparse && memrecord)
+    oobSize = memrecord->memSize - record->memOffset;
+
+  const VkBufferDeviceAddressInfo addrInfo = {
+      VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+      NULL,
+      Unwrap(buffer),
+  };
+
+  const VkDeviceAddress address =
+      ObjDisp(device)->GetBufferDeviceAddressKHR(Unwrap(device), &addrInfo);
+
+  return {
+      address,
+      address + record->memSize,
+      address + oobSize,
+      record->GetResourceID(),
+  };
+}
+
+void WrappedVulkan::TrackReplayBufferAddress(VkDevice device, VkBuffer buffer,
+                                             VkDeviceMemory memory, VkDeviceSize memoryOffset)
+{
+  const VkBufferDeviceAddressInfo addrInfo = {
+      VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+      NULL,
+      Unwrap(buffer),
+  };
+
+  RDCCOMPILE_ASSERT(VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO ==
+                        VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_EXT,
+                    "KHR and EXT buffer_device_address should be interchangeable here.");
+
+  VkDeviceAddress address = 0;
+  if(GetExtensions(GetRecord(device)).ext_KHR_buffer_device_address)
+    address = ObjDisp(device)->GetBufferDeviceAddressKHR(Unwrap(device), &addrInfo);
+  else if(GetExtensions(GetRecord(device)).ext_EXT_buffer_device_address)
+    address = ObjDisp(device)->GetBufferDeviceAddressEXT(Unwrap(device), &addrInfo);
+
+  VulkanCreationInfo::Buffer &bufInfo = m_CreationInfo.m_Buffer[GetResID(buffer)];
+
+  bufInfo.gpuAddress = address;
+  VkDeviceSize bufSize = bufInfo.size;
+
+  VkDeviceSize oobSize = bufSize;
+  if(memory != VK_NULL_HANDLE)
+  {
+    oobSize = m_CreationInfo.m_Memory[GetResID(memory)].allocSize - memoryOffset;
+  }
+
+  m_AddressTracker.AddTo({
+      address,
+      address + bufSize,
+      address + oobSize,
+      GetResID(buffer),
+  });
+}
+
+void WrappedVulkan::TrackBufferAddress(VkDevice device, VkBuffer buffer)
+{
+  const GPUAddressRange rng = CreateAddressRange(device, buffer);
+  if(rng.id == ResourceId())
+    return;
+
+  m_AddressTracker.AddTo(rng);
+}
+
+void WrappedVulkan::UntrackBufferAddress(VkDevice device, VkBuffer buffer)
+{
+  const GPUAddressRange rng = CreateAddressRange(device, buffer);
+  if(rng.id == ResourceId())
+    return;
+
+  m_AddressTracker.RemoveFrom(rng.start, rng.id);
+}
+
+ResourceId WrappedVulkan::GetResIDFromAddr(GPUAddressRange::Address addr)
+{
+  ResourceId id;
+  uint64_t offs;
+  m_AddressTracker.GetResIDFromAddr(addr, id, offs);
+
+  return id;
+}
+
+void WrappedVulkan::GetResIDFromAddr(GPUAddressRange::Address addr, ResourceId &id, uint64_t &offs)
+{
+  m_AddressTracker.GetResIDFromAddr(addr, id, offs);
+}
 
 void WrappedVulkan::ChooseMemoryIndices()
 {
@@ -281,7 +389,7 @@ MemoryAllocation WrappedVulkan::AllocateMemoryForResource(bool buffer, VkMemoryR
     }
 
     uint64_t initStateLimitMB = RenderDoc::Inst().GetCaptureOptions().softMemoryLimit;
-    if(initStateLimitMB > 0)
+    if(initStateLimitMB > 0 && initStateLimitMB < 512)
       allocSize = RDCMAX(initStateLimitMB, allocSize);
 
     uint32_t memoryTypeIndex = 0;
@@ -328,10 +436,15 @@ MemoryAllocation WrappedVulkan::AllocateMemoryForResource(bool buffer, VkMemoryR
     };
     VkMemoryAllocateInfo info = {
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        AccelerationStructures() ? &flagsInfo : NULL,
+        (DescriptorBuffers() || AccelerationStructures()) ? &flagsInfo : NULL,
         allocSize * 1024 * 1024,
         memoryTypeIndex,
     };
+
+    // buffers will be created with capture/replay so we need to make the memory capture/replay
+    // unconditionally too
+    if(DescriptorBuffers())
+      flagsInfo.flags |= VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
 
     if(ret.size > info.allocationSize)
     {
@@ -373,15 +486,18 @@ MemoryAllocation WrappedVulkan::AllocateMemoryForResource(bool buffer, VkMemoryR
 
     // do the actual allocation
     VkResult vkr = ObjDisp(d)->AllocateMemory(Unwrap(d), &info, NULL, &chunk.mem);
-    CheckVkResult(vkr);
+    CHECK_VKR(this, vkr);
 
     ret.offs = 0;
     ret.mem = VK_NULL_HANDLE;
 
     if(vkr != VK_SUCCESS)
+    {
+      RDCERR("Failed allocating internal memory: %s", ToStr(vkr).c_str());
       return ret;
+    }
 
-    GetResourceManager()->WrapResource(Unwrap(d), chunk.mem);
+    GetResourceManager()->WrapResource(ResourceId(), Unwrap(d), chunk.mem);
 
     // push the new chunk
     blockList.push_back(chunk);
@@ -451,12 +567,19 @@ void WrappedVulkan::FreeAllMemory(MemoryScope scope)
   rdcarray<MemoryAllocation> allocs;
   allocs.swap(allocList);
 
-  m_MemoryFreeThread = Threading::CreateThread([this, d, allocs]() {
-    for(const MemoryAllocation &alloc : allocs)
-    {
-      ObjDisp(d)->FreeMemory(Unwrap(d), Unwrap(alloc.mem), NULL);
-      GetResourceManager()->ReleaseWrappedResource(alloc.mem);
-    }
+  rdcarray<VkDeviceMemory> mems;
+  mems.reserve(allocs.size());
+
+  // clean up resource manager book-keeping as this is not thread safe and is fast anyway
+  for(const MemoryAllocation &alloc : allocs)
+  {
+    mems.push_back(Unwrap(alloc.mem));
+    GetResourceManager()->ReleaseWrappedResource(alloc.mem);
+  }
+
+  m_MemoryFreeThread = Threading::CreateThread([d, mems]() {
+    for(VkDeviceMemory mem : mems)
+      ObjDisp(d)->FreeMemory(Unwrap(d), mem, NULL);
   });
 }
 

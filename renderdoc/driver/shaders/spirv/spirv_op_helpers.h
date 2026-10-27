@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,29 +25,13 @@
 /******************************************************************************
  * Generated from Khronos SPIR-V machine-readable JSON grammar.
  *
- * Copyright (c) 2014-2024 The Khronos Group Inc.
+ * Copyright: 2014-2024 The Khronos Group Inc.
+ * License: MIT
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and/or associated documentation files (the "Materials"),
- * to deal in the Materials without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Materials, and to permit persons to whom the
- * Materials are furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Materials.
- *
- * MODIFICATIONS TO THIS FILE MAY MEAN IT NO LONGER ACCURATELY REFLECTS KHRONOS
- * STANDARDS. THE UNMODIFIED, NORMATIVE VERSIONS OF KHRONOS SPECIFICATIONS AND
- * HEADER INFORMATION ARE LOCATED AT https://www.khronos.org/registry/
- *
- * THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM,OUT OF OR IN CONNECTION WITH THE MATERIALS OR THE USE OR OTHER DEALINGS
- * IN THE MATERIALS.
+ * MODIFICATIONS TO THIS FILE MAY MEAN IT NO LONGER ACCURATELY REFLECTS
+ * KHRONOS STANDARDS. THE UNMODIFIED, NORMATIVE VERSIONS OF KHRONOS
+ * SPECIFICATIONS AND HEADER INFORMATION ARE LOCATED AT
+ * https://www.khronos.org/registry/
  ******************************************************************************/
 
 #pragma once
@@ -86,6 +70,16 @@ inline uint32_t DecodeParam(const ConstIter &it, uint32_t &word)
   if(word >= it.size()) return 0;
   
   uint32_t ret = it.word(word);
+  word += 1;
+  return ret;
+}
+
+template<>
+inline Capability DecodeParam(const ConstIter &it, uint32_t &word)
+{
+  if(word >= it.size()) return Capability::Invalid;
+  
+  Capability ret = Capability(word);
   word += 1;
   return ret;
 }
@@ -341,49 +335,54 @@ inline LoopControlAndParamDatas DecodeParam(const ConstIter &it, uint32_t &word)
     ret.partialCount = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::InitiationIntervalINTEL)
+  if(ret.flags & LoopControl::InitiationIntervalALTERA)
   {
-    ret.initiationIntervalINTEL = (uint32_t)it.word(word);
+    ret.initiationIntervalALTERA = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::MaxConcurrencyINTEL)
+  if(ret.flags & LoopControl::MaxConcurrencyALTERA)
   {
-    ret.maxConcurrencyINTEL = (uint32_t)it.word(word);
+    ret.maxConcurrencyALTERA = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::DependencyArrayINTEL)
+  if(ret.flags & LoopControl::DependencyArrayALTERA)
   {
-    ret.dependencyArrayINTEL = (uint32_t)it.word(word);
+    ret.dependencyArrayALTERA = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::PipelineEnableINTEL)
+  if(ret.flags & LoopControl::PipelineEnableALTERA)
   {
-    ret.pipelineEnableINTEL = (uint32_t)it.word(word);
+    ret.pipelineEnableALTERA = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::LoopCoalesceINTEL)
+  if(ret.flags & LoopControl::LoopCoalesceALTERA)
   {
-    ret.loopCoalesceINTEL = (uint32_t)it.word(word);
+    ret.loopCoalesceALTERA = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::MaxInterleavingINTEL)
+  if(ret.flags & LoopControl::MaxInterleavingALTERA)
   {
-    ret.maxInterleavingINTEL = (uint32_t)it.word(word);
+    ret.maxInterleavingALTERA = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::SpeculatedIterationsINTEL)
+  if(ret.flags & LoopControl::SpeculatedIterationsALTERA)
   {
-    ret.speculatedIterationsINTEL = (uint32_t)it.word(word);
+    ret.speculatedIterationsALTERA = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::LoopCountINTEL)
+  if(ret.flags & LoopControl::LoopCountALTERA)
   {
-    ret.loopCountINTEL = (uint32_t)it.word(word);
+    ret.loopCountALTERA = (uint32_t)it.word(word);
     word += 1;
   }
-  if(ret.flags & LoopControl::MaxReinvocationDelayINTEL)
+  if(ret.flags & LoopControl::MaxReinvocationDelayALTERA)
   {
-    ret.maxReinvocationDelayINTEL = (uint32_t)it.word(word);
+    ret.maxReinvocationDelayALTERA = (uint32_t)it.word(word);
+    word += 1;
+  }
+  if(ret.flags & LoopControl::MultipleWaitQueuesQCOM)
+  {
+    ret.multipleWaitQueuesQCOM = (uint32_t)it.word(word);
     word += 1;
   }
   return ret;
@@ -416,41 +415,45 @@ inline void EncodeParam(rdcarray<uint32_t> &words, const LoopControlAndParamData
   {
     words.push_back((uint32_t)param.partialCount);
   }
-  if(param.flags & LoopControl::InitiationIntervalINTEL)
+  if(param.flags & LoopControl::InitiationIntervalALTERA)
   {
-    words.push_back((uint32_t)param.initiationIntervalINTEL);
+    words.push_back((uint32_t)param.initiationIntervalALTERA);
   }
-  if(param.flags & LoopControl::MaxConcurrencyINTEL)
+  if(param.flags & LoopControl::MaxConcurrencyALTERA)
   {
-    words.push_back((uint32_t)param.maxConcurrencyINTEL);
+    words.push_back((uint32_t)param.maxConcurrencyALTERA);
   }
-  if(param.flags & LoopControl::DependencyArrayINTEL)
+  if(param.flags & LoopControl::DependencyArrayALTERA)
   {
-    words.push_back((uint32_t)param.dependencyArrayINTEL);
+    words.push_back((uint32_t)param.dependencyArrayALTERA);
   }
-  if(param.flags & LoopControl::PipelineEnableINTEL)
+  if(param.flags & LoopControl::PipelineEnableALTERA)
   {
-    words.push_back((uint32_t)param.pipelineEnableINTEL);
+    words.push_back((uint32_t)param.pipelineEnableALTERA);
   }
-  if(param.flags & LoopControl::LoopCoalesceINTEL)
+  if(param.flags & LoopControl::LoopCoalesceALTERA)
   {
-    words.push_back((uint32_t)param.loopCoalesceINTEL);
+    words.push_back((uint32_t)param.loopCoalesceALTERA);
   }
-  if(param.flags & LoopControl::MaxInterleavingINTEL)
+  if(param.flags & LoopControl::MaxInterleavingALTERA)
   {
-    words.push_back((uint32_t)param.maxInterleavingINTEL);
+    words.push_back((uint32_t)param.maxInterleavingALTERA);
   }
-  if(param.flags & LoopControl::SpeculatedIterationsINTEL)
+  if(param.flags & LoopControl::SpeculatedIterationsALTERA)
   {
-    words.push_back((uint32_t)param.speculatedIterationsINTEL);
+    words.push_back((uint32_t)param.speculatedIterationsALTERA);
   }
-  if(param.flags & LoopControl::LoopCountINTEL)
+  if(param.flags & LoopControl::LoopCountALTERA)
   {
-    words.push_back((uint32_t)param.loopCountINTEL);
+    words.push_back((uint32_t)param.loopCountALTERA);
   }
-  if(param.flags & LoopControl::MaxReinvocationDelayINTEL)
+  if(param.flags & LoopControl::MaxReinvocationDelayALTERA)
   {
-    words.push_back((uint32_t)param.maxReinvocationDelayINTEL);
+    words.push_back((uint32_t)param.maxReinvocationDelayALTERA);
+  }
+  if(param.flags & LoopControl::MultipleWaitQueuesQCOM)
+  {
+    words.push_back((uint32_t)param.multipleWaitQueuesQCOM);
   }
 }
 
@@ -464,23 +467,22 @@ inline uint16_t ExtraWordCount(const LoopControl loopControl)
     case LoopControl::IterationMultiple: return 1;
     case LoopControl::PeelCount: return 1;
     case LoopControl::PartialCount: return 1;
-    case LoopControl::InitiationIntervalINTEL: return 1;
-    case LoopControl::MaxConcurrencyINTEL: return 1;
-    case LoopControl::DependencyArrayINTEL: return 1;
-    case LoopControl::PipelineEnableINTEL: return 1;
-    case LoopControl::LoopCoalesceINTEL: return 1;
-    case LoopControl::MaxInterleavingINTEL: return 1;
-    case LoopControl::SpeculatedIterationsINTEL: return 1;
-    case LoopControl::LoopCountINTEL: return 1;
-    case LoopControl::MaxReinvocationDelayINTEL: return 1;
+    case LoopControl::InitiationIntervalALTERA: return 1;
+    case LoopControl::MaxConcurrencyALTERA: return 1;
+    case LoopControl::DependencyArrayALTERA: return 1;
+    case LoopControl::PipelineEnableALTERA: return 1;
+    case LoopControl::LoopCoalesceALTERA: return 1;
+    case LoopControl::MaxInterleavingALTERA: return 1;
+    case LoopControl::SpeculatedIterationsALTERA: return 1;
+    case LoopControl::LoopCountALTERA: return 1;
+    case LoopControl::MaxReinvocationDelayALTERA: return 1;
+    case LoopControl::MultipleWaitQueuesQCOM: return 1;
     default: break;
   }
   return 0;
 }
 
 inline uint16_t OptionalWordCount(const FunctionControl val) { return val != FunctionControl::None ? 1 : 0; }
-
-inline uint16_t OptionalWordCount(const MemorySemantics val) { return val != MemorySemantics::None ? 1 : 0; }
 
 template<>
 inline MemoryAccessAndParamDatas DecodeParam(const ConstIter &it, uint32_t &word)
@@ -776,6 +778,34 @@ struct ExecutionModeParam<ExecutionMode::RoundingModeRTZ>
 };
 
 template<>
+struct ExecutionModeParam<ExecutionMode::TileShadingRateQCOM>
+{
+  TileShadingRateQCOMParams tileShadingRateQCOM;
+  ExecutionModeParam(uint32_t xrate, uint32_t yrate, uint32_t zrate) {  tileShadingRateQCOM.xrate = xrate; tileShadingRateQCOM.yrate = yrate; tileShadingRateQCOM.zrate = zrate; }
+  operator ExecutionModeAndParamData()
+  {
+    ExecutionModeAndParamData ret(ExecutionMode::TileShadingRateQCOM);
+    ret.tileShadingRateQCOM.xrate = tileShadingRateQCOM.xrate;
+    ret.tileShadingRateQCOM.yrate = tileShadingRateQCOM.yrate;
+    ret.tileShadingRateQCOM.zrate = tileShadingRateQCOM.zrate;
+    return ret;
+  }
+};
+
+template<>
+struct ExecutionModeParam<ExecutionMode::IsApiEntryAMDX>
+{
+  Id isApiEntryAMDX;
+  ExecutionModeParam(Id isApiEntryAMDXParam) {  isApiEntryAMDX = isApiEntryAMDXParam; }
+  operator ExecutionModeAndParamData()
+  {
+    ExecutionModeAndParamData ret(ExecutionMode::IsApiEntryAMDX);
+    ret.isApiEntryAMDX = isApiEntryAMDX;
+    return ret;
+  }
+};
+
+template<>
 struct ExecutionModeParam<ExecutionMode::MaxNodeRecursionAMDX>
 {
   Id maxNodeRecursionAMDX;
@@ -827,6 +857,20 @@ struct ExecutionModeParam<ExecutionMode::MaxNumWorkgroupsAMDX>
     ret.maxNumWorkgroupsAMDX.xsize = maxNumWorkgroupsAMDX.xsize;
     ret.maxNumWorkgroupsAMDX.ysize = maxNumWorkgroupsAMDX.ysize;
     ret.maxNumWorkgroupsAMDX.zsize = maxNumWorkgroupsAMDX.zsize;
+    return ret;
+  }
+};
+
+template<>
+struct ExecutionModeParam<ExecutionMode::SharesInputWithAMDX>
+{
+  SharesInputWithAMDXParams sharesInputWithAMDX;
+  ExecutionModeParam(Id nodeName, Id shaderIndex) {  sharesInputWithAMDX.nodeName = nodeName; sharesInputWithAMDX.shaderIndex = shaderIndex; }
+  operator ExecutionModeAndParamData()
+  {
+    ExecutionModeAndParamData ret(ExecutionMode::SharesInputWithAMDX);
+    ret.sharesInputWithAMDX.nodeName = sharesInputWithAMDX.nodeName;
+    ret.sharesInputWithAMDX.shaderIndex = sharesInputWithAMDX.shaderIndex;
     return ret;
   }
 };
@@ -973,6 +1017,19 @@ struct ExecutionModeParam<ExecutionMode::FPFastMathDefault>
     ExecutionModeAndParamData ret(ExecutionMode::FPFastMathDefault);
     ret.fPFastMathDefault.targetType = fPFastMathDefault.targetType;
     ret.fPFastMathDefault.fastMathMode = fPFastMathDefault.fastMathMode;
+    return ret;
+  }
+};
+
+template<>
+struct ExecutionModeParam<ExecutionMode::OpacityMicromapIdKHR>
+{
+  Id opacityMicromapIdKHR;
+  ExecutionModeParam(Id opacityMicromapIdKHRParam) {  opacityMicromapIdKHR = opacityMicromapIdKHRParam; }
+  operator ExecutionModeAndParamData()
+  {
+    ExecutionModeAndParamData ret(ExecutionMode::OpacityMicromapIdKHR);
+    ret.opacityMicromapIdKHR = opacityMicromapIdKHR;
     return ret;
   }
 };
@@ -1134,6 +1191,16 @@ inline ExecutionModeAndParamData DecodeParam(const ConstIter &it, uint32_t &word
       ret.roundingModeRTZ = (uint32_t)it.word(word);
       word += 1;
       break;
+    case ExecutionMode::TileShadingRateQCOM:
+      ret.tileShadingRateQCOM.xrate = (uint32_t)it.word(word+0);
+      ret.tileShadingRateQCOM.yrate = (uint32_t)it.word(word+1);
+      ret.tileShadingRateQCOM.zrate = (uint32_t)it.word(word+2);
+      word += 3;
+      break;
+    case ExecutionMode::IsApiEntryAMDX:
+      ret.isApiEntryAMDX = Id::fromWord(it.word(word));
+      word += 1;
+      break;
     case ExecutionMode::MaxNodeRecursionAMDX:
       ret.maxNodeRecursionAMDX = Id::fromWord(it.word(word));
       word += 1;
@@ -1153,6 +1220,11 @@ inline ExecutionModeAndParamData DecodeParam(const ConstIter &it, uint32_t &word
       ret.maxNumWorkgroupsAMDX.ysize = Id::fromWord(it.word(word+1));
       ret.maxNumWorkgroupsAMDX.zsize = Id::fromWord(it.word(word+2));
       word += 3;
+      break;
+    case ExecutionMode::SharesInputWithAMDX:
+      ret.sharesInputWithAMDX.nodeName = Id::fromWord(it.word(word+0));
+      ret.sharesInputWithAMDX.shaderIndex = Id::fromWord(it.word(word+1));
+      word += 2;
       break;
     case ExecutionMode::OutputPrimitivesEXT:
       ret.outputPrimitivesEXT = (uint32_t)it.word(word);
@@ -1200,6 +1272,10 @@ inline ExecutionModeAndParamData DecodeParam(const ConstIter &it, uint32_t &word
       ret.fPFastMathDefault.targetType = Id::fromWord(it.word(word+0));
       ret.fPFastMathDefault.fastMathMode = Id::fromWord(it.word(word+1));
       word += 2;
+      break;
+    case ExecutionMode::OpacityMicromapIdKHR:
+      ret.opacityMicromapIdKHR = Id::fromWord(it.word(word));
+      word += 1;
       break;
     case ExecutionMode::StreamingInterfaceINTEL:
       ret.streamingInterfaceINTEL = (uint32_t)it.word(word);
@@ -1288,6 +1364,14 @@ inline void EncodeParam(rdcarray<uint32_t> &words, const ExecutionModeAndParamDa
     case ExecutionMode::RoundingModeRTZ:
       words.push_back((uint32_t)param.roundingModeRTZ);
       break;
+    case ExecutionMode::TileShadingRateQCOM:
+      words.push_back((uint32_t)param.tileShadingRateQCOM.xrate);
+      words.push_back((uint32_t)param.tileShadingRateQCOM.yrate);
+      words.push_back((uint32_t)param.tileShadingRateQCOM.zrate);
+      break;
+    case ExecutionMode::IsApiEntryAMDX:
+      words.push_back(param.isApiEntryAMDX.value());
+      break;
     case ExecutionMode::MaxNodeRecursionAMDX:
       words.push_back(param.maxNodeRecursionAMDX.value());
       break;
@@ -1303,6 +1387,10 @@ inline void EncodeParam(rdcarray<uint32_t> &words, const ExecutionModeAndParamDa
       words.push_back(param.maxNumWorkgroupsAMDX.xsize.value());
       words.push_back(param.maxNumWorkgroupsAMDX.ysize.value());
       words.push_back(param.maxNumWorkgroupsAMDX.zsize.value());
+      break;
+    case ExecutionMode::SharesInputWithAMDX:
+      words.push_back(param.sharesInputWithAMDX.nodeName.value());
+      words.push_back(param.sharesInputWithAMDX.shaderIndex.value());
       break;
     case ExecutionMode::OutputPrimitivesEXT:
       words.push_back((uint32_t)param.outputPrimitivesEXT);
@@ -1339,6 +1427,9 @@ inline void EncodeParam(rdcarray<uint32_t> &words, const ExecutionModeAndParamDa
     case ExecutionMode::FPFastMathDefault:
       words.push_back(param.fPFastMathDefault.targetType.value());
       words.push_back(param.fPFastMathDefault.fastMathMode.value());
+      break;
+    case ExecutionMode::OpacityMicromapIdKHR:
+      words.push_back(param.opacityMicromapIdKHR.value());
       break;
     case ExecutionMode::StreamingInterfaceINTEL:
       words.push_back((uint32_t)param.streamingInterfaceINTEL);
@@ -1381,10 +1472,13 @@ inline uint16_t ExtraWordCount(const ExecutionMode executionMode)
     case ExecutionMode::SignedZeroInfNanPreserve: return 1;
     case ExecutionMode::RoundingModeRTE: return 1;
     case ExecutionMode::RoundingModeRTZ: return 1;
+    case ExecutionMode::TileShadingRateQCOM: return 3;
+    case ExecutionMode::IsApiEntryAMDX: return 1;
     case ExecutionMode::MaxNodeRecursionAMDX: return 1;
     case ExecutionMode::StaticNumWorkgroupsAMDX: return 3;
     case ExecutionMode::ShaderIndexAMDX: return 1;
     case ExecutionMode::MaxNumWorkgroupsAMDX: return 3;
+    case ExecutionMode::SharesInputWithAMDX: return 2;
     case ExecutionMode::OutputPrimitivesEXT: return 1;
     case ExecutionMode::SharedLocalMemorySizeINTEL: return 1;
     case ExecutionMode::RoundingModeRTPINTEL: return 1;
@@ -1396,6 +1490,7 @@ inline uint16_t ExtraWordCount(const ExecutionMode executionMode)
     case ExecutionMode::NumSIMDWorkitemsINTEL: return 1;
     case ExecutionMode::SchedulerTargetFmaxMhzINTEL: return 1;
     case ExecutionMode::FPFastMathDefault: return 2;
+    case ExecutionMode::OpacityMicromapIdKHR: return 1;
     case ExecutionMode::StreamingInterfaceINTEL: return 1;
     case ExecutionMode::RegisterMapInterfaceINTEL: return 1;
     case ExecutionMode::NamedBarrierCountINTEL: return 1;
@@ -1754,6 +1849,71 @@ struct DecorationParam<Decoration::NodeMaxPayloadsAMDX>
 };
 
 template<>
+struct DecorationParam<Decoration::PayloadNodeNameAMDX>
+{
+  Id payloadNodeNameAMDX;
+  DecorationParam(Id payloadNodeNameAMDXParam) {  payloadNodeNameAMDX = payloadNodeNameAMDXParam; }
+  operator DecorationAndParamData()
+  {
+    DecorationAndParamData ret(Decoration::PayloadNodeNameAMDX);
+    ret.payloadNodeNameAMDX = payloadNodeNameAMDX;
+    return ret;
+  }
+};
+
+template<>
+struct DecorationParam<Decoration::PayloadNodeBaseIndexAMDX>
+{
+  Id payloadNodeBaseIndexAMDX;
+  DecorationParam(Id payloadNodeBaseIndexAMDXParam) {  payloadNodeBaseIndexAMDX = payloadNodeBaseIndexAMDXParam; }
+  operator DecorationAndParamData()
+  {
+    DecorationAndParamData ret(Decoration::PayloadNodeBaseIndexAMDX);
+    ret.payloadNodeBaseIndexAMDX = payloadNodeBaseIndexAMDX;
+    return ret;
+  }
+};
+
+template<>
+struct DecorationParam<Decoration::PayloadNodeArraySizeAMDX>
+{
+  Id payloadNodeArraySizeAMDX;
+  DecorationParam(Id payloadNodeArraySizeAMDXParam) {  payloadNodeArraySizeAMDX = payloadNodeArraySizeAMDXParam; }
+  operator DecorationAndParamData()
+  {
+    DecorationAndParamData ret(Decoration::PayloadNodeArraySizeAMDX);
+    ret.payloadNodeArraySizeAMDX = payloadNodeArraySizeAMDX;
+    return ret;
+  }
+};
+
+template<>
+struct DecorationParam<Decoration::ArrayStrideIdEXT>
+{
+  Id arrayStrideIdEXT;
+  DecorationParam(Id arrayStrideIdEXTParam) {  arrayStrideIdEXT = arrayStrideIdEXTParam; }
+  operator DecorationAndParamData()
+  {
+    DecorationAndParamData ret(Decoration::ArrayStrideIdEXT);
+    ret.arrayStrideIdEXT = arrayStrideIdEXT;
+    return ret;
+  }
+};
+
+template<>
+struct DecorationParam<Decoration::OffsetIdEXT>
+{
+  Id offsetIdEXT;
+  DecorationParam(Id offsetIdEXTParam) {  offsetIdEXT = offsetIdEXTParam; }
+  operator DecorationAndParamData()
+  {
+    DecorationAndParamData ret(Decoration::OffsetIdEXT);
+    ret.offsetIdEXT = offsetIdEXT;
+    return ret;
+  }
+};
+
+template<>
 struct DecorationParam<Decoration::SecondaryViewportRelativeNV>
 {
   uint32_t secondaryViewportRelativeNV;
@@ -1762,6 +1922,32 @@ struct DecorationParam<Decoration::SecondaryViewportRelativeNV>
   {
     DecorationAndParamData ret(Decoration::SecondaryViewportRelativeNV);
     ret.secondaryViewportRelativeNV = secondaryViewportRelativeNV;
+    return ret;
+  }
+};
+
+template<>
+struct DecorationParam<Decoration::MemberOffsetNV>
+{
+  uint32_t memberOffsetNV;
+  DecorationParam(uint32_t memberOffsetNVParam) {  memberOffsetNV = memberOffsetNVParam; }
+  operator DecorationAndParamData()
+  {
+    DecorationAndParamData ret(Decoration::MemberOffsetNV);
+    ret.memberOffsetNV = memberOffsetNV;
+    return ret;
+  }
+};
+
+template<>
+struct DecorationParam<Decoration::BankNV>
+{
+  uint32_t bankNV;
+  DecorationParam(uint32_t bankNVParam) {  bankNV = bankNVParam; }
+  operator DecorationAndParamData()
+  {
+    DecorationAndParamData ret(Decoration::BankNV);
+    ret.bankNV = bankNV;
     return ret;
   }
 };
@@ -1847,145 +2033,145 @@ struct DecorationParam<Decoration::FunctionDenormModeINTEL>
 };
 
 template<>
-struct DecorationParam<Decoration::NumbanksINTEL>
+struct DecorationParam<Decoration::NumbanksALTERA>
 {
-  uint32_t numbanksINTEL;
-  DecorationParam(uint32_t numbanksINTELParam) {  numbanksINTEL = numbanksINTELParam; }
+  uint32_t numbanksALTERA;
+  DecorationParam(uint32_t numbanksALTERAParam) {  numbanksALTERA = numbanksALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::NumbanksINTEL);
-    ret.numbanksINTEL = numbanksINTEL;
+    DecorationAndParamData ret(Decoration::NumbanksALTERA);
+    ret.numbanksALTERA = numbanksALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::BankwidthINTEL>
+struct DecorationParam<Decoration::BankwidthALTERA>
 {
-  uint32_t bankwidthINTEL;
-  DecorationParam(uint32_t bankwidthINTELParam) {  bankwidthINTEL = bankwidthINTELParam; }
+  uint32_t bankwidthALTERA;
+  DecorationParam(uint32_t bankwidthALTERAParam) {  bankwidthALTERA = bankwidthALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::BankwidthINTEL);
-    ret.bankwidthINTEL = bankwidthINTEL;
+    DecorationAndParamData ret(Decoration::BankwidthALTERA);
+    ret.bankwidthALTERA = bankwidthALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MaxPrivateCopiesINTEL>
+struct DecorationParam<Decoration::MaxPrivateCopiesALTERA>
 {
-  uint32_t maxPrivateCopiesINTEL;
-  DecorationParam(uint32_t maxPrivateCopiesINTELParam) {  maxPrivateCopiesINTEL = maxPrivateCopiesINTELParam; }
+  uint32_t maxPrivateCopiesALTERA;
+  DecorationParam(uint32_t maxPrivateCopiesALTERAParam) {  maxPrivateCopiesALTERA = maxPrivateCopiesALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MaxPrivateCopiesINTEL);
-    ret.maxPrivateCopiesINTEL = maxPrivateCopiesINTEL;
+    DecorationAndParamData ret(Decoration::MaxPrivateCopiesALTERA);
+    ret.maxPrivateCopiesALTERA = maxPrivateCopiesALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MaxReplicatesINTEL>
+struct DecorationParam<Decoration::MaxReplicatesALTERA>
 {
-  uint32_t maxReplicatesINTEL;
-  DecorationParam(uint32_t maxReplicatesINTELParam) {  maxReplicatesINTEL = maxReplicatesINTELParam; }
+  uint32_t maxReplicatesALTERA;
+  DecorationParam(uint32_t maxReplicatesALTERAParam) {  maxReplicatesALTERA = maxReplicatesALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MaxReplicatesINTEL);
-    ret.maxReplicatesINTEL = maxReplicatesINTEL;
+    DecorationAndParamData ret(Decoration::MaxReplicatesALTERA);
+    ret.maxReplicatesALTERA = maxReplicatesALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::BankBitsINTEL>
+struct DecorationParam<Decoration::BankBitsALTERA>
 {
-  uint32_t bankBitsINTEL;
-  DecorationParam(uint32_t bankBitsINTELParam) {  bankBitsINTEL = bankBitsINTELParam; }
+  uint32_t bankBitsALTERA;
+  DecorationParam(uint32_t bankBitsALTERAParam) {  bankBitsALTERA = bankBitsALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::BankBitsINTEL);
-    ret.bankBitsINTEL = bankBitsINTEL;
+    DecorationAndParamData ret(Decoration::BankBitsALTERA);
+    ret.bankBitsALTERA = bankBitsALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::ForcePow2DepthINTEL>
+struct DecorationParam<Decoration::ForcePow2DepthALTERA>
 {
-  uint32_t forcePow2DepthINTEL;
-  DecorationParam(uint32_t forcePow2DepthINTELParam) {  forcePow2DepthINTEL = forcePow2DepthINTELParam; }
+  uint32_t forcePow2DepthALTERA;
+  DecorationParam(uint32_t forcePow2DepthALTERAParam) {  forcePow2DepthALTERA = forcePow2DepthALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::ForcePow2DepthINTEL);
-    ret.forcePow2DepthINTEL = forcePow2DepthINTEL;
+    DecorationAndParamData ret(Decoration::ForcePow2DepthALTERA);
+    ret.forcePow2DepthALTERA = forcePow2DepthALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::StridesizeINTEL>
+struct DecorationParam<Decoration::StridesizeALTERA>
 {
-  uint32_t stridesizeINTEL;
-  DecorationParam(uint32_t stridesizeINTELParam) {  stridesizeINTEL = stridesizeINTELParam; }
+  uint32_t stridesizeALTERA;
+  DecorationParam(uint32_t stridesizeALTERAParam) {  stridesizeALTERA = stridesizeALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::StridesizeINTEL);
-    ret.stridesizeINTEL = stridesizeINTEL;
+    DecorationAndParamData ret(Decoration::StridesizeALTERA);
+    ret.stridesizeALTERA = stridesizeALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::WordsizeINTEL>
+struct DecorationParam<Decoration::WordsizeALTERA>
 {
-  uint32_t wordsizeINTEL;
-  DecorationParam(uint32_t wordsizeINTELParam) {  wordsizeINTEL = wordsizeINTELParam; }
+  uint32_t wordsizeALTERA;
+  DecorationParam(uint32_t wordsizeALTERAParam) {  wordsizeALTERA = wordsizeALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::WordsizeINTEL);
-    ret.wordsizeINTEL = wordsizeINTEL;
+    DecorationAndParamData ret(Decoration::WordsizeALTERA);
+    ret.wordsizeALTERA = wordsizeALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::CacheSizeINTEL>
+struct DecorationParam<Decoration::CacheSizeALTERA>
 {
-  uint32_t cacheSizeINTEL;
-  DecorationParam(uint32_t cacheSizeINTELParam) {  cacheSizeINTEL = cacheSizeINTELParam; }
+  uint32_t cacheSizeALTERA;
+  DecorationParam(uint32_t cacheSizeALTERAParam) {  cacheSizeALTERA = cacheSizeALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::CacheSizeINTEL);
-    ret.cacheSizeINTEL = cacheSizeINTEL;
+    DecorationAndParamData ret(Decoration::CacheSizeALTERA);
+    ret.cacheSizeALTERA = cacheSizeALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::PrefetchINTEL>
+struct DecorationParam<Decoration::PrefetchALTERA>
 {
-  uint32_t prefetchINTEL;
-  DecorationParam(uint32_t prefetchINTELParam) {  prefetchINTEL = prefetchINTELParam; }
+  uint32_t prefetchALTERA;
+  DecorationParam(uint32_t prefetchALTERAParam) {  prefetchALTERA = prefetchALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::PrefetchINTEL);
-    ret.prefetchINTEL = prefetchINTEL;
+    DecorationAndParamData ret(Decoration::PrefetchALTERA);
+    ret.prefetchALTERA = prefetchALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MathOpDSPModeINTEL>
+struct DecorationParam<Decoration::MathOpDSPModeALTERA>
 {
-  MathOpDSPModeINTELParams mathOpDSPModeINTEL;
-  DecorationParam(uint32_t mode, uint32_t propagate) {  mathOpDSPModeINTEL.mode = mode; mathOpDSPModeINTEL.propagate = propagate; }
+  MathOpDSPModeALTERAParams mathOpDSPModeALTERA;
+  DecorationParam(uint32_t mode, uint32_t propagate) {  mathOpDSPModeALTERA.mode = mode; mathOpDSPModeALTERA.propagate = propagate; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MathOpDSPModeINTEL);
-    ret.mathOpDSPModeINTEL.mode = mathOpDSPModeINTEL.mode;
-    ret.mathOpDSPModeINTEL.propagate = mathOpDSPModeINTEL.propagate;
+    DecorationAndParamData ret(Decoration::MathOpDSPModeALTERA);
+    ret.mathOpDSPModeALTERA.mode = mathOpDSPModeALTERA.mode;
+    ret.mathOpDSPModeALTERA.propagate = mathOpDSPModeALTERA.propagate;
     return ret;
   }
 };
@@ -2017,66 +2203,66 @@ struct DecorationParam<Decoration::NoAliasINTEL>
 };
 
 template<>
-struct DecorationParam<Decoration::InitiationIntervalINTEL>
+struct DecorationParam<Decoration::InitiationIntervalALTERA>
 {
-  uint32_t initiationIntervalINTEL;
-  DecorationParam(uint32_t initiationIntervalINTELParam) {  initiationIntervalINTEL = initiationIntervalINTELParam; }
+  uint32_t initiationIntervalALTERA;
+  DecorationParam(uint32_t initiationIntervalALTERAParam) {  initiationIntervalALTERA = initiationIntervalALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::InitiationIntervalINTEL);
-    ret.initiationIntervalINTEL = initiationIntervalINTEL;
+    DecorationAndParamData ret(Decoration::InitiationIntervalALTERA);
+    ret.initiationIntervalALTERA = initiationIntervalALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MaxConcurrencyINTEL>
+struct DecorationParam<Decoration::MaxConcurrencyALTERA>
 {
-  uint32_t maxConcurrencyINTEL;
-  DecorationParam(uint32_t maxConcurrencyINTELParam) {  maxConcurrencyINTEL = maxConcurrencyINTELParam; }
+  uint32_t maxConcurrencyALTERA;
+  DecorationParam(uint32_t maxConcurrencyALTERAParam) {  maxConcurrencyALTERA = maxConcurrencyALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MaxConcurrencyINTEL);
-    ret.maxConcurrencyINTEL = maxConcurrencyINTEL;
+    DecorationAndParamData ret(Decoration::MaxConcurrencyALTERA);
+    ret.maxConcurrencyALTERA = maxConcurrencyALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::PipelineEnableINTEL>
+struct DecorationParam<Decoration::PipelineEnableALTERA>
 {
-  uint32_t pipelineEnableINTEL;
-  DecorationParam(uint32_t pipelineEnableINTELParam) {  pipelineEnableINTEL = pipelineEnableINTELParam; }
+  uint32_t pipelineEnableALTERA;
+  DecorationParam(uint32_t pipelineEnableALTERAParam) {  pipelineEnableALTERA = pipelineEnableALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::PipelineEnableINTEL);
-    ret.pipelineEnableINTEL = pipelineEnableINTEL;
+    DecorationAndParamData ret(Decoration::PipelineEnableALTERA);
+    ret.pipelineEnableALTERA = pipelineEnableALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::BufferLocationINTEL>
+struct DecorationParam<Decoration::BufferLocationALTERA>
 {
-  uint32_t bufferLocationINTEL;
-  DecorationParam(uint32_t bufferLocationINTELParam) {  bufferLocationINTEL = bufferLocationINTELParam; }
+  uint32_t bufferLocationALTERA;
+  DecorationParam(uint32_t bufferLocationALTERAParam) {  bufferLocationALTERA = bufferLocationALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::BufferLocationINTEL);
-    ret.bufferLocationINTEL = bufferLocationINTEL;
+    DecorationAndParamData ret(Decoration::BufferLocationALTERA);
+    ret.bufferLocationALTERA = bufferLocationALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::IOPipeStorageINTEL>
+struct DecorationParam<Decoration::IOPipeStorageALTERA>
 {
-  uint32_t iOPipeStorageINTEL;
-  DecorationParam(uint32_t iOPipeStorageINTELParam) {  iOPipeStorageINTEL = iOPipeStorageINTELParam; }
+  uint32_t iOPipeStorageALTERA;
+  DecorationParam(uint32_t iOPipeStorageALTERAParam) {  iOPipeStorageALTERA = iOPipeStorageALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::IOPipeStorageINTEL);
-    ret.iOPipeStorageINTEL = iOPipeStorageINTEL;
+    DecorationAndParamData ret(Decoration::IOPipeStorageALTERA);
+    ret.iOPipeStorageALTERA = iOPipeStorageALTERA;
     return ret;
   }
 };
@@ -2109,133 +2295,146 @@ struct DecorationParam<Decoration::FPMaxErrorDecorationINTEL>
 };
 
 template<>
-struct DecorationParam<Decoration::LatencyControlLabelINTEL>
+struct DecorationParam<Decoration::LatencyControlLabelALTERA>
 {
-  uint32_t latencyControlLabelINTEL;
-  DecorationParam(uint32_t latencyControlLabelINTELParam) {  latencyControlLabelINTEL = latencyControlLabelINTELParam; }
+  uint32_t latencyControlLabelALTERA;
+  DecorationParam(uint32_t latencyControlLabelALTERAParam) {  latencyControlLabelALTERA = latencyControlLabelALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::LatencyControlLabelINTEL);
-    ret.latencyControlLabelINTEL = latencyControlLabelINTEL;
+    DecorationAndParamData ret(Decoration::LatencyControlLabelALTERA);
+    ret.latencyControlLabelALTERA = latencyControlLabelALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::LatencyControlConstraintINTEL>
+struct DecorationParam<Decoration::LatencyControlConstraintALTERA>
 {
-  LatencyControlConstraintINTELParams latencyControlConstraintINTEL;
-  DecorationParam(uint32_t relativeTo, uint32_t controlType, uint32_t relativeCycle) {  latencyControlConstraintINTEL.relativeTo = relativeTo; latencyControlConstraintINTEL.controlType = controlType; latencyControlConstraintINTEL.relativeCycle = relativeCycle; }
+  LatencyControlConstraintALTERAParams latencyControlConstraintALTERA;
+  DecorationParam(uint32_t relativeTo, uint32_t controlType, uint32_t relativeCycle) {  latencyControlConstraintALTERA.relativeTo = relativeTo; latencyControlConstraintALTERA.controlType = controlType; latencyControlConstraintALTERA.relativeCycle = relativeCycle; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::LatencyControlConstraintINTEL);
-    ret.latencyControlConstraintINTEL.relativeTo = latencyControlConstraintINTEL.relativeTo;
-    ret.latencyControlConstraintINTEL.controlType = latencyControlConstraintINTEL.controlType;
-    ret.latencyControlConstraintINTEL.relativeCycle = latencyControlConstraintINTEL.relativeCycle;
+    DecorationAndParamData ret(Decoration::LatencyControlConstraintALTERA);
+    ret.latencyControlConstraintALTERA.relativeTo = latencyControlConstraintALTERA.relativeTo;
+    ret.latencyControlConstraintALTERA.controlType = latencyControlConstraintALTERA.controlType;
+    ret.latencyControlConstraintALTERA.relativeCycle = latencyControlConstraintALTERA.relativeCycle;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MMHostInterfaceAddressWidthINTEL>
+struct DecorationParam<Decoration::MMHostInterfaceAddressWidthALTERA>
 {
-  uint32_t mMHostInterfaceAddressWidthINTEL;
-  DecorationParam(uint32_t mMHostInterfaceAddressWidthINTELParam) {  mMHostInterfaceAddressWidthINTEL = mMHostInterfaceAddressWidthINTELParam; }
+  uint32_t mMHostInterfaceAddressWidthALTERA;
+  DecorationParam(uint32_t mMHostInterfaceAddressWidthALTERAParam) {  mMHostInterfaceAddressWidthALTERA = mMHostInterfaceAddressWidthALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MMHostInterfaceAddressWidthINTEL);
-    ret.mMHostInterfaceAddressWidthINTEL = mMHostInterfaceAddressWidthINTEL;
+    DecorationAndParamData ret(Decoration::MMHostInterfaceAddressWidthALTERA);
+    ret.mMHostInterfaceAddressWidthALTERA = mMHostInterfaceAddressWidthALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MMHostInterfaceDataWidthINTEL>
+struct DecorationParam<Decoration::MMHostInterfaceDataWidthALTERA>
 {
-  uint32_t mMHostInterfaceDataWidthINTEL;
-  DecorationParam(uint32_t mMHostInterfaceDataWidthINTELParam) {  mMHostInterfaceDataWidthINTEL = mMHostInterfaceDataWidthINTELParam; }
+  uint32_t mMHostInterfaceDataWidthALTERA;
+  DecorationParam(uint32_t mMHostInterfaceDataWidthALTERAParam) {  mMHostInterfaceDataWidthALTERA = mMHostInterfaceDataWidthALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MMHostInterfaceDataWidthINTEL);
-    ret.mMHostInterfaceDataWidthINTEL = mMHostInterfaceDataWidthINTEL;
+    DecorationAndParamData ret(Decoration::MMHostInterfaceDataWidthALTERA);
+    ret.mMHostInterfaceDataWidthALTERA = mMHostInterfaceDataWidthALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MMHostInterfaceLatencyINTEL>
+struct DecorationParam<Decoration::MMHostInterfaceLatencyALTERA>
 {
-  uint32_t mMHostInterfaceLatencyINTEL;
-  DecorationParam(uint32_t mMHostInterfaceLatencyINTELParam) {  mMHostInterfaceLatencyINTEL = mMHostInterfaceLatencyINTELParam; }
+  uint32_t mMHostInterfaceLatencyALTERA;
+  DecorationParam(uint32_t mMHostInterfaceLatencyALTERAParam) {  mMHostInterfaceLatencyALTERA = mMHostInterfaceLatencyALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MMHostInterfaceLatencyINTEL);
-    ret.mMHostInterfaceLatencyINTEL = mMHostInterfaceLatencyINTEL;
+    DecorationAndParamData ret(Decoration::MMHostInterfaceLatencyALTERA);
+    ret.mMHostInterfaceLatencyALTERA = mMHostInterfaceLatencyALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MMHostInterfaceReadWriteModeINTEL>
+struct DecorationParam<Decoration::MMHostInterfaceReadWriteModeALTERA>
 {
-  AccessQualifier mMHostInterfaceReadWriteModeINTEL;
-  DecorationParam(AccessQualifier mMHostInterfaceReadWriteModeINTELParam) {  mMHostInterfaceReadWriteModeINTEL = mMHostInterfaceReadWriteModeINTELParam; }
+  AccessQualifier mMHostInterfaceReadWriteModeALTERA;
+  DecorationParam(AccessQualifier mMHostInterfaceReadWriteModeALTERAParam) {  mMHostInterfaceReadWriteModeALTERA = mMHostInterfaceReadWriteModeALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MMHostInterfaceReadWriteModeINTEL);
-    ret.mMHostInterfaceReadWriteModeINTEL = mMHostInterfaceReadWriteModeINTEL;
+    DecorationAndParamData ret(Decoration::MMHostInterfaceReadWriteModeALTERA);
+    ret.mMHostInterfaceReadWriteModeALTERA = mMHostInterfaceReadWriteModeALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MMHostInterfaceMaxBurstINTEL>
+struct DecorationParam<Decoration::MMHostInterfaceMaxBurstALTERA>
 {
-  uint32_t mMHostInterfaceMaxBurstINTEL;
-  DecorationParam(uint32_t mMHostInterfaceMaxBurstINTELParam) {  mMHostInterfaceMaxBurstINTEL = mMHostInterfaceMaxBurstINTELParam; }
+  uint32_t mMHostInterfaceMaxBurstALTERA;
+  DecorationParam(uint32_t mMHostInterfaceMaxBurstALTERAParam) {  mMHostInterfaceMaxBurstALTERA = mMHostInterfaceMaxBurstALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MMHostInterfaceMaxBurstINTEL);
-    ret.mMHostInterfaceMaxBurstINTEL = mMHostInterfaceMaxBurstINTEL;
+    DecorationAndParamData ret(Decoration::MMHostInterfaceMaxBurstALTERA);
+    ret.mMHostInterfaceMaxBurstALTERA = mMHostInterfaceMaxBurstALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::MMHostInterfaceWaitRequestINTEL>
+struct DecorationParam<Decoration::MMHostInterfaceWaitRequestALTERA>
 {
-  uint32_t mMHostInterfaceWaitRequestINTEL;
-  DecorationParam(uint32_t mMHostInterfaceWaitRequestINTELParam) {  mMHostInterfaceWaitRequestINTEL = mMHostInterfaceWaitRequestINTELParam; }
+  uint32_t mMHostInterfaceWaitRequestALTERA;
+  DecorationParam(uint32_t mMHostInterfaceWaitRequestALTERAParam) {  mMHostInterfaceWaitRequestALTERA = mMHostInterfaceWaitRequestALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::MMHostInterfaceWaitRequestINTEL);
-    ret.mMHostInterfaceWaitRequestINTEL = mMHostInterfaceWaitRequestINTEL;
+    DecorationAndParamData ret(Decoration::MMHostInterfaceWaitRequestALTERA);
+    ret.mMHostInterfaceWaitRequestALTERA = mMHostInterfaceWaitRequestALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::InitModeINTEL>
+struct DecorationParam<Decoration::InitModeALTERA>
 {
-  InitializationModeQualifier initModeINTEL;
-  DecorationParam(InitializationModeQualifier initModeINTELParam) {  initModeINTEL = initModeINTELParam; }
+  InitializationModeQualifier initModeALTERA;
+  DecorationParam(InitializationModeQualifier initModeALTERAParam) {  initModeALTERA = initModeALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::InitModeINTEL);
-    ret.initModeINTEL = initModeINTEL;
+    DecorationAndParamData ret(Decoration::InitModeALTERA);
+    ret.initModeALTERA = initModeALTERA;
     return ret;
   }
 };
 
 template<>
-struct DecorationParam<Decoration::ImplementInRegisterMapINTEL>
+struct DecorationParam<Decoration::ImplementInRegisterMapALTERA>
 {
-  uint32_t implementInRegisterMapINTEL;
-  DecorationParam(uint32_t implementInRegisterMapINTELParam) {  implementInRegisterMapINTEL = implementInRegisterMapINTELParam; }
+  uint32_t implementInRegisterMapALTERA;
+  DecorationParam(uint32_t implementInRegisterMapALTERAParam) {  implementInRegisterMapALTERA = implementInRegisterMapALTERAParam; }
   operator DecorationAndParamData()
   {
-    DecorationAndParamData ret(Decoration::ImplementInRegisterMapINTEL);
-    ret.implementInRegisterMapINTEL = implementInRegisterMapINTEL;
+    DecorationAndParamData ret(Decoration::ImplementInRegisterMapALTERA);
+    ret.implementInRegisterMapALTERA = implementInRegisterMapALTERA;
+    return ret;
+  }
+};
+
+template<>
+struct DecorationParam<Decoration::ConditionalINTEL>
+{
+  Id conditionalINTEL;
+  DecorationParam(Id conditionalINTELParam) {  conditionalINTEL = conditionalINTELParam; }
+  operator DecorationAndParamData()
+  {
+    DecorationAndParamData ret(Decoration::ConditionalINTEL);
+    ret.conditionalINTEL = conditionalINTEL;
     return ret;
   }
 };
@@ -2375,8 +2574,36 @@ inline DecorationAndParamData DecodeParam(const ConstIter &it, uint32_t &word)
       ret.nodeMaxPayloadsAMDX = Id::fromWord(it.word(word));
       word += 1;
       break;
+    case Decoration::PayloadNodeNameAMDX:
+      ret.payloadNodeNameAMDX = Id::fromWord(it.word(word));
+      word += 1;
+      break;
+    case Decoration::PayloadNodeBaseIndexAMDX:
+      ret.payloadNodeBaseIndexAMDX = Id::fromWord(it.word(word));
+      word += 1;
+      break;
+    case Decoration::PayloadNodeArraySizeAMDX:
+      ret.payloadNodeArraySizeAMDX = Id::fromWord(it.word(word));
+      word += 1;
+      break;
+    case Decoration::ArrayStrideIdEXT:
+      ret.arrayStrideIdEXT = Id::fromWord(it.word(word));
+      word += 1;
+      break;
+    case Decoration::OffsetIdEXT:
+      ret.offsetIdEXT = Id::fromWord(it.word(word));
+      word += 1;
+      break;
     case Decoration::SecondaryViewportRelativeNV:
       ret.secondaryViewportRelativeNV = (uint32_t)it.word(word);
+      word += 1;
+      break;
+    case Decoration::MemberOffsetNV:
+      ret.memberOffsetNV = (uint32_t)it.word(word);
+      word += 1;
+      break;
+    case Decoration::BankNV:
+      ret.bankNV = (uint32_t)it.word(word);
       word += 1;
       break;
     case Decoration::SIMTCallINTEL:
@@ -2405,49 +2632,49 @@ inline DecorationAndParamData DecodeParam(const ConstIter &it, uint32_t &word)
       ret.functionDenormModeINTEL.fPDenormMode = (FPDenormMode)it.word(word+1);
       word += 2;
       break;
-    case Decoration::NumbanksINTEL:
-      ret.numbanksINTEL = (uint32_t)it.word(word);
+    case Decoration::NumbanksALTERA:
+      ret.numbanksALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::BankwidthINTEL:
-      ret.bankwidthINTEL = (uint32_t)it.word(word);
+    case Decoration::BankwidthALTERA:
+      ret.bankwidthALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::MaxPrivateCopiesINTEL:
-      ret.maxPrivateCopiesINTEL = (uint32_t)it.word(word);
+    case Decoration::MaxPrivateCopiesALTERA:
+      ret.maxPrivateCopiesALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::MaxReplicatesINTEL:
-      ret.maxReplicatesINTEL = (uint32_t)it.word(word);
+    case Decoration::MaxReplicatesALTERA:
+      ret.maxReplicatesALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::BankBitsINTEL:
-      ret.bankBitsINTEL = (uint32_t)it.word(word);
+    case Decoration::BankBitsALTERA:
+      ret.bankBitsALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::ForcePow2DepthINTEL:
-      ret.forcePow2DepthINTEL = (uint32_t)it.word(word);
+    case Decoration::ForcePow2DepthALTERA:
+      ret.forcePow2DepthALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::StridesizeINTEL:
-      ret.stridesizeINTEL = (uint32_t)it.word(word);
+    case Decoration::StridesizeALTERA:
+      ret.stridesizeALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::WordsizeINTEL:
-      ret.wordsizeINTEL = (uint32_t)it.word(word);
+    case Decoration::WordsizeALTERA:
+      ret.wordsizeALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::CacheSizeINTEL:
-      ret.cacheSizeINTEL = (uint32_t)it.word(word);
+    case Decoration::CacheSizeALTERA:
+      ret.cacheSizeALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::PrefetchINTEL:
-      ret.prefetchINTEL = (uint32_t)it.word(word);
+    case Decoration::PrefetchALTERA:
+      ret.prefetchALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::MathOpDSPModeINTEL:
-      ret.mathOpDSPModeINTEL.mode = (uint32_t)it.word(word+0);
-      ret.mathOpDSPModeINTEL.propagate = (uint32_t)it.word(word+1);
+    case Decoration::MathOpDSPModeALTERA:
+      ret.mathOpDSPModeALTERA.mode = (uint32_t)it.word(word+0);
+      ret.mathOpDSPModeALTERA.propagate = (uint32_t)it.word(word+1);
       word += 2;
       break;
     case Decoration::AliasScopeINTEL:
@@ -2458,24 +2685,24 @@ inline DecorationAndParamData DecodeParam(const ConstIter &it, uint32_t &word)
       ret.noAliasINTEL = Id::fromWord(it.word(word));
       word += 1;
       break;
-    case Decoration::InitiationIntervalINTEL:
-      ret.initiationIntervalINTEL = (uint32_t)it.word(word);
+    case Decoration::InitiationIntervalALTERA:
+      ret.initiationIntervalALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::MaxConcurrencyINTEL:
-      ret.maxConcurrencyINTEL = (uint32_t)it.word(word);
+    case Decoration::MaxConcurrencyALTERA:
+      ret.maxConcurrencyALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::PipelineEnableINTEL:
-      ret.pipelineEnableINTEL = (uint32_t)it.word(word);
+    case Decoration::PipelineEnableALTERA:
+      ret.pipelineEnableALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::BufferLocationINTEL:
-      ret.bufferLocationINTEL = (uint32_t)it.word(word);
+    case Decoration::BufferLocationALTERA:
+      ret.bufferLocationALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::IOPipeStorageINTEL:
-      ret.iOPipeStorageINTEL = (uint32_t)it.word(word);
+    case Decoration::IOPipeStorageALTERA:
+      ret.iOPipeStorageALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
     case Decoration::FunctionFloatingPointModeINTEL:
@@ -2487,46 +2714,50 @@ inline DecorationAndParamData DecodeParam(const ConstIter &it, uint32_t &word)
       ret.fPMaxErrorDecorationINTEL = (float)it.word(word);
       word += 1;
       break;
-    case Decoration::LatencyControlLabelINTEL:
-      ret.latencyControlLabelINTEL = (uint32_t)it.word(word);
+    case Decoration::LatencyControlLabelALTERA:
+      ret.latencyControlLabelALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::LatencyControlConstraintINTEL:
-      ret.latencyControlConstraintINTEL.relativeTo = (uint32_t)it.word(word+0);
-      ret.latencyControlConstraintINTEL.controlType = (uint32_t)it.word(word+1);
-      ret.latencyControlConstraintINTEL.relativeCycle = (uint32_t)it.word(word+2);
+    case Decoration::LatencyControlConstraintALTERA:
+      ret.latencyControlConstraintALTERA.relativeTo = (uint32_t)it.word(word+0);
+      ret.latencyControlConstraintALTERA.controlType = (uint32_t)it.word(word+1);
+      ret.latencyControlConstraintALTERA.relativeCycle = (uint32_t)it.word(word+2);
       word += 3;
       break;
-    case Decoration::MMHostInterfaceAddressWidthINTEL:
-      ret.mMHostInterfaceAddressWidthINTEL = (uint32_t)it.word(word);
+    case Decoration::MMHostInterfaceAddressWidthALTERA:
+      ret.mMHostInterfaceAddressWidthALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::MMHostInterfaceDataWidthINTEL:
-      ret.mMHostInterfaceDataWidthINTEL = (uint32_t)it.word(word);
+    case Decoration::MMHostInterfaceDataWidthALTERA:
+      ret.mMHostInterfaceDataWidthALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::MMHostInterfaceLatencyINTEL:
-      ret.mMHostInterfaceLatencyINTEL = (uint32_t)it.word(word);
+    case Decoration::MMHostInterfaceLatencyALTERA:
+      ret.mMHostInterfaceLatencyALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::MMHostInterfaceReadWriteModeINTEL:
-      ret.mMHostInterfaceReadWriteModeINTEL = (AccessQualifier)it.word(word);
+    case Decoration::MMHostInterfaceReadWriteModeALTERA:
+      ret.mMHostInterfaceReadWriteModeALTERA = (AccessQualifier)it.word(word);
       word += 1;
       break;
-    case Decoration::MMHostInterfaceMaxBurstINTEL:
-      ret.mMHostInterfaceMaxBurstINTEL = (uint32_t)it.word(word);
+    case Decoration::MMHostInterfaceMaxBurstALTERA:
+      ret.mMHostInterfaceMaxBurstALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::MMHostInterfaceWaitRequestINTEL:
-      ret.mMHostInterfaceWaitRequestINTEL = (uint32_t)it.word(word);
+    case Decoration::MMHostInterfaceWaitRequestALTERA:
+      ret.mMHostInterfaceWaitRequestALTERA = (uint32_t)it.word(word);
       word += 1;
       break;
-    case Decoration::InitModeINTEL:
-      ret.initModeINTEL = (InitializationModeQualifier)it.word(word);
+    case Decoration::InitModeALTERA:
+      ret.initModeALTERA = (InitializationModeQualifier)it.word(word);
       word += 1;
       break;
-    case Decoration::ImplementInRegisterMapINTEL:
-      ret.implementInRegisterMapINTEL = (uint32_t)it.word(word);
+    case Decoration::ImplementInRegisterMapALTERA:
+      ret.implementInRegisterMapALTERA = (uint32_t)it.word(word);
+      word += 1;
+      break;
+    case Decoration::ConditionalINTEL:
+      ret.conditionalINTEL = Id::fromWord(it.word(word));
       word += 1;
       break;
     case Decoration::CacheControlLoadINTEL:
@@ -2621,8 +2852,29 @@ inline void EncodeParam(rdcarray<uint32_t> &words, const DecorationAndParamData 
     case Decoration::NodeMaxPayloadsAMDX:
       words.push_back(param.nodeMaxPayloadsAMDX.value());
       break;
+    case Decoration::PayloadNodeNameAMDX:
+      words.push_back(param.payloadNodeNameAMDX.value());
+      break;
+    case Decoration::PayloadNodeBaseIndexAMDX:
+      words.push_back(param.payloadNodeBaseIndexAMDX.value());
+      break;
+    case Decoration::PayloadNodeArraySizeAMDX:
+      words.push_back(param.payloadNodeArraySizeAMDX.value());
+      break;
+    case Decoration::ArrayStrideIdEXT:
+      words.push_back(param.arrayStrideIdEXT.value());
+      break;
+    case Decoration::OffsetIdEXT:
+      words.push_back(param.offsetIdEXT.value());
+      break;
     case Decoration::SecondaryViewportRelativeNV:
       words.push_back((uint32_t)param.secondaryViewportRelativeNV);
+      break;
+    case Decoration::MemberOffsetNV:
+      words.push_back((uint32_t)param.memberOffsetNV);
+      break;
+    case Decoration::BankNV:
+      words.push_back((uint32_t)param.bankNV);
       break;
     case Decoration::SIMTCallINTEL:
       words.push_back((uint32_t)param.sIMTCallINTEL);
@@ -2644,39 +2896,39 @@ inline void EncodeParam(rdcarray<uint32_t> &words, const DecorationAndParamData 
       words.push_back((uint32_t)param.functionDenormModeINTEL.targetWidth);
       words.push_back((uint32_t)param.functionDenormModeINTEL.fPDenormMode);
       break;
-    case Decoration::NumbanksINTEL:
-      words.push_back((uint32_t)param.numbanksINTEL);
+    case Decoration::NumbanksALTERA:
+      words.push_back((uint32_t)param.numbanksALTERA);
       break;
-    case Decoration::BankwidthINTEL:
-      words.push_back((uint32_t)param.bankwidthINTEL);
+    case Decoration::BankwidthALTERA:
+      words.push_back((uint32_t)param.bankwidthALTERA);
       break;
-    case Decoration::MaxPrivateCopiesINTEL:
-      words.push_back((uint32_t)param.maxPrivateCopiesINTEL);
+    case Decoration::MaxPrivateCopiesALTERA:
+      words.push_back((uint32_t)param.maxPrivateCopiesALTERA);
       break;
-    case Decoration::MaxReplicatesINTEL:
-      words.push_back((uint32_t)param.maxReplicatesINTEL);
+    case Decoration::MaxReplicatesALTERA:
+      words.push_back((uint32_t)param.maxReplicatesALTERA);
       break;
-    case Decoration::BankBitsINTEL:
-      words.push_back((uint32_t)param.bankBitsINTEL);
+    case Decoration::BankBitsALTERA:
+      words.push_back((uint32_t)param.bankBitsALTERA);
       break;
-    case Decoration::ForcePow2DepthINTEL:
-      words.push_back((uint32_t)param.forcePow2DepthINTEL);
+    case Decoration::ForcePow2DepthALTERA:
+      words.push_back((uint32_t)param.forcePow2DepthALTERA);
       break;
-    case Decoration::StridesizeINTEL:
-      words.push_back((uint32_t)param.stridesizeINTEL);
+    case Decoration::StridesizeALTERA:
+      words.push_back((uint32_t)param.stridesizeALTERA);
       break;
-    case Decoration::WordsizeINTEL:
-      words.push_back((uint32_t)param.wordsizeINTEL);
+    case Decoration::WordsizeALTERA:
+      words.push_back((uint32_t)param.wordsizeALTERA);
       break;
-    case Decoration::CacheSizeINTEL:
-      words.push_back((uint32_t)param.cacheSizeINTEL);
+    case Decoration::CacheSizeALTERA:
+      words.push_back((uint32_t)param.cacheSizeALTERA);
       break;
-    case Decoration::PrefetchINTEL:
-      words.push_back((uint32_t)param.prefetchINTEL);
+    case Decoration::PrefetchALTERA:
+      words.push_back((uint32_t)param.prefetchALTERA);
       break;
-    case Decoration::MathOpDSPModeINTEL:
-      words.push_back((uint32_t)param.mathOpDSPModeINTEL.mode);
-      words.push_back((uint32_t)param.mathOpDSPModeINTEL.propagate);
+    case Decoration::MathOpDSPModeALTERA:
+      words.push_back((uint32_t)param.mathOpDSPModeALTERA.mode);
+      words.push_back((uint32_t)param.mathOpDSPModeALTERA.propagate);
       break;
     case Decoration::AliasScopeINTEL:
       words.push_back(param.aliasScopeINTEL.value());
@@ -2684,20 +2936,20 @@ inline void EncodeParam(rdcarray<uint32_t> &words, const DecorationAndParamData 
     case Decoration::NoAliasINTEL:
       words.push_back(param.noAliasINTEL.value());
       break;
-    case Decoration::InitiationIntervalINTEL:
-      words.push_back((uint32_t)param.initiationIntervalINTEL);
+    case Decoration::InitiationIntervalALTERA:
+      words.push_back((uint32_t)param.initiationIntervalALTERA);
       break;
-    case Decoration::MaxConcurrencyINTEL:
-      words.push_back((uint32_t)param.maxConcurrencyINTEL);
+    case Decoration::MaxConcurrencyALTERA:
+      words.push_back((uint32_t)param.maxConcurrencyALTERA);
       break;
-    case Decoration::PipelineEnableINTEL:
-      words.push_back((uint32_t)param.pipelineEnableINTEL);
+    case Decoration::PipelineEnableALTERA:
+      words.push_back((uint32_t)param.pipelineEnableALTERA);
       break;
-    case Decoration::BufferLocationINTEL:
-      words.push_back((uint32_t)param.bufferLocationINTEL);
+    case Decoration::BufferLocationALTERA:
+      words.push_back((uint32_t)param.bufferLocationALTERA);
       break;
-    case Decoration::IOPipeStorageINTEL:
-      words.push_back((uint32_t)param.iOPipeStorageINTEL);
+    case Decoration::IOPipeStorageALTERA:
+      words.push_back((uint32_t)param.iOPipeStorageALTERA);
       break;
     case Decoration::FunctionFloatingPointModeINTEL:
       words.push_back((uint32_t)param.functionFloatingPointModeINTEL.targetWidth);
@@ -2706,37 +2958,40 @@ inline void EncodeParam(rdcarray<uint32_t> &words, const DecorationAndParamData 
     case Decoration::FPMaxErrorDecorationINTEL:
       words.push_back((uint32_t)param.fPMaxErrorDecorationINTEL);
       break;
-    case Decoration::LatencyControlLabelINTEL:
-      words.push_back((uint32_t)param.latencyControlLabelINTEL);
+    case Decoration::LatencyControlLabelALTERA:
+      words.push_back((uint32_t)param.latencyControlLabelALTERA);
       break;
-    case Decoration::LatencyControlConstraintINTEL:
-      words.push_back((uint32_t)param.latencyControlConstraintINTEL.relativeTo);
-      words.push_back((uint32_t)param.latencyControlConstraintINTEL.controlType);
-      words.push_back((uint32_t)param.latencyControlConstraintINTEL.relativeCycle);
+    case Decoration::LatencyControlConstraintALTERA:
+      words.push_back((uint32_t)param.latencyControlConstraintALTERA.relativeTo);
+      words.push_back((uint32_t)param.latencyControlConstraintALTERA.controlType);
+      words.push_back((uint32_t)param.latencyControlConstraintALTERA.relativeCycle);
       break;
-    case Decoration::MMHostInterfaceAddressWidthINTEL:
-      words.push_back((uint32_t)param.mMHostInterfaceAddressWidthINTEL);
+    case Decoration::MMHostInterfaceAddressWidthALTERA:
+      words.push_back((uint32_t)param.mMHostInterfaceAddressWidthALTERA);
       break;
-    case Decoration::MMHostInterfaceDataWidthINTEL:
-      words.push_back((uint32_t)param.mMHostInterfaceDataWidthINTEL);
+    case Decoration::MMHostInterfaceDataWidthALTERA:
+      words.push_back((uint32_t)param.mMHostInterfaceDataWidthALTERA);
       break;
-    case Decoration::MMHostInterfaceLatencyINTEL:
-      words.push_back((uint32_t)param.mMHostInterfaceLatencyINTEL);
+    case Decoration::MMHostInterfaceLatencyALTERA:
+      words.push_back((uint32_t)param.mMHostInterfaceLatencyALTERA);
       break;
-    case Decoration::MMHostInterfaceReadWriteModeINTEL:
-      words.push_back((uint32_t)param.mMHostInterfaceReadWriteModeINTEL);
+    case Decoration::MMHostInterfaceReadWriteModeALTERA:
+      words.push_back((uint32_t)param.mMHostInterfaceReadWriteModeALTERA);
       break;
-    case Decoration::MMHostInterfaceMaxBurstINTEL:
-      words.push_back((uint32_t)param.mMHostInterfaceMaxBurstINTEL);
+    case Decoration::MMHostInterfaceMaxBurstALTERA:
+      words.push_back((uint32_t)param.mMHostInterfaceMaxBurstALTERA);
       break;
-    case Decoration::MMHostInterfaceWaitRequestINTEL:
-      words.push_back((uint32_t)param.mMHostInterfaceWaitRequestINTEL);
+    case Decoration::MMHostInterfaceWaitRequestALTERA:
+      words.push_back((uint32_t)param.mMHostInterfaceWaitRequestALTERA);
       break;
-    case Decoration::InitModeINTEL:
-      words.push_back((uint32_t)param.initModeINTEL);
+    case Decoration::InitModeALTERA:
+      words.push_back((uint32_t)param.initModeALTERA);
       break;
-    case Decoration::ImplementInRegisterMapINTEL:
-      words.push_back((uint32_t)param.implementInRegisterMapINTEL);
+    case Decoration::ImplementInRegisterMapALTERA:
+      words.push_back((uint32_t)param.implementInRegisterMapALTERA);
+      break;
+    case Decoration::ConditionalINTEL:
+      words.push_back(param.conditionalINTEL.value());
       break;
     case Decoration::CacheControlLoadINTEL:
       words.push_back((uint32_t)param.cacheControlLoadINTEL.cacheLevel);
@@ -2778,43 +3033,51 @@ inline uint16_t ExtraWordCount(const Decoration decoration)
     case Decoration::MaxByteOffsetId: return 1;
     case Decoration::NodeSharesPayloadLimitsWithAMDX: return 1;
     case Decoration::NodeMaxPayloadsAMDX: return 1;
+    case Decoration::PayloadNodeNameAMDX: return 1;
+    case Decoration::PayloadNodeBaseIndexAMDX: return 1;
+    case Decoration::PayloadNodeArraySizeAMDX: return 1;
+    case Decoration::ArrayStrideIdEXT: return 1;
+    case Decoration::OffsetIdEXT: return 1;
     case Decoration::SecondaryViewportRelativeNV: return 1;
+    case Decoration::MemberOffsetNV: return 1;
+    case Decoration::BankNV: return 1;
     case Decoration::SIMTCallINTEL: return 1;
     case Decoration::FuncParamIOKindINTEL: return 1;
     case Decoration::GlobalVariableOffsetINTEL: return 1;
     case Decoration::CounterBuffer: return 1;
     case Decoration::FunctionRoundingModeINTEL: return 2;
     case Decoration::FunctionDenormModeINTEL: return 2;
-    case Decoration::NumbanksINTEL: return 1;
-    case Decoration::BankwidthINTEL: return 1;
-    case Decoration::MaxPrivateCopiesINTEL: return 1;
-    case Decoration::MaxReplicatesINTEL: return 1;
-    case Decoration::BankBitsINTEL: return 1;
-    case Decoration::ForcePow2DepthINTEL: return 1;
-    case Decoration::StridesizeINTEL: return 1;
-    case Decoration::WordsizeINTEL: return 1;
-    case Decoration::CacheSizeINTEL: return 1;
-    case Decoration::PrefetchINTEL: return 1;
-    case Decoration::MathOpDSPModeINTEL: return 2;
+    case Decoration::NumbanksALTERA: return 1;
+    case Decoration::BankwidthALTERA: return 1;
+    case Decoration::MaxPrivateCopiesALTERA: return 1;
+    case Decoration::MaxReplicatesALTERA: return 1;
+    case Decoration::BankBitsALTERA: return 1;
+    case Decoration::ForcePow2DepthALTERA: return 1;
+    case Decoration::StridesizeALTERA: return 1;
+    case Decoration::WordsizeALTERA: return 1;
+    case Decoration::CacheSizeALTERA: return 1;
+    case Decoration::PrefetchALTERA: return 1;
+    case Decoration::MathOpDSPModeALTERA: return 2;
     case Decoration::AliasScopeINTEL: return 1;
     case Decoration::NoAliasINTEL: return 1;
-    case Decoration::InitiationIntervalINTEL: return 1;
-    case Decoration::MaxConcurrencyINTEL: return 1;
-    case Decoration::PipelineEnableINTEL: return 1;
-    case Decoration::BufferLocationINTEL: return 1;
-    case Decoration::IOPipeStorageINTEL: return 1;
+    case Decoration::InitiationIntervalALTERA: return 1;
+    case Decoration::MaxConcurrencyALTERA: return 1;
+    case Decoration::PipelineEnableALTERA: return 1;
+    case Decoration::BufferLocationALTERA: return 1;
+    case Decoration::IOPipeStorageALTERA: return 1;
     case Decoration::FunctionFloatingPointModeINTEL: return 2;
     case Decoration::FPMaxErrorDecorationINTEL: return 1;
-    case Decoration::LatencyControlLabelINTEL: return 1;
-    case Decoration::LatencyControlConstraintINTEL: return 3;
-    case Decoration::MMHostInterfaceAddressWidthINTEL: return 1;
-    case Decoration::MMHostInterfaceDataWidthINTEL: return 1;
-    case Decoration::MMHostInterfaceLatencyINTEL: return 1;
-    case Decoration::MMHostInterfaceReadWriteModeINTEL: return 1;
-    case Decoration::MMHostInterfaceMaxBurstINTEL: return 1;
-    case Decoration::MMHostInterfaceWaitRequestINTEL: return 1;
-    case Decoration::InitModeINTEL: return 1;
-    case Decoration::ImplementInRegisterMapINTEL: return 1;
+    case Decoration::LatencyControlLabelALTERA: return 1;
+    case Decoration::LatencyControlConstraintALTERA: return 3;
+    case Decoration::MMHostInterfaceAddressWidthALTERA: return 1;
+    case Decoration::MMHostInterfaceDataWidthALTERA: return 1;
+    case Decoration::MMHostInterfaceLatencyALTERA: return 1;
+    case Decoration::MMHostInterfaceReadWriteModeALTERA: return 1;
+    case Decoration::MMHostInterfaceMaxBurstALTERA: return 1;
+    case Decoration::MMHostInterfaceWaitRequestALTERA: return 1;
+    case Decoration::InitModeALTERA: return 1;
+    case Decoration::ImplementInRegisterMapALTERA: return 1;
+    case Decoration::ConditionalINTEL: return 1;
     case Decoration::CacheControlLoadINTEL: return 2;
     case Decoration::CacheControlStoreINTEL: return 2;
     default: break;
@@ -2846,6 +3109,62 @@ inline uint16_t OptionalWordCount(const CooperativeMatrixLayout val) { return va
 
 inline uint16_t OptionalWordCount(const CooperativeMatrixUse val) { return val != CooperativeMatrixUse::Invalid ? 1 : 0; }
 
+inline uint16_t OptionalWordCount(const TensorClampMode val) { return val != TensorClampMode::Invalid ? 1 : 0; }
+
+template<>
+inline TensorAddressingOperandsAndParamDatas DecodeParam(const ConstIter &it, uint32_t &word)
+{
+  if(word >= it.size()) return TensorAddressingOperandsAndParamDatas();
+
+  TensorAddressingOperandsAndParamDatas ret((TensorAddressingOperands)it.word(word));
+  word++;
+  if(ret.flags & TensorAddressingOperands::TensorView)
+  {
+    ret.tensorView = Id::fromWord(it.word(word));
+    word += 1;
+  }
+  if(ret.flags & TensorAddressingOperands::DecodeFunc)
+  {
+    ret.decodeFunc = Id::fromWord(it.word(word));
+    word += 1;
+  }
+  if(ret.flags & TensorAddressingOperands::DecodeVectorFunc)
+  {
+    ret.decodeVectorFunc = Id::fromWord(it.word(word));
+    word += 1;
+  }
+  return ret;
+}
+
+inline void EncodeParam(rdcarray<uint32_t> &words, const TensorAddressingOperandsAndParamDatas &param)
+{
+  words.push_back((uint32_t)param.flags);
+  if(param.flags & TensorAddressingOperands::TensorView)
+  {
+    words.push_back(param.tensorView.value());
+  }
+  if(param.flags & TensorAddressingOperands::DecodeFunc)
+  {
+    words.push_back(param.decodeFunc.value());
+  }
+  if(param.flags & TensorAddressingOperands::DecodeVectorFunc)
+  {
+    words.push_back(param.decodeVectorFunc.value());
+  }
+}
+
+inline uint16_t ExtraWordCount(const TensorAddressingOperands tensorAddressingOperands)
+{
+  switch(tensorAddressingOperands)
+  {
+    case TensorAddressingOperands::TensorView: return 1;
+    case TensorAddressingOperands::DecodeFunc: return 1;
+    case TensorAddressingOperands::DecodeVectorFunc: return 1;
+    default: break;
+  }
+  return 0;
+}
+
 inline uint16_t OptionalWordCount(const InitializationModeQualifier val) { return val != InitializationModeQualifier::Invalid ? 1 : 0; }
 
 inline uint16_t OptionalWordCount(const LoadCacheControl val) { return val != LoadCacheControl::Invalid ? 1 : 0; }
@@ -2853,6 +3172,70 @@ inline uint16_t OptionalWordCount(const LoadCacheControl val) { return val != Lo
 inline uint16_t OptionalWordCount(const StoreCacheControl val) { return val != StoreCacheControl::Invalid ? 1 : 0; }
 
 inline uint16_t OptionalWordCount(const NamedMaximumNumberOfRegisters val) { return val != NamedMaximumNumberOfRegisters::Invalid ? 1 : 0; }
+
+inline uint16_t OptionalWordCount(const MatrixMultiplyAccumulateOperands val) { return val != MatrixMultiplyAccumulateOperands::None ? 1 : 0; }
+
+inline uint16_t OptionalWordCount(const FPEncoding val) { return val != FPEncoding::Invalid ? 1 : 0; }
+
+inline uint16_t OptionalWordCount(const CooperativeVectorMatrixLayout val) { return val != CooperativeVectorMatrixLayout::Invalid ? 1 : 0; }
+
+inline uint16_t OptionalWordCount(const ComponentType val) { return val != ComponentType::Invalid ? 1 : 0; }
+
+inline uint16_t OptionalWordCount(const GatherModes val) { return val != GatherModes::Invalid ? 1 : 0; }
+
+template<>
+inline TensorOperandsAndParamDatas DecodeParam(const ConstIter &it, uint32_t &word)
+{
+  if(word >= it.size()) return TensorOperandsAndParamDatas();
+
+  TensorOperandsAndParamDatas ret((TensorOperands)it.word(word));
+  word++;
+  if(ret.flags & TensorOperands::OutOfBoundsValueARM)
+  {
+    ret.outOfBoundsValueARM = Id::fromWord(it.word(word));
+    word += 1;
+  }
+  if(ret.flags & TensorOperands::MakeElementAvailableARM)
+  {
+    ret.makeElementAvailableARM = Id::fromWord(it.word(word));
+    word += 1;
+  }
+  if(ret.flags & TensorOperands::MakeElementVisibleARM)
+  {
+    ret.makeElementVisibleARM = Id::fromWord(it.word(word));
+    word += 1;
+  }
+  return ret;
+}
+
+inline void EncodeParam(rdcarray<uint32_t> &words, const TensorOperandsAndParamDatas &param)
+{
+  words.push_back((uint32_t)param.flags);
+  if(param.flags & TensorOperands::OutOfBoundsValueARM)
+  {
+    words.push_back(param.outOfBoundsValueARM.value());
+  }
+  if(param.flags & TensorOperands::MakeElementAvailableARM)
+  {
+    words.push_back(param.makeElementAvailableARM.value());
+  }
+  if(param.flags & TensorOperands::MakeElementVisibleARM)
+  {
+    words.push_back(param.makeElementVisibleARM.value());
+  }
+}
+
+inline uint16_t ExtraWordCount(const TensorOperands tensorOperands)
+{
+  switch(tensorOperands)
+  {
+    case TensorOperands::OutOfBoundsValueARM: return 1;
+    case TensorOperands::MakeElementAvailableARM: return 1;
+    case TensorOperands::MakeElementVisibleARM: return 1;
+    default: break;
+  }
+  return 0;
+}
 
 
 inline uint16_t ExtraWordCount(const rdcstr &val)
@@ -3422,22 +3805,39 @@ struct OpTypeFloat
 {
   OpTypeFloat(const ConstIter &it)
   {
-    memcpy(this, it.words(), sizeof(*this));
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->result = Id::fromWord(it.word(1));
+    this->width = (uint32_t)it.word(2);
+    this->floatingPointEncoding = (it.size() > 3) ? (FPEncoding)it.word(3) : FPEncoding::Invalid;
   }
-  OpTypeFloat(IdResult result, uint32_t width)
+  OpTypeFloat(IdResult result, uint32_t width, FPEncoding floatingPointEncoding = FPEncoding::Invalid)
       : op(Op::TypeFloat)
-      , wordCount(FixedWordSize)
+      , wordCount(MinWordSize + OptionalWordCount(floatingPointEncoding))
   {
     this->result = result;
     this->width = width;
+    this->floatingPointEncoding = floatingPointEncoding;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(result.value());
+    words.push_back((uint32_t)width);
+    if(floatingPointEncoding != FPEncoding::Invalid) words.push_back((uint32_t)floatingPointEncoding);
+    return Operation(OpCode, words);
   }
 
   static constexpr Op OpCode = Op::TypeFloat;
-  static constexpr uint16_t FixedWordSize = 3U;
+  static constexpr uint16_t MinWordSize = 3U;
   Op op;
   uint16_t wordCount;
   IdResult result;
   uint32_t width;
+  FPEncoding floatingPointEncoding;
+
+  bool HasFloatingPointEncoding() const { return wordCount > 3; }
 };
 
 struct OpTypeVector
@@ -11834,7 +12234,7 @@ struct OpGroupNonUniformBroadcast
   {
     memcpy(this, it.words(), sizeof(*this));
   }
-  OpGroupNonUniformBroadcast(IdResultType resultType, IdResult result, IdScope execution, Id value, Id id)
+  OpGroupNonUniformBroadcast(IdResultType resultType, IdResult result, IdScope execution, Id value, Id invocationId)
       : op(Op::GroupNonUniformBroadcast)
       , wordCount(FixedWordSize)
   {
@@ -11842,7 +12242,7 @@ struct OpGroupNonUniformBroadcast
     this->result = result;
     this->execution = execution;
     this->value = value;
-    this->id = id;
+    this->invocationId = invocationId;
   }
 
   static constexpr Op OpCode = Op::GroupNonUniformBroadcast;
@@ -11853,7 +12253,7 @@ struct OpGroupNonUniformBroadcast
   IdResult result;
   IdScope execution;
   Id value;
-  Id id;
+  Id invocationId;
 };
 
 struct OpGroupNonUniformBroadcastFirst
@@ -12048,7 +12448,7 @@ struct OpGroupNonUniformShuffle
   {
     memcpy(this, it.words(), sizeof(*this));
   }
-  OpGroupNonUniformShuffle(IdResultType resultType, IdResult result, IdScope execution, Id value, Id id)
+  OpGroupNonUniformShuffle(IdResultType resultType, IdResult result, IdScope execution, Id value, Id invocationId)
       : op(Op::GroupNonUniformShuffle)
       , wordCount(FixedWordSize)
   {
@@ -12056,7 +12456,7 @@ struct OpGroupNonUniformShuffle
     this->result = result;
     this->execution = execution;
     this->value = value;
-    this->id = id;
+    this->invocationId = invocationId;
   }
 
   static constexpr Op OpCode = Op::GroupNonUniformShuffle;
@@ -12067,7 +12467,7 @@ struct OpGroupNonUniformShuffle
   IdResult result;
   IdScope execution;
   Id value;
-  Id id;
+  Id invocationId;
 };
 
 struct OpGroupNonUniformShuffleXor
@@ -13249,6 +13649,424 @@ struct OpStencilAttachmentReadEXT
   bool HasSample() const { return wordCount > 3; }
 };
 
+struct OpTypeTensorARM
+{
+  OpTypeTensorARM(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->result = Id::fromWord(it.word(1));
+    this->elementType = Id::fromWord(it.word(2));
+    this->rank = (it.size() > 3) ? Id::fromWord(it.word(3)) : Id();
+    this->shape = (it.size() > 4) ? Id::fromWord(it.word(4)) : Id();
+  }
+  OpTypeTensorARM(IdResult result, Id elementType, Id rank = Id(), Id shape = Id())
+      : op(Op::TypeTensorARM)
+      , wordCount(MinWordSize + OptionalWordCount(rank) + OptionalWordCount(shape))
+  {
+    this->result = result;
+    this->elementType = elementType;
+    this->rank = rank;
+    this->shape = shape;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(result.value());
+    words.push_back(elementType.value());
+    if(rank != Id()) words.push_back(rank.value());
+    if(shape != Id()) words.push_back(shape.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TypeTensorARM;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  Id elementType;
+  Id rank;
+  Id shape;
+
+  bool HasRank() const { return wordCount > 3; }
+  bool HasShape() const { return wordCount > 4; }
+};
+
+struct OpTensorReadARM
+{
+  OpTensorReadARM(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->tensor = Id::fromWord(it.word(3));
+    this->coordinates = Id::fromWord(it.word(4));
+    word = 5;
+    this->tensorOperands = DecodeParam<TensorOperandsAndParamDatas>(it, word);
+  }
+  OpTensorReadARM(IdResultType resultType, IdResult result, Id tensor, Id coordinates, TensorOperandsAndParamDatas tensorOperands = TensorOperands::NoneARM)
+      : op(Op::TensorReadARM)
+      , wordCount(MinWordSize + ExtraWordCount(tensorOperands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensor = tensor;
+    this->coordinates = coordinates;
+    this->tensorOperands = tensorOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(tensor.value());
+    words.push_back(coordinates.value());
+    EncodeParam(words, tensorOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TensorReadARM;
+  static constexpr uint16_t MinWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensor;
+  Id coordinates;
+  TensorOperandsAndParamDatas tensorOperands;
+};
+
+struct OpTensorWriteARM
+{
+  OpTensorWriteARM(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->tensor = Id::fromWord(it.word(1));
+    this->coordinates = Id::fromWord(it.word(2));
+    this->object = Id::fromWord(it.word(3));
+    word = 4;
+    this->tensorOperands = DecodeParam<TensorOperandsAndParamDatas>(it, word);
+  }
+  OpTensorWriteARM(Id tensor, Id coordinates, Id object, TensorOperandsAndParamDatas tensorOperands = TensorOperands::NoneARM)
+      : op(Op::TensorWriteARM)
+      , wordCount(MinWordSize + ExtraWordCount(tensorOperands))
+  {
+    this->tensor = tensor;
+    this->coordinates = coordinates;
+    this->object = object;
+    this->tensorOperands = tensorOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(tensor.value());
+    words.push_back(coordinates.value());
+    words.push_back(object.value());
+    EncodeParam(words, tensorOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TensorWriteARM;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  Id tensor;
+  Id coordinates;
+  Id object;
+  TensorOperandsAndParamDatas tensorOperands;
+};
+
+struct OpTensorQuerySizeARM
+{
+  OpTensorQuerySizeARM(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTensorQuerySizeARM(IdResultType resultType, IdResult result, Id tensor, Id dimension)
+      : op(Op::TensorQuerySizeARM)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensor = tensor;
+    this->dimension = dimension;
+  }
+
+  static constexpr Op OpCode = Op::TensorQuerySizeARM;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensor;
+  Id dimension;
+};
+
+struct OpGraphConstantARM
+{
+  OpGraphConstantARM(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpGraphConstantARM(IdResultType resultType, IdResult result, uint32_t graphConstantID)
+      : op(Op::GraphConstantARM)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->graphConstantID = graphConstantID;
+  }
+
+  static constexpr Op OpCode = Op::GraphConstantARM;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  uint32_t graphConstantID;
+};
+
+struct OpGraphEntryPointARM
+{
+  OpGraphEntryPointARM(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->graph = Id::fromWord(it.word(1));
+    word = 2;
+    this->name = DecodeParam<rdcstr>(it, word);
+    this->iface = MultiParam<Id>(it, word);
+  }
+  OpGraphEntryPointARM(Id graph, rdcstr name, const rdcarray<Id> &iface = {})
+      : op(Op::GraphEntryPointARM)
+      , wordCount(MinWordSize + ExtraWordCount(name) + MultiWordCount(iface))
+  {
+    this->graph = graph;
+    this->name = name;
+    this->iface = iface;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(graph.value());
+    EncodeParam(words, name);
+    for(size_t i=0; i < iface.size(); i++)
+    {
+      words.push_back(iface[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::GraphEntryPointARM;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id graph;
+  rdcstr name;
+  rdcarray<Id> iface;
+};
+
+struct OpGraphARM
+{
+  OpGraphARM(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpGraphARM(IdResultType resultType, IdResult result)
+      : op(Op::GraphARM)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+  }
+
+  static constexpr Op OpCode = Op::GraphARM;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+};
+
+struct OpGraphInputARM
+{
+  OpGraphInputARM(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->inputIndex = Id::fromWord(it.word(3));
+    word = 4;
+    this->elementIndex = MultiParam<Id>(it, word);
+  }
+  OpGraphInputARM(IdResultType resultType, IdResult result, Id inputIndex, const rdcarray<Id> &elementIndex = {})
+      : op(Op::GraphInputARM)
+      , wordCount(MinWordSize + MultiWordCount(elementIndex))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->inputIndex = inputIndex;
+    this->elementIndex = elementIndex;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(inputIndex.value());
+    for(size_t i=0; i < elementIndex.size(); i++)
+    {
+      words.push_back(elementIndex[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::GraphInputARM;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id inputIndex;
+  rdcarray<Id> elementIndex;
+};
+
+struct OpGraphSetOutputARM
+{
+  OpGraphSetOutputARM(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->value = Id::fromWord(it.word(1));
+    this->outputIndex = Id::fromWord(it.word(2));
+    word = 3;
+    this->elementIndex = MultiParam<Id>(it, word);
+  }
+  OpGraphSetOutputARM(Id value, Id outputIndex, const rdcarray<Id> &elementIndex = {})
+      : op(Op::GraphSetOutputARM)
+      , wordCount(MinWordSize + MultiWordCount(elementIndex))
+  {
+    this->value = value;
+    this->outputIndex = outputIndex;
+    this->elementIndex = elementIndex;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(value.value());
+    words.push_back(outputIndex.value());
+    for(size_t i=0; i < elementIndex.size(); i++)
+    {
+      words.push_back(elementIndex[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::GraphSetOutputARM;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id value;
+  Id outputIndex;
+  rdcarray<Id> elementIndex;
+};
+
+struct OpGraphEndARM
+{
+  OpGraphEndARM(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpGraphEndARM()
+      : op(Op::GraphEndARM)
+      , wordCount(FixedWordSize)
+  {
+    // no operands
+  }
+
+  static constexpr Op OpCode = Op::GraphEndARM;
+  static constexpr uint16_t FixedWordSize = 1U;
+  Op op;
+  uint16_t wordCount;
+  // no operands
+};
+
+struct OpTypeGraphARM
+{
+  OpTypeGraphARM(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->result = Id::fromWord(it.word(1));
+    this->numInputs = (uint32_t)it.word(2);
+    word = 3;
+    this->inOutTypes = MultiParam<Id>(it, word);
+  }
+  OpTypeGraphARM(IdResult result, uint32_t numInputs, const rdcarray<Id> &inOutTypes = {})
+      : op(Op::TypeGraphARM)
+      , wordCount(MinWordSize + MultiWordCount(inOutTypes))
+  {
+    this->result = result;
+    this->numInputs = numInputs;
+    this->inOutTypes = inOutTypes;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(result.value());
+    words.push_back((uint32_t)numInputs);
+    for(size_t i=0; i < inOutTypes.size(); i++)
+    {
+      words.push_back(inOutTypes[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TypeGraphARM;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  uint32_t numInputs;
+  rdcarray<Id> inOutTypes;
+};
+
+struct OpBitcastExtractEXT
+{
+  OpBitcastExtractEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpBitcastExtractEXT(IdResultType resultType, IdResult result, Id base, Id offset)
+      : op(Op::BitcastExtractEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->base = base;
+    this->offset = offset;
+  }
+
+  static constexpr Op OpCode = Op::BitcastExtractEXT;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id base;
+  Id offset;
+};
+
 struct OpTerminateInvocation
 {
   OpTerminateInvocation(const ConstIter &it)
@@ -13267,6 +14085,174 @@ struct OpTerminateInvocation
   Op op;
   uint16_t wordCount;
   // no operands
+};
+
+struct OpTypeUntypedPointerKHR
+{
+  OpTypeUntypedPointerKHR(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTypeUntypedPointerKHR(IdResult result, StorageClass storageClass)
+      : op(Op::TypeUntypedPointerKHR)
+      , wordCount(FixedWordSize)
+  {
+    this->result = result;
+    this->storageClass = storageClass;
+  }
+
+  static constexpr Op OpCode = Op::TypeUntypedPointerKHR;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  StorageClass storageClass;
+};
+
+struct OpUntypedVariableKHR
+{
+  OpUntypedVariableKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->storageClass = (StorageClass)it.word(3);
+    this->dataType = (it.size() > 4) ? Id::fromWord(it.word(4)) : Id();
+    this->initializer = (it.size() > 5) ? Id::fromWord(it.word(5)) : Id();
+  }
+  OpUntypedVariableKHR(IdResultType resultType, IdResult result, StorageClass storageClass, Id dataType = Id(), Id initializer = Id())
+      : op(Op::UntypedVariableKHR)
+      , wordCount(MinWordSize + OptionalWordCount(dataType) + OptionalWordCount(initializer))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->storageClass = storageClass;
+    this->dataType = dataType;
+    this->initializer = initializer;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back((uint32_t)storageClass);
+    if(dataType != Id()) words.push_back(dataType.value());
+    if(initializer != Id()) words.push_back(initializer.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::UntypedVariableKHR;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  StorageClass storageClass;
+  Id dataType;
+  Id initializer;
+
+  bool HasDataType() const { return wordCount > 4; }
+  bool HasInitializer() const { return wordCount > 5; }
+};
+
+struct OpUntypedAccessChainKHR
+{
+  OpUntypedAccessChainKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->baseType = Id::fromWord(it.word(3));
+    this->base = Id::fromWord(it.word(4));
+    word = 5;
+    this->indexes = MultiParam<Id>(it, word);
+  }
+  OpUntypedAccessChainKHR(IdResultType resultType, IdResult result, Id baseType, Id base, const rdcarray<Id> &indexes = {})
+      : op(Op::UntypedAccessChainKHR)
+      , wordCount(MinWordSize + MultiWordCount(indexes))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->baseType = baseType;
+    this->base = base;
+    this->indexes = indexes;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(baseType.value());
+    words.push_back(base.value());
+    for(size_t i=0; i < indexes.size(); i++)
+    {
+      words.push_back(indexes[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::UntypedAccessChainKHR;
+  static constexpr uint16_t MinWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id baseType;
+  Id base;
+  rdcarray<Id> indexes;
+};
+
+struct OpUntypedInBoundsAccessChainKHR
+{
+  OpUntypedInBoundsAccessChainKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->baseType = Id::fromWord(it.word(3));
+    this->base = Id::fromWord(it.word(4));
+    word = 5;
+    this->indexes = MultiParam<Id>(it, word);
+  }
+  OpUntypedInBoundsAccessChainKHR(IdResultType resultType, IdResult result, Id baseType, Id base, const rdcarray<Id> &indexes = {})
+      : op(Op::UntypedInBoundsAccessChainKHR)
+      , wordCount(MinWordSize + MultiWordCount(indexes))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->baseType = baseType;
+    this->base = base;
+    this->indexes = indexes;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(baseType.value());
+    words.push_back(base.value());
+    for(size_t i=0; i < indexes.size(); i++)
+    {
+      words.push_back(indexes[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::UntypedInBoundsAccessChainKHR;
+  static constexpr uint16_t MinWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id baseType;
+  Id base;
+  rdcarray<Id> indexes;
 };
 
 struct OpSubgroupBallotKHR
@@ -13315,6 +14301,217 @@ struct OpSubgroupFirstInvocationKHR
   IdResultType resultType;
   IdResult result;
   Id value;
+};
+
+struct OpUntypedPtrAccessChainKHR
+{
+  OpUntypedPtrAccessChainKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->baseType = Id::fromWord(it.word(3));
+    this->base = Id::fromWord(it.word(4));
+    this->element = Id::fromWord(it.word(5));
+    word = 6;
+    this->indexes = MultiParam<Id>(it, word);
+  }
+  OpUntypedPtrAccessChainKHR(IdResultType resultType, IdResult result, Id baseType, Id base, Id element, const rdcarray<Id> &indexes = {})
+      : op(Op::UntypedPtrAccessChainKHR)
+      , wordCount(MinWordSize + MultiWordCount(indexes))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->baseType = baseType;
+    this->base = base;
+    this->element = element;
+    this->indexes = indexes;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(baseType.value());
+    words.push_back(base.value());
+    words.push_back(element.value());
+    for(size_t i=0; i < indexes.size(); i++)
+    {
+      words.push_back(indexes[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::UntypedPtrAccessChainKHR;
+  static constexpr uint16_t MinWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id baseType;
+  Id base;
+  Id element;
+  rdcarray<Id> indexes;
+};
+
+struct OpUntypedInBoundsPtrAccessChainKHR
+{
+  OpUntypedInBoundsPtrAccessChainKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->baseType = Id::fromWord(it.word(3));
+    this->base = Id::fromWord(it.word(4));
+    this->element = Id::fromWord(it.word(5));
+    word = 6;
+    this->indexes = MultiParam<Id>(it, word);
+  }
+  OpUntypedInBoundsPtrAccessChainKHR(IdResultType resultType, IdResult result, Id baseType, Id base, Id element, const rdcarray<Id> &indexes = {})
+      : op(Op::UntypedInBoundsPtrAccessChainKHR)
+      , wordCount(MinWordSize + MultiWordCount(indexes))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->baseType = baseType;
+    this->base = base;
+    this->element = element;
+    this->indexes = indexes;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(baseType.value());
+    words.push_back(base.value());
+    words.push_back(element.value());
+    for(size_t i=0; i < indexes.size(); i++)
+    {
+      words.push_back(indexes[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::UntypedInBoundsPtrAccessChainKHR;
+  static constexpr uint16_t MinWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id baseType;
+  Id base;
+  Id element;
+  rdcarray<Id> indexes;
+};
+
+struct OpUntypedArrayLengthKHR
+{
+  OpUntypedArrayLengthKHR(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpUntypedArrayLengthKHR(IdResultType resultType, IdResult result, Id structure, Id pointer, uint32_t arraymember)
+      : op(Op::UntypedArrayLengthKHR)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->structure = structure;
+    this->pointer = pointer;
+    this->arraymember = arraymember;
+  }
+
+  static constexpr Op OpCode = Op::UntypedArrayLengthKHR;
+  static constexpr uint16_t FixedWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id structure;
+  Id pointer;
+  uint32_t arraymember;
+};
+
+struct OpUntypedPrefetchKHR
+{
+  OpUntypedPrefetchKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->pointerType = Id::fromWord(it.word(1));
+    this->numBytes = Id::fromWord(it.word(2));
+    this->rW = (it.size() > 3) ? Id::fromWord(it.word(3)) : Id();
+    this->locality = (it.size() > 4) ? Id::fromWord(it.word(4)) : Id();
+    this->cacheType = (it.size() > 5) ? Id::fromWord(it.word(5)) : Id();
+  }
+  OpUntypedPrefetchKHR(Id pointerType, Id numBytes, Id rW = Id(), Id locality = Id(), Id cacheType = Id())
+      : op(Op::UntypedPrefetchKHR)
+      , wordCount(MinWordSize + OptionalWordCount(rW) + OptionalWordCount(locality) + OptionalWordCount(cacheType))
+  {
+    this->pointerType = pointerType;
+    this->numBytes = numBytes;
+    this->rW = rW;
+    this->locality = locality;
+    this->cacheType = cacheType;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(pointerType.value());
+    words.push_back(numBytes.value());
+    if(rW != Id()) words.push_back(rW.value());
+    if(locality != Id()) words.push_back(locality.value());
+    if(cacheType != Id()) words.push_back(cacheType.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::UntypedPrefetchKHR;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id pointerType;
+  Id numBytes;
+  Id rW;
+  Id locality;
+  Id cacheType;
+
+  bool HasRW() const { return wordCount > 3; }
+  bool HasLocality() const { return wordCount > 4; }
+  bool HasCacheType() const { return wordCount > 5; }
+};
+
+struct OpFmaKHR
+{
+  OpFmaKHR(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpFmaKHR(IdResultType resultType, IdResult result, Id operand1, Id operand2, Id operand3)
+      : op(Op::FmaKHR)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->operand1 = operand1;
+    this->operand2 = operand2;
+    this->operand3 = operand3;
+  }
+
+  static constexpr Op OpCode = Op::FmaKHR;
+  static constexpr uint16_t FixedWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id operand1;
+  Id operand2;
+  Id operand3;
 };
 
 struct OpSubgroupAllKHR
@@ -13467,6 +14664,76 @@ struct OpSubgroupReadInvocationKHR
 };
 
 struct OpExtInstWithForwardRefsKHR; // has operands with variable sizes
+
+struct OpUntypedGroupAsyncCopyKHR
+{
+  OpUntypedGroupAsyncCopyKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->execution = Id::fromWord(it.word(3));
+    this->destination = Id::fromWord(it.word(4));
+    this->source = Id::fromWord(it.word(5));
+    this->elementNumBytes = Id::fromWord(it.word(6));
+    this->numElements = Id::fromWord(it.word(7));
+    this->stride = Id::fromWord(it.word(8));
+    this->event = Id::fromWord(it.word(9));
+    word = 10;
+    this->destinationMemoryOperands = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+    this->sourceMemoryOperands = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+  }
+  OpUntypedGroupAsyncCopyKHR(IdResultType resultType, IdResult result, Id execution, Id destination, Id source, Id elementNumBytes, Id numElements, Id stride, Id event, MemoryAccessAndParamDatas destinationMemoryOperands = MemoryAccess::None, MemoryAccessAndParamDatas sourceMemoryOperands = MemoryAccess::None)
+      : op(Op::UntypedGroupAsyncCopyKHR)
+      , wordCount(MinWordSize + ExtraWordCount(destinationMemoryOperands) + ExtraWordCount(sourceMemoryOperands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->execution = execution;
+    this->destination = destination;
+    this->source = source;
+    this->elementNumBytes = elementNumBytes;
+    this->numElements = numElements;
+    this->stride = stride;
+    this->event = event;
+    this->destinationMemoryOperands = destinationMemoryOperands;
+    this->sourceMemoryOperands = sourceMemoryOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(execution.value());
+    words.push_back(destination.value());
+    words.push_back(source.value());
+    words.push_back(elementNumBytes.value());
+    words.push_back(numElements.value());
+    words.push_back(stride.value());
+    words.push_back(event.value());
+    EncodeParam(words, destinationMemoryOperands);
+    EncodeParam(words, sourceMemoryOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::UntypedGroupAsyncCopyKHR;
+  static constexpr uint16_t MinWordSize = 10U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id execution;
+  Id destination;
+  Id source;
+  Id elementNumBytes;
+  Id numElements;
+  Id stride;
+  Id event;
+  MemoryAccessAndParamDatas destinationMemoryOperands;
+  MemoryAccessAndParamDatas sourceMemoryOperands;
+};
 
 struct OpTraceRayKHR
 {
@@ -14449,6 +15716,30 @@ struct OpImageBlockMatchSADQCOM
   Id blockSize;
 };
 
+struct OpBitCastArrayQCOM
+{
+  OpBitCastArrayQCOM(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpBitCastArrayQCOM(IdResultType resultType, IdResult result, Id sourceArray)
+      : op(Op::BitCastArrayQCOM)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->sourceArray = sourceArray;
+  }
+
+  static constexpr Op OpCode = Op::BitCastArrayQCOM;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id sourceArray;
+};
+
 struct OpImageBlockMatchWindowSSDQCOM
 {
   OpImageBlockMatchWindowSSDQCOM(const ConstIter &it)
@@ -14575,6 +15866,134 @@ struct OpImageBlockMatchGatherSADQCOM
   Id referenceSampledImage;
   Id referenceCoordinates;
   Id blockSize;
+};
+
+struct OpCompositeConstructCoopMatQCOM
+{
+  OpCompositeConstructCoopMatQCOM(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpCompositeConstructCoopMatQCOM(IdResultType resultType, IdResult result, Id sourceArray)
+      : op(Op::CompositeConstructCoopMatQCOM)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->sourceArray = sourceArray;
+  }
+
+  static constexpr Op OpCode = Op::CompositeConstructCoopMatQCOM;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id sourceArray;
+};
+
+struct OpCompositeExtractCoopMatQCOM
+{
+  OpCompositeExtractCoopMatQCOM(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpCompositeExtractCoopMatQCOM(IdResultType resultType, IdResult result, Id sourceCooperativeMatrix)
+      : op(Op::CompositeExtractCoopMatQCOM)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->sourceCooperativeMatrix = sourceCooperativeMatrix;
+  }
+
+  static constexpr Op OpCode = Op::CompositeExtractCoopMatQCOM;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id sourceCooperativeMatrix;
+};
+
+struct OpExtractSubArrayQCOM
+{
+  OpExtractSubArrayQCOM(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpExtractSubArrayQCOM(IdResultType resultType, IdResult result, Id sourceArray, Id index)
+      : op(Op::ExtractSubArrayQCOM)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->sourceArray = sourceArray;
+    this->index = index;
+  }
+
+  static constexpr Op OpCode = Op::ExtractSubArrayQCOM;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id sourceArray;
+  Id index;
+};
+
+struct OpImageGatherQCOM
+{
+  OpImageGatherQCOM(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->sampledImage = Id::fromWord(it.word(3));
+    this->coordinate = Id::fromWord(it.word(4));
+    this->component = Id::fromWord(it.word(5));
+    this->mode = Id::fromWord(it.word(6));
+    word = 7;
+    this->imageOperands = DecodeParam<ImageOperandsAndParamDatas>(it, word);
+  }
+  OpImageGatherQCOM(IdResultType resultType, IdResult result, Id sampledImage, Id coordinate, Id component, Id mode, ImageOperandsAndParamDatas imageOperands = ImageOperands::None)
+      : op(Op::ImageGatherQCOM)
+      , wordCount(MinWordSize + ExtraWordCount(imageOperands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->sampledImage = sampledImage;
+    this->coordinate = coordinate;
+    this->component = component;
+    this->mode = mode;
+    this->imageOperands = imageOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(sampledImage.value());
+    words.push_back(coordinate.value());
+    words.push_back(component.value());
+    words.push_back(mode.value());
+    EncodeParam(words, imageOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::ImageGatherQCOM;
+  static constexpr uint16_t MinWordSize = 7U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id sampledImage;
+  Id coordinate;
+  Id component;
+  Id mode;
+  ImageOperandsAndParamDatas imageOperands;
 };
 
 struct OpGroupIAddNonUniformAMD
@@ -14879,24 +16298,74 @@ struct OpReadClockKHR
   IdScope scope;
 };
 
-struct OpFinalizeNodePayloadsAMDX
+struct OpAllocateNodePayloadsAMDX
 {
-  OpFinalizeNodePayloadsAMDX(const ConstIter &it)
+  OpAllocateNodePayloadsAMDX(const ConstIter &it)
   {
     memcpy(this, it.words(), sizeof(*this));
   }
-  OpFinalizeNodePayloadsAMDX(Id payloadArray)
-      : op(Op::FinalizeNodePayloadsAMDX)
+  OpAllocateNodePayloadsAMDX(IdResultType resultType, IdResult result, IdScope visibility, Id payloadCount, Id nodeIndex)
+      : op(Op::AllocateNodePayloadsAMDX)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->visibility = visibility;
+    this->payloadCount = payloadCount;
+    this->nodeIndex = nodeIndex;
+  }
+
+  static constexpr Op OpCode = Op::AllocateNodePayloadsAMDX;
+  static constexpr uint16_t FixedWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  IdScope visibility;
+  Id payloadCount;
+  Id nodeIndex;
+};
+
+struct OpEnqueueNodePayloadsAMDX
+{
+  OpEnqueueNodePayloadsAMDX(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpEnqueueNodePayloadsAMDX(Id payloadArray)
+      : op(Op::EnqueueNodePayloadsAMDX)
       , wordCount(FixedWordSize)
   {
     this->payloadArray = payloadArray;
   }
 
-  static constexpr Op OpCode = Op::FinalizeNodePayloadsAMDX;
+  static constexpr Op OpCode = Op::EnqueueNodePayloadsAMDX;
   static constexpr uint16_t FixedWordSize = 2U;
   Op op;
   uint16_t wordCount;
   Id payloadArray;
+};
+
+struct OpTypeNodePayloadArrayAMDX
+{
+  OpTypeNodePayloadArrayAMDX(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTypeNodePayloadArrayAMDX(IdResult result, Id payloadType)
+      : op(Op::TypeNodePayloadArrayAMDX)
+      , wordCount(FixedWordSize)
+  {
+    this->result = result;
+    this->payloadType = payloadType;
+  }
+
+  static constexpr Op OpCode = Op::TypeNodePayloadArrayAMDX;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  Id payloadType;
 };
 
 struct OpFinishWritingNodePayloadAMDX
@@ -14923,30 +16392,122 @@ struct OpFinishWritingNodePayloadAMDX
   Id payload;
 };
 
-struct OpInitializeNodePayloadsAMDX
+struct OpNodePayloadArrayLengthAMDX
 {
-  OpInitializeNodePayloadsAMDX(const ConstIter &it)
+  OpNodePayloadArrayLengthAMDX(const ConstIter &it)
   {
     memcpy(this, it.words(), sizeof(*this));
   }
-  OpInitializeNodePayloadsAMDX(Id payloadArray, IdScope visibility, Id payloadCount, Id nodeIndex)
-      : op(Op::InitializeNodePayloadsAMDX)
+  OpNodePayloadArrayLengthAMDX(IdResultType resultType, IdResult result, Id payloadArray)
+      : op(Op::NodePayloadArrayLengthAMDX)
       , wordCount(FixedWordSize)
   {
+    this->resultType = resultType;
+    this->result = result;
     this->payloadArray = payloadArray;
-    this->visibility = visibility;
-    this->payloadCount = payloadCount;
+  }
+
+  static constexpr Op OpCode = Op::NodePayloadArrayLengthAMDX;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id payloadArray;
+};
+
+struct OpIsNodePayloadValidAMDX
+{
+  OpIsNodePayloadValidAMDX(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpIsNodePayloadValidAMDX(IdResultType resultType, IdResult result, Id payloadType, Id nodeIndex)
+      : op(Op::IsNodePayloadValidAMDX)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->payloadType = payloadType;
     this->nodeIndex = nodeIndex;
   }
 
-  static constexpr Op OpCode = Op::InitializeNodePayloadsAMDX;
+  static constexpr Op OpCode = Op::IsNodePayloadValidAMDX;
   static constexpr uint16_t FixedWordSize = 5U;
   Op op;
   uint16_t wordCount;
-  Id payloadArray;
-  IdScope visibility;
-  Id payloadCount;
+  IdResultType resultType;
+  IdResult result;
+  Id payloadType;
   Id nodeIndex;
+};
+
+struct OpConstantStringAMDX
+{
+  OpConstantStringAMDX(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->result = Id::fromWord(it.word(1));
+    word = 2;
+    this->literalString = DecodeParam<rdcstr>(it, word);
+  }
+  OpConstantStringAMDX(IdResult result, rdcstr literalString)
+      : op(Op::ConstantStringAMDX)
+      , wordCount(MinWordSize + ExtraWordCount(literalString))
+  {
+    this->result = result;
+    this->literalString = literalString;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(result.value());
+    EncodeParam(words, literalString);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::ConstantStringAMDX;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  rdcstr literalString;
+};
+
+struct OpSpecConstantStringAMDX
+{
+  OpSpecConstantStringAMDX(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->result = Id::fromWord(it.word(1));
+    word = 2;
+    this->literalString = DecodeParam<rdcstr>(it, word);
+  }
+  OpSpecConstantStringAMDX(IdResult result, rdcstr literalString)
+      : op(Op::SpecConstantStringAMDX)
+      , wordCount(MinWordSize + ExtraWordCount(literalString))
+  {
+    this->result = result;
+    this->literalString = literalString;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(result.value());
+    EncodeParam(words, literalString);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::SpecConstantStringAMDX;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  rdcstr literalString;
 };
 
 struct OpGroupNonUniformQuadAllKHR
@@ -14995,6 +16556,294 @@ struct OpGroupNonUniformQuadAnyKHR
   IdResultType resultType;
   IdResult result;
   Id predicate;
+};
+
+struct OpTypeBufferEXT
+{
+  OpTypeBufferEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTypeBufferEXT(IdResult result, StorageClass storageClass)
+      : op(Op::TypeBufferEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->result = result;
+    this->storageClass = storageClass;
+  }
+
+  static constexpr Op OpCode = Op::TypeBufferEXT;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  StorageClass storageClass;
+};
+
+struct OpBufferPointerEXT
+{
+  OpBufferPointerEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpBufferPointerEXT(IdResultType resultType, IdResult result, Id buffer)
+      : op(Op::BufferPointerEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->buffer = buffer;
+  }
+
+  static constexpr Op OpCode = Op::BufferPointerEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id buffer;
+};
+
+struct OpAbortKHR
+{
+  OpAbortKHR(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpAbortKHR(Id messageType, Id message)
+      : op(Op::AbortKHR)
+      , wordCount(FixedWordSize)
+  {
+    this->messageType = messageType;
+    this->message = message;
+  }
+
+  static constexpr Op OpCode = Op::AbortKHR;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id messageType;
+  Id message;
+};
+
+struct OpUntypedImageTexelPointerEXT
+{
+  OpUntypedImageTexelPointerEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpUntypedImageTexelPointerEXT(IdResultType resultType, IdResult result, Id imageType, Id image, Id coordinate, Id sample)
+      : op(Op::UntypedImageTexelPointerEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->imageType = imageType;
+    this->image = image;
+    this->coordinate = coordinate;
+    this->sample = sample;
+  }
+
+  static constexpr Op OpCode = Op::UntypedImageTexelPointerEXT;
+  static constexpr uint16_t FixedWordSize = 7U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id imageType;
+  Id image;
+  Id coordinate;
+  Id sample;
+};
+
+struct OpMemberDecorateIdEXT
+{
+  OpMemberDecorateIdEXT(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->structureType = Id::fromWord(it.word(1));
+    this->member = (uint32_t)it.word(2);
+    word = 3;
+    this->decoration = DecodeParam<DecorationAndParamData>(it, word);
+  }
+  OpMemberDecorateIdEXT(Id structureType, uint32_t member, DecorationAndParamData decoration)
+      : op(Op::MemberDecorateIdEXT)
+      , wordCount(MinWordSize + ExtraWordCount(decoration))
+  {
+    this->structureType = structureType;
+    this->member = member;
+    this->decoration = decoration;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(structureType.value());
+    words.push_back((uint32_t)member);
+    EncodeParam(words, decoration);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::MemberDecorateIdEXT;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  Id structureType;
+  uint32_t member;
+  DecorationAndParamData decoration;
+};
+
+struct OpConstantSizeOfEXT
+{
+  OpConstantSizeOfEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpConstantSizeOfEXT(IdResultType resultType, IdResult result, Id type)
+      : op(Op::ConstantSizeOfEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->type = type;
+  }
+
+  static constexpr Op OpCode = Op::ConstantSizeOfEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id type;
+};
+
+struct OpConstantDataKHR
+{
+  OpConstantDataKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    word = 3;
+    this->data = MultiParam<uint32_t>(it, word);
+  }
+  OpConstantDataKHR(IdResultType resultType, IdResult result, const rdcarray<uint32_t> &data = {})
+      : op(Op::ConstantDataKHR)
+      , wordCount(MinWordSize + MultiWordCount(data))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->data = data;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    for(size_t i=0; i < data.size(); i++)
+    {
+      words.push_back((uint32_t)data[i]);
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::ConstantDataKHR;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  rdcarray<uint32_t> data;
+};
+
+struct OpSpecConstantDataKHR
+{
+  OpSpecConstantDataKHR(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    word = 3;
+    this->data = MultiParam<uint32_t>(it, word);
+  }
+  OpSpecConstantDataKHR(IdResultType resultType, IdResult result, const rdcarray<uint32_t> &data = {})
+      : op(Op::SpecConstantDataKHR)
+      , wordCount(MinWordSize + MultiWordCount(data))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->data = data;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    for(size_t i=0; i < data.size(); i++)
+    {
+      words.push_back((uint32_t)data[i]);
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::SpecConstantDataKHR;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  rdcarray<uint32_t> data;
+};
+
+struct OpPoisonKHR
+{
+  OpPoisonKHR(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpPoisonKHR(IdResultType resultType, IdResult result)
+      : op(Op::PoisonKHR)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+  }
+
+  static constexpr Op OpCode = Op::PoisonKHR;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+};
+
+struct OpFreezeKHR
+{
+  OpFreezeKHR(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpFreezeKHR(IdResultType resultType, IdResult result, Id value)
+      : op(Op::FreezeKHR)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->value = value;
+  }
+
+  static constexpr Op OpCode = Op::FreezeKHR;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id value;
 };
 
 struct OpHitObjectRecordHitMotionNV
@@ -15977,6 +17826,305 @@ struct OpImageSampleFootprintNV
   ImageOperandsAndParamDatas imageOperands;
 };
 
+struct OpTypeVectorIdEXT
+{
+  OpTypeVectorIdEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTypeVectorIdEXT(IdResult result, Id componentType, Id componentCount)
+      : op(Op::TypeVectorIdEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->result = result;
+    this->componentType = componentType;
+    this->componentCount = componentCount;
+  }
+
+  static constexpr Op OpCode = Op::TypeVectorIdEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  Id componentType;
+  Id componentCount;
+};
+
+struct OpCooperativeVectorMatrixMulNV
+{
+  OpCooperativeVectorMatrixMulNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->input = Id::fromWord(it.word(3));
+    this->inputInterpretation = Id::fromWord(it.word(4));
+    this->matrix = Id::fromWord(it.word(5));
+    this->matrixOffset = Id::fromWord(it.word(6));
+    this->matrixInterpretation = Id::fromWord(it.word(7));
+    this->m = Id::fromWord(it.word(8));
+    this->k = Id::fromWord(it.word(9));
+    this->memoryLayout = Id::fromWord(it.word(10));
+    this->transpose = Id::fromWord(it.word(11));
+    this->matrixStride = (it.size() > 12) ? Id::fromWord(it.word(12)) : Id();
+    this->cooperativeMatrixOperands = (it.size() > 13) ? (CooperativeMatrixOperands)it.word(13) : CooperativeMatrixOperands::NoneKHR;
+  }
+  OpCooperativeVectorMatrixMulNV(IdResultType resultType, IdResult result, Id input, Id inputInterpretation, Id matrix, Id matrixOffset, Id matrixInterpretation, Id m, Id k, Id memoryLayout, Id transpose, Id matrixStride = Id(), CooperativeMatrixOperands cooperativeMatrixOperands = CooperativeMatrixOperands::NoneKHR)
+      : op(Op::CooperativeVectorMatrixMulNV)
+      , wordCount(MinWordSize + OptionalWordCount(matrixStride) + OptionalWordCount(cooperativeMatrixOperands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->input = input;
+    this->inputInterpretation = inputInterpretation;
+    this->matrix = matrix;
+    this->matrixOffset = matrixOffset;
+    this->matrixInterpretation = matrixInterpretation;
+    this->m = m;
+    this->k = k;
+    this->memoryLayout = memoryLayout;
+    this->transpose = transpose;
+    this->matrixStride = matrixStride;
+    this->cooperativeMatrixOperands = cooperativeMatrixOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(input.value());
+    words.push_back(inputInterpretation.value());
+    words.push_back(matrix.value());
+    words.push_back(matrixOffset.value());
+    words.push_back(matrixInterpretation.value());
+    words.push_back(m.value());
+    words.push_back(k.value());
+    words.push_back(memoryLayout.value());
+    words.push_back(transpose.value());
+    if(matrixStride != Id()) words.push_back(matrixStride.value());
+    if(cooperativeMatrixOperands != CooperativeMatrixOperands::NoneKHR) words.push_back((uint32_t)cooperativeMatrixOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::CooperativeVectorMatrixMulNV;
+  static constexpr uint16_t MinWordSize = 12U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id input;
+  Id inputInterpretation;
+  Id matrix;
+  Id matrixOffset;
+  Id matrixInterpretation;
+  Id m;
+  Id k;
+  Id memoryLayout;
+  Id transpose;
+  Id matrixStride;
+  CooperativeMatrixOperands cooperativeMatrixOperands;
+
+  bool HasMatrixStride() const { return wordCount > 12; }
+  bool HasCooperativeMatrixOperands() const { return wordCount > 13; }
+};
+
+struct OpCooperativeVectorOuterProductAccumulateNV
+{
+  OpCooperativeVectorOuterProductAccumulateNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->pointer = Id::fromWord(it.word(1));
+    this->offset = Id::fromWord(it.word(2));
+    this->a = Id::fromWord(it.word(3));
+    this->b = Id::fromWord(it.word(4));
+    this->memoryLayout = Id::fromWord(it.word(5));
+    this->matrixInterpretation = Id::fromWord(it.word(6));
+    this->matrixStride = (it.size() > 7) ? Id::fromWord(it.word(7)) : Id();
+  }
+  OpCooperativeVectorOuterProductAccumulateNV(Id pointer, Id offset, Id a, Id b, Id memoryLayout, Id matrixInterpretation, Id matrixStride = Id())
+      : op(Op::CooperativeVectorOuterProductAccumulateNV)
+      , wordCount(MinWordSize + OptionalWordCount(matrixStride))
+  {
+    this->pointer = pointer;
+    this->offset = offset;
+    this->a = a;
+    this->b = b;
+    this->memoryLayout = memoryLayout;
+    this->matrixInterpretation = matrixInterpretation;
+    this->matrixStride = matrixStride;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(pointer.value());
+    words.push_back(offset.value());
+    words.push_back(a.value());
+    words.push_back(b.value());
+    words.push_back(memoryLayout.value());
+    words.push_back(matrixInterpretation.value());
+    if(matrixStride != Id()) words.push_back(matrixStride.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::CooperativeVectorOuterProductAccumulateNV;
+  static constexpr uint16_t MinWordSize = 7U;
+  Op op;
+  uint16_t wordCount;
+  Id pointer;
+  Id offset;
+  Id a;
+  Id b;
+  Id memoryLayout;
+  Id matrixInterpretation;
+  Id matrixStride;
+
+  bool HasMatrixStride() const { return wordCount > 7; }
+};
+
+struct OpCooperativeVectorReduceSumAccumulateNV
+{
+  OpCooperativeVectorReduceSumAccumulateNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpCooperativeVectorReduceSumAccumulateNV(Id pointer, Id offset, Id v)
+      : op(Op::CooperativeVectorReduceSumAccumulateNV)
+      , wordCount(FixedWordSize)
+  {
+    this->pointer = pointer;
+    this->offset = offset;
+    this->v = v;
+  }
+
+  static constexpr Op OpCode = Op::CooperativeVectorReduceSumAccumulateNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  Id pointer;
+  Id offset;
+  Id v;
+};
+
+struct OpCooperativeVectorMatrixMulAddNV
+{
+  OpCooperativeVectorMatrixMulAddNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->input = Id::fromWord(it.word(3));
+    this->inputInterpretation = Id::fromWord(it.word(4));
+    this->matrix = Id::fromWord(it.word(5));
+    this->matrixOffset = Id::fromWord(it.word(6));
+    this->matrixInterpretation = Id::fromWord(it.word(7));
+    this->bias = Id::fromWord(it.word(8));
+    this->biasOffset = Id::fromWord(it.word(9));
+    this->biasInterpretation = Id::fromWord(it.word(10));
+    this->m = Id::fromWord(it.word(11));
+    this->k = Id::fromWord(it.word(12));
+    this->memoryLayout = Id::fromWord(it.word(13));
+    this->transpose = Id::fromWord(it.word(14));
+    this->matrixStride = (it.size() > 15) ? Id::fromWord(it.word(15)) : Id();
+    this->cooperativeMatrixOperands = (it.size() > 16) ? (CooperativeMatrixOperands)it.word(16) : CooperativeMatrixOperands::NoneKHR;
+  }
+  OpCooperativeVectorMatrixMulAddNV(IdResultType resultType, IdResult result, Id input, Id inputInterpretation, Id matrix, Id matrixOffset, Id matrixInterpretation, Id bias, Id biasOffset, Id biasInterpretation, Id m, Id k, Id memoryLayout, Id transpose, Id matrixStride = Id(), CooperativeMatrixOperands cooperativeMatrixOperands = CooperativeMatrixOperands::NoneKHR)
+      : op(Op::CooperativeVectorMatrixMulAddNV)
+      , wordCount(MinWordSize + OptionalWordCount(matrixStride) + OptionalWordCount(cooperativeMatrixOperands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->input = input;
+    this->inputInterpretation = inputInterpretation;
+    this->matrix = matrix;
+    this->matrixOffset = matrixOffset;
+    this->matrixInterpretation = matrixInterpretation;
+    this->bias = bias;
+    this->biasOffset = biasOffset;
+    this->biasInterpretation = biasInterpretation;
+    this->m = m;
+    this->k = k;
+    this->memoryLayout = memoryLayout;
+    this->transpose = transpose;
+    this->matrixStride = matrixStride;
+    this->cooperativeMatrixOperands = cooperativeMatrixOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(input.value());
+    words.push_back(inputInterpretation.value());
+    words.push_back(matrix.value());
+    words.push_back(matrixOffset.value());
+    words.push_back(matrixInterpretation.value());
+    words.push_back(bias.value());
+    words.push_back(biasOffset.value());
+    words.push_back(biasInterpretation.value());
+    words.push_back(m.value());
+    words.push_back(k.value());
+    words.push_back(memoryLayout.value());
+    words.push_back(transpose.value());
+    if(matrixStride != Id()) words.push_back(matrixStride.value());
+    if(cooperativeMatrixOperands != CooperativeMatrixOperands::NoneKHR) words.push_back((uint32_t)cooperativeMatrixOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::CooperativeVectorMatrixMulAddNV;
+  static constexpr uint16_t MinWordSize = 15U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id input;
+  Id inputInterpretation;
+  Id matrix;
+  Id matrixOffset;
+  Id matrixInterpretation;
+  Id bias;
+  Id biasOffset;
+  Id biasInterpretation;
+  Id m;
+  Id k;
+  Id memoryLayout;
+  Id transpose;
+  Id matrixStride;
+  CooperativeMatrixOperands cooperativeMatrixOperands;
+
+  bool HasMatrixStride() const { return wordCount > 15; }
+  bool HasCooperativeMatrixOperands() const { return wordCount > 16; }
+};
+
+struct OpCooperativeMatrixConvertNV
+{
+  OpCooperativeMatrixConvertNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpCooperativeMatrixConvertNV(IdResultType resultType, IdResult result, Id matrix)
+      : op(Op::CooperativeMatrixConvertNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->matrix = matrix;
+  }
+
+  static constexpr Op OpCode = Op::CooperativeMatrixConvertNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id matrix;
+};
+
 struct OpEmitMeshTasksEXT
 {
   OpEmitMeshTasksEXT(const ConstIter &it)
@@ -16042,14 +18190,14 @@ struct OpSetMeshOutputsEXT
   Id primitiveCount;
 };
 
-struct OpGroupNonUniformPartitionNV
+struct OpGroupNonUniformPartitionEXT
 {
-  OpGroupNonUniformPartitionNV(const ConstIter &it)
+  OpGroupNonUniformPartitionEXT(const ConstIter &it)
   {
     memcpy(this, it.words(), sizeof(*this));
   }
-  OpGroupNonUniformPartitionNV(IdResultType resultType, IdResult result, Id value)
-      : op(Op::GroupNonUniformPartitionNV)
+  OpGroupNonUniformPartitionEXT(IdResultType resultType, IdResult result, Id value)
+      : op(Op::GroupNonUniformPartitionEXT)
       , wordCount(FixedWordSize)
   {
     this->resultType = resultType;
@@ -16057,7 +18205,7 @@ struct OpGroupNonUniformPartitionNV
     this->value = value;
   }
 
-  static constexpr Op OpCode = Op::GroupNonUniformPartitionNV;
+  static constexpr Op OpCode = Op::GroupNonUniformPartitionEXT;
   static constexpr uint16_t FixedWordSize = 4U;
   Op op;
   uint16_t wordCount;
@@ -16150,6 +18298,1037 @@ struct OpFetchMicroTriangleVertexBarycentricNV
   Id geometryIndex;
   Id primitiveIndex;
   Id barycentric;
+};
+
+struct OpCooperativeVectorLoadNV
+{
+  OpCooperativeVectorLoadNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->pointer = Id::fromWord(it.word(3));
+    this->offset = Id::fromWord(it.word(4));
+    word = 5;
+    this->memoryAccess = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+  }
+  OpCooperativeVectorLoadNV(IdResultType resultType, IdResult result, Id pointer, Id offset, MemoryAccessAndParamDatas memoryAccess = MemoryAccess::None)
+      : op(Op::CooperativeVectorLoadNV)
+      , wordCount(MinWordSize + ExtraWordCount(memoryAccess))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->pointer = pointer;
+    this->offset = offset;
+    this->memoryAccess = memoryAccess;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(pointer.value());
+    words.push_back(offset.value());
+    EncodeParam(words, memoryAccess);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::CooperativeVectorLoadNV;
+  static constexpr uint16_t MinWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id pointer;
+  Id offset;
+  MemoryAccessAndParamDatas memoryAccess;
+};
+
+struct OpCooperativeVectorStoreNV
+{
+  OpCooperativeVectorStoreNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->pointer = Id::fromWord(it.word(1));
+    this->offset = Id::fromWord(it.word(2));
+    this->object = Id::fromWord(it.word(3));
+    word = 4;
+    this->memoryAccess = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+  }
+  OpCooperativeVectorStoreNV(Id pointer, Id offset, Id object, MemoryAccessAndParamDatas memoryAccess = MemoryAccess::None)
+      : op(Op::CooperativeVectorStoreNV)
+      , wordCount(MinWordSize + ExtraWordCount(memoryAccess))
+  {
+    this->pointer = pointer;
+    this->offset = offset;
+    this->object = object;
+    this->memoryAccess = memoryAccess;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(pointer.value());
+    words.push_back(offset.value());
+    words.push_back(object.value());
+    EncodeParam(words, memoryAccess);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::CooperativeVectorStoreNV;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  Id pointer;
+  Id offset;
+  Id object;
+  MemoryAccessAndParamDatas memoryAccess;
+};
+
+struct OpHitObjectRecordFromQueryEXT
+{
+  OpHitObjectRecordFromQueryEXT(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->hitObject = Id::fromWord(it.word(1));
+    this->rayQuery = Id::fromWord(it.word(2));
+    this->sBTRecordIndex = Id::fromWord(it.word(3));
+    this->hitObjectAttributes = Id::fromWord(it.word(4));
+    this->hitKind = (it.size() > 5) ? Id::fromWord(it.word(5)) : Id();
+  }
+  OpHitObjectRecordFromQueryEXT(Id hitObject, Id rayQuery, Id sBTRecordIndex, Id hitObjectAttributes, Id hitKind = Id())
+      : op(Op::HitObjectRecordFromQueryEXT)
+      , wordCount(MinWordSize + OptionalWordCount(hitKind))
+  {
+    this->hitObject = hitObject;
+    this->rayQuery = rayQuery;
+    this->sBTRecordIndex = sBTRecordIndex;
+    this->hitObjectAttributes = hitObjectAttributes;
+    this->hitKind = hitKind;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(hitObject.value());
+    words.push_back(rayQuery.value());
+    words.push_back(sBTRecordIndex.value());
+    words.push_back(hitObjectAttributes.value());
+    if(hitKind != Id()) words.push_back(hitKind.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::HitObjectRecordFromQueryEXT;
+  static constexpr uint16_t MinWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id rayQuery;
+  Id sBTRecordIndex;
+  Id hitObjectAttributes;
+  Id hitKind;
+
+  bool HasHitKind() const { return wordCount > 5; }
+};
+
+struct OpHitObjectRecordMissEXT
+{
+  OpHitObjectRecordMissEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectRecordMissEXT(Id hitObject, Id rayFlags, Id missIndex, Id rayOrigin, Id rayTmin, Id rayDirection, Id rayTmax)
+      : op(Op::HitObjectRecordMissEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hitObject = hitObject;
+    this->rayFlags = rayFlags;
+    this->missIndex = missIndex;
+    this->rayOrigin = rayOrigin;
+    this->rayTmin = rayTmin;
+    this->rayDirection = rayDirection;
+    this->rayTmax = rayTmax;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectRecordMissEXT;
+  static constexpr uint16_t FixedWordSize = 8U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id rayFlags;
+  Id missIndex;
+  Id rayOrigin;
+  Id rayTmin;
+  Id rayDirection;
+  Id rayTmax;
+};
+
+struct OpHitObjectRecordMissMotionEXT
+{
+  OpHitObjectRecordMissMotionEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectRecordMissMotionEXT(Id hitObject, Id rayFlags, Id missIndex, Id rayOrigin, Id rayTmin, Id rayDirection, Id rayTmax, Id currentTime)
+      : op(Op::HitObjectRecordMissMotionEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hitObject = hitObject;
+    this->rayFlags = rayFlags;
+    this->missIndex = missIndex;
+    this->rayOrigin = rayOrigin;
+    this->rayTmin = rayTmin;
+    this->rayDirection = rayDirection;
+    this->rayTmax = rayTmax;
+    this->currentTime = currentTime;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectRecordMissMotionEXT;
+  static constexpr uint16_t FixedWordSize = 9U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id rayFlags;
+  Id missIndex;
+  Id rayOrigin;
+  Id rayTmin;
+  Id rayDirection;
+  Id rayTmax;
+  Id currentTime;
+};
+
+struct OpHitObjectGetIntersectionTriangleVertexPositionsEXT
+{
+  OpHitObjectGetIntersectionTriangleVertexPositionsEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetIntersectionTriangleVertexPositionsEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetIntersectionTriangleVertexPositionsEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetIntersectionTriangleVertexPositionsEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetRayFlagsEXT
+{
+  OpHitObjectGetRayFlagsEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetRayFlagsEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetRayFlagsEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetRayFlagsEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectSetShaderBindingTableRecordIndexEXT
+{
+  OpHitObjectSetShaderBindingTableRecordIndexEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectSetShaderBindingTableRecordIndexEXT(Id hitObject, Id sBTRecordIndex)
+      : op(Op::HitObjectSetShaderBindingTableRecordIndexEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hitObject = hitObject;
+    this->sBTRecordIndex = sBTRecordIndex;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectSetShaderBindingTableRecordIndexEXT;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id sBTRecordIndex;
+};
+
+struct OpHitObjectReorderExecuteShaderEXT
+{
+  OpHitObjectReorderExecuteShaderEXT(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->hitObject = Id::fromWord(it.word(1));
+    this->payload = Id::fromWord(it.word(2));
+    this->hint = (it.size() > 3) ? Id::fromWord(it.word(3)) : Id();
+    this->bits = (it.size() > 4) ? Id::fromWord(it.word(4)) : Id();
+  }
+  OpHitObjectReorderExecuteShaderEXT(Id hitObject, Id payload, Id hint = Id(), Id bits = Id())
+      : op(Op::HitObjectReorderExecuteShaderEXT)
+      , wordCount(MinWordSize + OptionalWordCount(hint) + OptionalWordCount(bits))
+  {
+    this->hitObject = hitObject;
+    this->payload = payload;
+    this->hint = hint;
+    this->bits = bits;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(hitObject.value());
+    words.push_back(payload.value());
+    if(hint != Id()) words.push_back(hint.value());
+    if(bits != Id()) words.push_back(bits.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::HitObjectReorderExecuteShaderEXT;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id payload;
+  Id hint;
+  Id bits;
+
+  bool HasHint() const { return wordCount > 3; }
+  bool HasBits() const { return wordCount > 4; }
+};
+
+struct OpHitObjectTraceReorderExecuteEXT
+{
+  OpHitObjectTraceReorderExecuteEXT(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->hitObject = Id::fromWord(it.word(1));
+    this->accelerationStructure = Id::fromWord(it.word(2));
+    this->rayFlags = Id::fromWord(it.word(3));
+    this->cullMask = Id::fromWord(it.word(4));
+    this->sBTOffset = Id::fromWord(it.word(5));
+    this->sBTStride = Id::fromWord(it.word(6));
+    this->missIndex = Id::fromWord(it.word(7));
+    this->rayOrigin = Id::fromWord(it.word(8));
+    this->rayTmin = Id::fromWord(it.word(9));
+    this->rayDirection = Id::fromWord(it.word(10));
+    this->rayTmax = Id::fromWord(it.word(11));
+    this->payload = Id::fromWord(it.word(12));
+    this->hint = (it.size() > 13) ? Id::fromWord(it.word(13)) : Id();
+    this->bits = (it.size() > 14) ? Id::fromWord(it.word(14)) : Id();
+  }
+  OpHitObjectTraceReorderExecuteEXT(Id hitObject, Id accelerationStructure, Id rayFlags, Id cullMask, Id sBTOffset, Id sBTStride, Id missIndex, Id rayOrigin, Id rayTmin, Id rayDirection, Id rayTmax, Id payload, Id hint = Id(), Id bits = Id())
+      : op(Op::HitObjectTraceReorderExecuteEXT)
+      , wordCount(MinWordSize + OptionalWordCount(hint) + OptionalWordCount(bits))
+  {
+    this->hitObject = hitObject;
+    this->accelerationStructure = accelerationStructure;
+    this->rayFlags = rayFlags;
+    this->cullMask = cullMask;
+    this->sBTOffset = sBTOffset;
+    this->sBTStride = sBTStride;
+    this->missIndex = missIndex;
+    this->rayOrigin = rayOrigin;
+    this->rayTmin = rayTmin;
+    this->rayDirection = rayDirection;
+    this->rayTmax = rayTmax;
+    this->payload = payload;
+    this->hint = hint;
+    this->bits = bits;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(hitObject.value());
+    words.push_back(accelerationStructure.value());
+    words.push_back(rayFlags.value());
+    words.push_back(cullMask.value());
+    words.push_back(sBTOffset.value());
+    words.push_back(sBTStride.value());
+    words.push_back(missIndex.value());
+    words.push_back(rayOrigin.value());
+    words.push_back(rayTmin.value());
+    words.push_back(rayDirection.value());
+    words.push_back(rayTmax.value());
+    words.push_back(payload.value());
+    if(hint != Id()) words.push_back(hint.value());
+    if(bits != Id()) words.push_back(bits.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::HitObjectTraceReorderExecuteEXT;
+  static constexpr uint16_t MinWordSize = 13U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id accelerationStructure;
+  Id rayFlags;
+  Id cullMask;
+  Id sBTOffset;
+  Id sBTStride;
+  Id missIndex;
+  Id rayOrigin;
+  Id rayTmin;
+  Id rayDirection;
+  Id rayTmax;
+  Id payload;
+  Id hint;
+  Id bits;
+
+  bool HasHint() const { return wordCount > 13; }
+  bool HasBits() const { return wordCount > 14; }
+};
+
+struct OpHitObjectTraceMotionReorderExecuteEXT
+{
+  OpHitObjectTraceMotionReorderExecuteEXT(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->hitObject = Id::fromWord(it.word(1));
+    this->accelerationStructure = Id::fromWord(it.word(2));
+    this->rayFlags = Id::fromWord(it.word(3));
+    this->cullMask = Id::fromWord(it.word(4));
+    this->sBTOffset = Id::fromWord(it.word(5));
+    this->sBTStride = Id::fromWord(it.word(6));
+    this->missIndex = Id::fromWord(it.word(7));
+    this->rayOrigin = Id::fromWord(it.word(8));
+    this->rayTmin = Id::fromWord(it.word(9));
+    this->rayDirection = Id::fromWord(it.word(10));
+    this->rayTmax = Id::fromWord(it.word(11));
+    this->currentTime = Id::fromWord(it.word(12));
+    this->payload = Id::fromWord(it.word(13));
+    this->hint = (it.size() > 14) ? Id::fromWord(it.word(14)) : Id();
+    this->bits = (it.size() > 15) ? Id::fromWord(it.word(15)) : Id();
+  }
+  OpHitObjectTraceMotionReorderExecuteEXT(Id hitObject, Id accelerationStructure, Id rayFlags, Id cullMask, Id sBTOffset, Id sBTStride, Id missIndex, Id rayOrigin, Id rayTmin, Id rayDirection, Id rayTmax, Id currentTime, Id payload, Id hint = Id(), Id bits = Id())
+      : op(Op::HitObjectTraceMotionReorderExecuteEXT)
+      , wordCount(MinWordSize + OptionalWordCount(hint) + OptionalWordCount(bits))
+  {
+    this->hitObject = hitObject;
+    this->accelerationStructure = accelerationStructure;
+    this->rayFlags = rayFlags;
+    this->cullMask = cullMask;
+    this->sBTOffset = sBTOffset;
+    this->sBTStride = sBTStride;
+    this->missIndex = missIndex;
+    this->rayOrigin = rayOrigin;
+    this->rayTmin = rayTmin;
+    this->rayDirection = rayDirection;
+    this->rayTmax = rayTmax;
+    this->currentTime = currentTime;
+    this->payload = payload;
+    this->hint = hint;
+    this->bits = bits;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(hitObject.value());
+    words.push_back(accelerationStructure.value());
+    words.push_back(rayFlags.value());
+    words.push_back(cullMask.value());
+    words.push_back(sBTOffset.value());
+    words.push_back(sBTStride.value());
+    words.push_back(missIndex.value());
+    words.push_back(rayOrigin.value());
+    words.push_back(rayTmin.value());
+    words.push_back(rayDirection.value());
+    words.push_back(rayTmax.value());
+    words.push_back(currentTime.value());
+    words.push_back(payload.value());
+    if(hint != Id()) words.push_back(hint.value());
+    if(bits != Id()) words.push_back(bits.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::HitObjectTraceMotionReorderExecuteEXT;
+  static constexpr uint16_t MinWordSize = 14U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id accelerationStructure;
+  Id rayFlags;
+  Id cullMask;
+  Id sBTOffset;
+  Id sBTStride;
+  Id missIndex;
+  Id rayOrigin;
+  Id rayTmin;
+  Id rayDirection;
+  Id rayTmax;
+  Id currentTime;
+  Id payload;
+  Id hint;
+  Id bits;
+
+  bool HasHint() const { return wordCount > 14; }
+  bool HasBits() const { return wordCount > 15; }
+};
+
+struct OpTypeHitObjectEXT
+{
+  OpTypeHitObjectEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTypeHitObjectEXT(IdResult result)
+      : op(Op::TypeHitObjectEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->result = result;
+  }
+
+  static constexpr Op OpCode = Op::TypeHitObjectEXT;
+  static constexpr uint16_t FixedWordSize = 2U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+};
+
+struct OpReorderThreadWithHintEXT
+{
+  OpReorderThreadWithHintEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpReorderThreadWithHintEXT(Id hint, Id bits)
+      : op(Op::ReorderThreadWithHintEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hint = hint;
+    this->bits = bits;
+  }
+
+  static constexpr Op OpCode = Op::ReorderThreadWithHintEXT;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id hint;
+  Id bits;
+};
+
+struct OpReorderThreadWithHitObjectEXT
+{
+  OpReorderThreadWithHitObjectEXT(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->hitObject = Id::fromWord(it.word(1));
+    this->hint = (it.size() > 2) ? Id::fromWord(it.word(2)) : Id();
+    this->bits = (it.size() > 3) ? Id::fromWord(it.word(3)) : Id();
+  }
+  OpReorderThreadWithHitObjectEXT(Id hitObject, Id hint = Id(), Id bits = Id())
+      : op(Op::ReorderThreadWithHitObjectEXT)
+      , wordCount(MinWordSize + OptionalWordCount(hint) + OptionalWordCount(bits))
+  {
+    this->hitObject = hitObject;
+    this->hint = hint;
+    this->bits = bits;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(hitObject.value());
+    if(hint != Id()) words.push_back(hint.value());
+    if(bits != Id()) words.push_back(bits.value());
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::ReorderThreadWithHitObjectEXT;
+  static constexpr uint16_t MinWordSize = 2U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id hint;
+  Id bits;
+
+  bool HasHint() const { return wordCount > 2; }
+  bool HasBits() const { return wordCount > 3; }
+};
+
+struct OpHitObjectTraceRayEXT
+{
+  OpHitObjectTraceRayEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectTraceRayEXT(Id hitObject, Id accelerationStructure, Id rayFlags, Id cullMask, Id sBTOffset, Id sBTStride, Id missIndex, Id rayOrigin, Id rayTmin, Id rayDirection, Id rayTmax, Id payload)
+      : op(Op::HitObjectTraceRayEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hitObject = hitObject;
+    this->accelerationStructure = accelerationStructure;
+    this->rayFlags = rayFlags;
+    this->cullMask = cullMask;
+    this->sBTOffset = sBTOffset;
+    this->sBTStride = sBTStride;
+    this->missIndex = missIndex;
+    this->rayOrigin = rayOrigin;
+    this->rayTmin = rayTmin;
+    this->rayDirection = rayDirection;
+    this->rayTmax = rayTmax;
+    this->payload = payload;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectTraceRayEXT;
+  static constexpr uint16_t FixedWordSize = 13U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id accelerationStructure;
+  Id rayFlags;
+  Id cullMask;
+  Id sBTOffset;
+  Id sBTStride;
+  Id missIndex;
+  Id rayOrigin;
+  Id rayTmin;
+  Id rayDirection;
+  Id rayTmax;
+  Id payload;
+};
+
+struct OpHitObjectTraceRayMotionEXT
+{
+  OpHitObjectTraceRayMotionEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectTraceRayMotionEXT(Id hitObject, Id accelerationStructure, Id rayFlags, Id cullMask, Id sBTOffset, Id sBTStride, Id missIndex, Id rayOrigin, Id rayTmin, Id rayDirection, Id rayTmax, Id currentTime, Id payload)
+      : op(Op::HitObjectTraceRayMotionEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hitObject = hitObject;
+    this->accelerationStructure = accelerationStructure;
+    this->rayFlags = rayFlags;
+    this->cullMask = cullMask;
+    this->sBTOffset = sBTOffset;
+    this->sBTStride = sBTStride;
+    this->missIndex = missIndex;
+    this->rayOrigin = rayOrigin;
+    this->rayTmin = rayTmin;
+    this->rayDirection = rayDirection;
+    this->rayTmax = rayTmax;
+    this->currentTime = currentTime;
+    this->payload = payload;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectTraceRayMotionEXT;
+  static constexpr uint16_t FixedWordSize = 14U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id accelerationStructure;
+  Id rayFlags;
+  Id cullMask;
+  Id sBTOffset;
+  Id sBTStride;
+  Id missIndex;
+  Id rayOrigin;
+  Id rayTmin;
+  Id rayDirection;
+  Id rayTmax;
+  Id currentTime;
+  Id payload;
+};
+
+struct OpHitObjectRecordEmptyEXT
+{
+  OpHitObjectRecordEmptyEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectRecordEmptyEXT(Id hitObject)
+      : op(Op::HitObjectRecordEmptyEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectRecordEmptyEXT;
+  static constexpr uint16_t FixedWordSize = 2U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+};
+
+struct OpHitObjectExecuteShaderEXT
+{
+  OpHitObjectExecuteShaderEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectExecuteShaderEXT(Id hitObject, Id payload)
+      : op(Op::HitObjectExecuteShaderEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hitObject = hitObject;
+    this->payload = payload;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectExecuteShaderEXT;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id payload;
+};
+
+struct OpHitObjectGetCurrentTimeEXT
+{
+  OpHitObjectGetCurrentTimeEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetCurrentTimeEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetCurrentTimeEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetCurrentTimeEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetAttributesEXT
+{
+  OpHitObjectGetAttributesEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetAttributesEXT(Id hitObject, Id hitObjectAttribute)
+      : op(Op::HitObjectGetAttributesEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->hitObject = hitObject;
+    this->hitObjectAttribute = hitObjectAttribute;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetAttributesEXT;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id hitObject;
+  Id hitObjectAttribute;
+};
+
+struct OpHitObjectGetHitKindEXT
+{
+  OpHitObjectGetHitKindEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetHitKindEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetHitKindEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetHitKindEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetPrimitiveIndexEXT
+{
+  OpHitObjectGetPrimitiveIndexEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetPrimitiveIndexEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetPrimitiveIndexEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetPrimitiveIndexEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetGeometryIndexEXT
+{
+  OpHitObjectGetGeometryIndexEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetGeometryIndexEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetGeometryIndexEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetGeometryIndexEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetInstanceIdEXT
+{
+  OpHitObjectGetInstanceIdEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetInstanceIdEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetInstanceIdEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetInstanceIdEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetInstanceCustomIndexEXT
+{
+  OpHitObjectGetInstanceCustomIndexEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetInstanceCustomIndexEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetInstanceCustomIndexEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetInstanceCustomIndexEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetObjectRayOriginEXT
+{
+  OpHitObjectGetObjectRayOriginEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetObjectRayOriginEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetObjectRayOriginEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetObjectRayOriginEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetObjectRayDirectionEXT
+{
+  OpHitObjectGetObjectRayDirectionEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetObjectRayDirectionEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetObjectRayDirectionEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetObjectRayDirectionEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetWorldRayDirectionEXT
+{
+  OpHitObjectGetWorldRayDirectionEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetWorldRayDirectionEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetWorldRayDirectionEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetWorldRayDirectionEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetWorldRayOriginEXT
+{
+  OpHitObjectGetWorldRayOriginEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetWorldRayOriginEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetWorldRayOriginEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetWorldRayOriginEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetObjectToWorldEXT
+{
+  OpHitObjectGetObjectToWorldEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetObjectToWorldEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetObjectToWorldEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetObjectToWorldEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetWorldToObjectEXT
+{
+  OpHitObjectGetWorldToObjectEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetWorldToObjectEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetWorldToObjectEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetWorldToObjectEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetRayTMaxEXT
+{
+  OpHitObjectGetRayTMaxEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetRayTMaxEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetRayTMaxEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetRayTMaxEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
 };
 
 struct OpReportIntersectionKHR
@@ -16410,6 +19589,200 @@ struct OpExecuteCallableNV
   Id callableDataId;
 };
 
+struct OpRayQueryGetIntersectionClusterIdNV
+{
+  OpRayQueryGetIntersectionClusterIdNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRayQueryGetIntersectionClusterIdNV(IdResultType resultType, IdResult result, Id rayQuery, Id intersection)
+      : op(Op::RayQueryGetIntersectionClusterIdNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->rayQuery = rayQuery;
+    this->intersection = intersection;
+  }
+
+  static constexpr Op OpCode = Op::RayQueryGetIntersectionClusterIdNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id rayQuery;
+  Id intersection;
+};
+
+struct OpHitObjectGetClusterIdNV
+{
+  OpHitObjectGetClusterIdNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetClusterIdNV(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetClusterIdNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetClusterIdNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetRayTMinEXT
+{
+  OpHitObjectGetRayTMinEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetRayTMinEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetRayTMinEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetRayTMinEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetShaderBindingTableRecordIndexEXT
+{
+  OpHitObjectGetShaderBindingTableRecordIndexEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetShaderBindingTableRecordIndexEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetShaderBindingTableRecordIndexEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetShaderBindingTableRecordIndexEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetShaderRecordBufferHandleEXT
+{
+  OpHitObjectGetShaderRecordBufferHandleEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetShaderRecordBufferHandleEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetShaderRecordBufferHandleEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetShaderRecordBufferHandleEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectIsEmptyEXT
+{
+  OpHitObjectIsEmptyEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectIsEmptyEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectIsEmptyEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectIsEmptyEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectIsHitEXT
+{
+  OpHitObjectIsHitEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectIsHitEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectIsHitEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectIsHitEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectIsMissEXT
+{
+  OpHitObjectIsMissEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectIsMissEXT(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectIsMissEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectIsMissEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
 struct OpTypeCooperativeMatrixNV
 {
   OpTypeCooperativeMatrixNV(const ConstIter &it)
@@ -16626,6 +19999,547 @@ struct OpEndInvocationInterlockEXT
   // no operands
 };
 
+struct OpCooperativeMatrixReduceNV
+{
+  OpCooperativeMatrixReduceNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpCooperativeMatrixReduceNV(IdResultType resultType, IdResult result, Id matrix, CooperativeMatrixReduce reduce, Id combineFunc)
+      : op(Op::CooperativeMatrixReduceNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->matrix = matrix;
+    this->reduce = reduce;
+    this->combineFunc = combineFunc;
+  }
+
+  static constexpr Op OpCode = Op::CooperativeMatrixReduceNV;
+  static constexpr uint16_t FixedWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id matrix;
+  CooperativeMatrixReduce reduce;
+  Id combineFunc;
+};
+
+struct OpCooperativeMatrixLoadTensorNV
+{
+  OpCooperativeMatrixLoadTensorNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->pointer = Id::fromWord(it.word(3));
+    this->object = Id::fromWord(it.word(4));
+    this->tensorLayout = Id::fromWord(it.word(5));
+    word = 6;
+    this->memoryOperand = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+    this->tensorAddressingOperands = DecodeParam<TensorAddressingOperandsAndParamDatas>(it, word);
+  }
+  OpCooperativeMatrixLoadTensorNV(IdResultType resultType, IdResult result, Id pointer, Id object, Id tensorLayout, MemoryAccessAndParamDatas memoryOperand, TensorAddressingOperandsAndParamDatas tensorAddressingOperands)
+      : op(Op::CooperativeMatrixLoadTensorNV)
+      , wordCount(MinWordSize + ExtraWordCount(memoryOperand) + ExtraWordCount(tensorAddressingOperands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->pointer = pointer;
+    this->object = object;
+    this->tensorLayout = tensorLayout;
+    this->memoryOperand = memoryOperand;
+    this->tensorAddressingOperands = tensorAddressingOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(pointer.value());
+    words.push_back(object.value());
+    words.push_back(tensorLayout.value());
+    EncodeParam(words, memoryOperand);
+    EncodeParam(words, tensorAddressingOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::CooperativeMatrixLoadTensorNV;
+  static constexpr uint16_t MinWordSize = 8U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id pointer;
+  Id object;
+  Id tensorLayout;
+  MemoryAccessAndParamDatas memoryOperand;
+  TensorAddressingOperandsAndParamDatas tensorAddressingOperands;
+};
+
+struct OpCooperativeMatrixStoreTensorNV
+{
+  OpCooperativeMatrixStoreTensorNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->pointer = Id::fromWord(it.word(1));
+    this->object = Id::fromWord(it.word(2));
+    this->tensorLayout = Id::fromWord(it.word(3));
+    word = 4;
+    this->memoryOperand = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+    this->tensorAddressingOperands = DecodeParam<TensorAddressingOperandsAndParamDatas>(it, word);
+  }
+  OpCooperativeMatrixStoreTensorNV(Id pointer, Id object, Id tensorLayout, MemoryAccessAndParamDatas memoryOperand, TensorAddressingOperandsAndParamDatas tensorAddressingOperands)
+      : op(Op::CooperativeMatrixStoreTensorNV)
+      , wordCount(MinWordSize + ExtraWordCount(memoryOperand) + ExtraWordCount(tensorAddressingOperands))
+  {
+    this->pointer = pointer;
+    this->object = object;
+    this->tensorLayout = tensorLayout;
+    this->memoryOperand = memoryOperand;
+    this->tensorAddressingOperands = tensorAddressingOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(pointer.value());
+    words.push_back(object.value());
+    words.push_back(tensorLayout.value());
+    EncodeParam(words, memoryOperand);
+    EncodeParam(words, tensorAddressingOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::CooperativeMatrixStoreTensorNV;
+  static constexpr uint16_t MinWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  Id pointer;
+  Id object;
+  Id tensorLayout;
+  MemoryAccessAndParamDatas memoryOperand;
+  TensorAddressingOperandsAndParamDatas tensorAddressingOperands;
+};
+
+struct OpCooperativeMatrixPerElementOpNV
+{
+  OpCooperativeMatrixPerElementOpNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->matrix = Id::fromWord(it.word(3));
+    this->func = Id::fromWord(it.word(4));
+    word = 5;
+    this->operands = MultiParam<Id>(it, word);
+  }
+  OpCooperativeMatrixPerElementOpNV(IdResultType resultType, IdResult result, Id matrix, Id func, const rdcarray<Id> &operands = {})
+      : op(Op::CooperativeMatrixPerElementOpNV)
+      , wordCount(MinWordSize + MultiWordCount(operands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->matrix = matrix;
+    this->func = func;
+    this->operands = operands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(matrix.value());
+    words.push_back(func.value());
+    for(size_t i=0; i < operands.size(); i++)
+    {
+      words.push_back(operands[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::CooperativeMatrixPerElementOpNV;
+  static constexpr uint16_t MinWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id matrix;
+  Id func;
+  rdcarray<Id> operands;
+};
+
+struct OpTypeTensorLayoutNV
+{
+  OpTypeTensorLayoutNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTypeTensorLayoutNV(IdResult result, Id dim, Id clampMode)
+      : op(Op::TypeTensorLayoutNV)
+      , wordCount(FixedWordSize)
+  {
+    this->result = result;
+    this->dim = dim;
+    this->clampMode = clampMode;
+  }
+
+  static constexpr Op OpCode = Op::TypeTensorLayoutNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  Id dim;
+  Id clampMode;
+};
+
+struct OpTypeTensorViewNV
+{
+  OpTypeTensorViewNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->result = Id::fromWord(it.word(1));
+    this->dim = Id::fromWord(it.word(2));
+    this->hasDimensions = Id::fromWord(it.word(3));
+    word = 4;
+    this->p = MultiParam<Id>(it, word);
+  }
+  OpTypeTensorViewNV(IdResult result, Id dim, Id hasDimensions, const rdcarray<Id> &p = {})
+      : op(Op::TypeTensorViewNV)
+      , wordCount(MinWordSize + MultiWordCount(p))
+  {
+    this->result = result;
+    this->dim = dim;
+    this->hasDimensions = hasDimensions;
+    this->p = p;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(result.value());
+    words.push_back(dim.value());
+    words.push_back(hasDimensions.value());
+    for(size_t i=0; i < p.size(); i++)
+    {
+      words.push_back(p[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TypeTensorViewNV;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResult result;
+  Id dim;
+  Id hasDimensions;
+  rdcarray<Id> p;
+};
+
+struct OpCreateTensorLayoutNV
+{
+  OpCreateTensorLayoutNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpCreateTensorLayoutNV(IdResultType resultType, IdResult result)
+      : op(Op::CreateTensorLayoutNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+  }
+
+  static constexpr Op OpCode = Op::CreateTensorLayoutNV;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+};
+
+struct OpTensorLayoutSetDimensionNV
+{
+  OpTensorLayoutSetDimensionNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->tensorLayout = Id::fromWord(it.word(3));
+    word = 4;
+    this->dim = MultiParam<Id>(it, word);
+  }
+  OpTensorLayoutSetDimensionNV(IdResultType resultType, IdResult result, Id tensorLayout, const rdcarray<Id> &dim = {})
+      : op(Op::TensorLayoutSetDimensionNV)
+      , wordCount(MinWordSize + MultiWordCount(dim))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensorLayout = tensorLayout;
+    this->dim = dim;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(tensorLayout.value());
+    for(size_t i=0; i < dim.size(); i++)
+    {
+      words.push_back(dim[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TensorLayoutSetDimensionNV;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensorLayout;
+  rdcarray<Id> dim;
+};
+
+struct OpTensorLayoutSetStrideNV
+{
+  OpTensorLayoutSetStrideNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->tensorLayout = Id::fromWord(it.word(3));
+    word = 4;
+    this->stride = MultiParam<Id>(it, word);
+  }
+  OpTensorLayoutSetStrideNV(IdResultType resultType, IdResult result, Id tensorLayout, const rdcarray<Id> &stride = {})
+      : op(Op::TensorLayoutSetStrideNV)
+      , wordCount(MinWordSize + MultiWordCount(stride))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensorLayout = tensorLayout;
+    this->stride = stride;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(tensorLayout.value());
+    for(size_t i=0; i < stride.size(); i++)
+    {
+      words.push_back(stride[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TensorLayoutSetStrideNV;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensorLayout;
+  rdcarray<Id> stride;
+};
+
+struct OpTensorLayoutSliceNV
+{
+  OpTensorLayoutSliceNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->tensorLayout = Id::fromWord(it.word(3));
+    word = 4;
+    this->operands = MultiParam<Id>(it, word);
+  }
+  OpTensorLayoutSliceNV(IdResultType resultType, IdResult result, Id tensorLayout, const rdcarray<Id> &operands = {})
+      : op(Op::TensorLayoutSliceNV)
+      , wordCount(MinWordSize + MultiWordCount(operands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensorLayout = tensorLayout;
+    this->operands = operands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(tensorLayout.value());
+    for(size_t i=0; i < operands.size(); i++)
+    {
+      words.push_back(operands[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TensorLayoutSliceNV;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensorLayout;
+  rdcarray<Id> operands;
+};
+
+struct OpTensorLayoutSetClampValueNV
+{
+  OpTensorLayoutSetClampValueNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTensorLayoutSetClampValueNV(IdResultType resultType, IdResult result, Id tensorLayout, Id value)
+      : op(Op::TensorLayoutSetClampValueNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensorLayout = tensorLayout;
+    this->value = value;
+  }
+
+  static constexpr Op OpCode = Op::TensorLayoutSetClampValueNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensorLayout;
+  Id value;
+};
+
+struct OpCreateTensorViewNV
+{
+  OpCreateTensorViewNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpCreateTensorViewNV(IdResultType resultType, IdResult result)
+      : op(Op::CreateTensorViewNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+  }
+
+  static constexpr Op OpCode = Op::CreateTensorViewNV;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+};
+
+struct OpTensorViewSetDimensionNV
+{
+  OpTensorViewSetDimensionNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->tensorView = Id::fromWord(it.word(3));
+    word = 4;
+    this->dim = MultiParam<Id>(it, word);
+  }
+  OpTensorViewSetDimensionNV(IdResultType resultType, IdResult result, Id tensorView, const rdcarray<Id> &dim = {})
+      : op(Op::TensorViewSetDimensionNV)
+      , wordCount(MinWordSize + MultiWordCount(dim))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensorView = tensorView;
+    this->dim = dim;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(tensorView.value());
+    for(size_t i=0; i < dim.size(); i++)
+    {
+      words.push_back(dim[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TensorViewSetDimensionNV;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensorView;
+  rdcarray<Id> dim;
+};
+
+struct OpTensorViewSetStrideNV
+{
+  OpTensorViewSetStrideNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->tensorView = Id::fromWord(it.word(3));
+    word = 4;
+    this->stride = MultiParam<Id>(it, word);
+  }
+  OpTensorViewSetStrideNV(IdResultType resultType, IdResult result, Id tensorView, const rdcarray<Id> &stride = {})
+      : op(Op::TensorViewSetStrideNV)
+      , wordCount(MinWordSize + MultiWordCount(stride))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensorView = tensorView;
+    this->stride = stride;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(tensorView.value());
+    for(size_t i=0; i < stride.size(); i++)
+    {
+      words.push_back(stride[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TensorViewSetStrideNV;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensorView;
+  rdcarray<Id> stride;
+};
+
 struct OpDemoteToHelperInvocation
 {
   OpDemoteToHelperInvocation(const ConstIter &it)
@@ -16666,6 +20580,107 @@ struct OpIsHelperInvocationEXT
   uint16_t wordCount;
   IdResultType resultType;
   IdResult result;
+};
+
+struct OpTensorViewSetClipNV
+{
+  OpTensorViewSetClipNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpTensorViewSetClipNV(IdResultType resultType, IdResult result, Id tensorView, Id clipRowOffset, Id clipRowSpan, Id clipColOffset, Id clipColSpan)
+      : op(Op::TensorViewSetClipNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensorView = tensorView;
+    this->clipRowOffset = clipRowOffset;
+    this->clipRowSpan = clipRowSpan;
+    this->clipColOffset = clipColOffset;
+    this->clipColSpan = clipColSpan;
+  }
+
+  static constexpr Op OpCode = Op::TensorViewSetClipNV;
+  static constexpr uint16_t FixedWordSize = 8U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensorView;
+  Id clipRowOffset;
+  Id clipRowSpan;
+  Id clipColOffset;
+  Id clipColSpan;
+};
+
+struct OpTensorLayoutSetBlockSizeNV
+{
+  OpTensorLayoutSetBlockSizeNV(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->tensorLayout = Id::fromWord(it.word(3));
+    word = 4;
+    this->blockSize = MultiParam<Id>(it, word);
+  }
+  OpTensorLayoutSetBlockSizeNV(IdResultType resultType, IdResult result, Id tensorLayout, const rdcarray<Id> &blockSize = {})
+      : op(Op::TensorLayoutSetBlockSizeNV)
+      , wordCount(MinWordSize + MultiWordCount(blockSize))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->tensorLayout = tensorLayout;
+    this->blockSize = blockSize;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(tensorLayout.value());
+    for(size_t i=0; i < blockSize.size(); i++)
+    {
+      words.push_back(blockSize[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::TensorLayoutSetBlockSizeNV;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id tensorLayout;
+  rdcarray<Id> blockSize;
+};
+
+struct OpCooperativeMatrixTransposeNV
+{
+  OpCooperativeMatrixTransposeNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpCooperativeMatrixTransposeNV(IdResultType resultType, IdResult result, Id matrix)
+      : op(Op::CooperativeMatrixTransposeNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->matrix = matrix;
+  }
+
+  static constexpr Op OpCode = Op::CooperativeMatrixTransposeNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id matrix;
 };
 
 struct OpConvertUToImageNV
@@ -16885,6 +20900,332 @@ struct OpRawAccessChainNV
   RawAccessChainOperands rawAccessChainOperands;
 
   bool HasRawAccessChainOperands() const { return wordCount > 7; }
+};
+
+struct OpRayQueryGetIntersectionSpherePositionNV
+{
+  OpRayQueryGetIntersectionSpherePositionNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRayQueryGetIntersectionSpherePositionNV(IdResultType resultType, IdResult result, Id rayQuery, Id intersection)
+      : op(Op::RayQueryGetIntersectionSpherePositionNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->rayQuery = rayQuery;
+    this->intersection = intersection;
+  }
+
+  static constexpr Op OpCode = Op::RayQueryGetIntersectionSpherePositionNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id rayQuery;
+  Id intersection;
+};
+
+struct OpRayQueryGetIntersectionSphereRadiusNV
+{
+  OpRayQueryGetIntersectionSphereRadiusNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRayQueryGetIntersectionSphereRadiusNV(IdResultType resultType, IdResult result, Id rayQuery, Id intersection)
+      : op(Op::RayQueryGetIntersectionSphereRadiusNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->rayQuery = rayQuery;
+    this->intersection = intersection;
+  }
+
+  static constexpr Op OpCode = Op::RayQueryGetIntersectionSphereRadiusNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id rayQuery;
+  Id intersection;
+};
+
+struct OpRayQueryGetIntersectionLSSPositionsNV
+{
+  OpRayQueryGetIntersectionLSSPositionsNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRayQueryGetIntersectionLSSPositionsNV(IdResultType resultType, IdResult result, Id rayQuery, Id intersection)
+      : op(Op::RayQueryGetIntersectionLSSPositionsNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->rayQuery = rayQuery;
+    this->intersection = intersection;
+  }
+
+  static constexpr Op OpCode = Op::RayQueryGetIntersectionLSSPositionsNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id rayQuery;
+  Id intersection;
+};
+
+struct OpRayQueryGetIntersectionLSSRadiiNV
+{
+  OpRayQueryGetIntersectionLSSRadiiNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRayQueryGetIntersectionLSSRadiiNV(IdResultType resultType, IdResult result, Id rayQuery, Id intersection)
+      : op(Op::RayQueryGetIntersectionLSSRadiiNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->rayQuery = rayQuery;
+    this->intersection = intersection;
+  }
+
+  static constexpr Op OpCode = Op::RayQueryGetIntersectionLSSRadiiNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id rayQuery;
+  Id intersection;
+};
+
+struct OpRayQueryGetIntersectionLSSHitValueNV
+{
+  OpRayQueryGetIntersectionLSSHitValueNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRayQueryGetIntersectionLSSHitValueNV(IdResultType resultType, IdResult result, Id rayQuery, Id intersection)
+      : op(Op::RayQueryGetIntersectionLSSHitValueNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->rayQuery = rayQuery;
+    this->intersection = intersection;
+  }
+
+  static constexpr Op OpCode = Op::RayQueryGetIntersectionLSSHitValueNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id rayQuery;
+  Id intersection;
+};
+
+struct OpHitObjectGetSpherePositionNV
+{
+  OpHitObjectGetSpherePositionNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetSpherePositionNV(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetSpherePositionNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetSpherePositionNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetSphereRadiusNV
+{
+  OpHitObjectGetSphereRadiusNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetSphereRadiusNV(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetSphereRadiusNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetSphereRadiusNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetLSSPositionsNV
+{
+  OpHitObjectGetLSSPositionsNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetLSSPositionsNV(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetLSSPositionsNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetLSSPositionsNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectGetLSSRadiiNV
+{
+  OpHitObjectGetLSSRadiiNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectGetLSSRadiiNV(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectGetLSSRadiiNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectGetLSSRadiiNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectIsSphereHitNV
+{
+  OpHitObjectIsSphereHitNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectIsSphereHitNV(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectIsSphereHitNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectIsSphereHitNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpHitObjectIsLSSHitNV
+{
+  OpHitObjectIsLSSHitNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpHitObjectIsLSSHitNV(IdResultType resultType, IdResult result, Id hitObject)
+      : op(Op::HitObjectIsLSSHitNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->hitObject = hitObject;
+  }
+
+  static constexpr Op OpCode = Op::HitObjectIsLSSHitNV;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id hitObject;
+};
+
+struct OpRayQueryIsSphereHitNV
+{
+  OpRayQueryIsSphereHitNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRayQueryIsSphereHitNV(IdResultType resultType, IdResult result, Id rayQuery, Id intersection)
+      : op(Op::RayQueryIsSphereHitNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->rayQuery = rayQuery;
+    this->intersection = intersection;
+  }
+
+  static constexpr Op OpCode = Op::RayQueryIsSphereHitNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id rayQuery;
+  Id intersection;
+};
+
+struct OpRayQueryIsLSSHitNV
+{
+  OpRayQueryIsLSSHitNV(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRayQueryIsLSSHitNV(IdResultType resultType, IdResult result, Id rayQuery, Id intersection)
+      : op(Op::RayQueryIsLSSHitNV)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->rayQuery = rayQuery;
+    this->intersection = intersection;
+  }
+
+  static constexpr Op OpCode = Op::RayQueryIsLSSHitNV;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id rayQuery;
+  Id intersection;
 };
 
 struct OpSubgroupShuffleINTEL
@@ -17687,6 +22028,72 @@ struct OpMemberDecorateString
   DecorationAndParamData decoration;
 };
 
+struct OpVariableLengthArrayINTEL
+{
+  OpVariableLengthArrayINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpVariableLengthArrayINTEL(IdResultType resultType, IdResult result, Id length)
+      : op(Op::VariableLengthArrayINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->length = length;
+  }
+
+  static constexpr Op OpCode = Op::VariableLengthArrayINTEL;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id length;
+};
+
+struct OpSaveMemoryINTEL
+{
+  OpSaveMemoryINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpSaveMemoryINTEL(IdResultType resultType, IdResult result)
+      : op(Op::SaveMemoryINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+  }
+
+  static constexpr Op OpCode = Op::SaveMemoryINTEL;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+};
+
+struct OpRestoreMemoryINTEL
+{
+  OpRestoreMemoryINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRestoreMemoryINTEL(Id ptr)
+      : op(Op::RestoreMemoryINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->ptr = ptr;
+  }
+
+  static constexpr Op OpCode = Op::RestoreMemoryINTEL;
+  static constexpr uint16_t FixedWordSize = 2U;
+  Op op;
+  uint16_t wordCount;
+  Id ptr;
+};
+
 struct OpLoopControlINTEL
 {
   OpLoopControlINTEL(const ConstIter &it)
@@ -17718,84 +22125,6 @@ struct OpLoopControlINTEL
   Op op;
   uint16_t wordCount;
   rdcarray<uint32_t> loopControlParameters;
-};
-
-struct OpReadPipeBlockingINTEL
-{
-  OpReadPipeBlockingINTEL(const ConstIter &it)
-  {
-    memcpy(this, it.words(), sizeof(*this));
-  }
-  OpReadPipeBlockingINTEL(IdResultType resultType, IdResult result, Id packetSize, Id packetAlignment)
-      : op(Op::ReadPipeBlockingINTEL)
-      , wordCount(FixedWordSize)
-  {
-    this->resultType = resultType;
-    this->result = result;
-    this->packetSize = packetSize;
-    this->packetAlignment = packetAlignment;
-  }
-
-  static constexpr Op OpCode = Op::ReadPipeBlockingINTEL;
-  static constexpr uint16_t FixedWordSize = 5U;
-  Op op;
-  uint16_t wordCount;
-  IdResultType resultType;
-  IdResult result;
-  Id packetSize;
-  Id packetAlignment;
-};
-
-struct OpWritePipeBlockingINTEL
-{
-  OpWritePipeBlockingINTEL(const ConstIter &it)
-  {
-    memcpy(this, it.words(), sizeof(*this));
-  }
-  OpWritePipeBlockingINTEL(IdResultType resultType, IdResult result, Id packetSize, Id packetAlignment)
-      : op(Op::WritePipeBlockingINTEL)
-      , wordCount(FixedWordSize)
-  {
-    this->resultType = resultType;
-    this->result = result;
-    this->packetSize = packetSize;
-    this->packetAlignment = packetAlignment;
-  }
-
-  static constexpr Op OpCode = Op::WritePipeBlockingINTEL;
-  static constexpr uint16_t FixedWordSize = 5U;
-  Op op;
-  uint16_t wordCount;
-  IdResultType resultType;
-  IdResult result;
-  Id packetSize;
-  Id packetAlignment;
-};
-
-struct OpFPGARegINTEL
-{
-  OpFPGARegINTEL(const ConstIter &it)
-  {
-    memcpy(this, it.words(), sizeof(*this));
-  }
-  OpFPGARegINTEL(IdResultType resultType, IdResult result0, Id result1, Id input)
-      : op(Op::FPGARegINTEL)
-      , wordCount(FixedWordSize)
-  {
-    this->resultType = resultType;
-    this->result0 = result0;
-    this->result1 = result1;
-    this->input = input;
-  }
-
-  static constexpr Op OpCode = Op::FPGARegINTEL;
-  static constexpr uint16_t FixedWordSize = 5U;
-  Op op;
-  uint16_t wordCount;
-  IdResultType resultType;
-  IdResult result0;
-  Id result1;
-  Id input;
 };
 
 struct OpRayQueryGetRayTMinKHR
@@ -18388,24 +22717,18 @@ struct OpCompositeConstructContinuedINTEL
     uint32_t word = 0;(void)word;
     this->op = OpCode;
     this->wordCount = (uint16_t)it.size();
-    this->resultType = Id::fromWord(it.word(1));
-    this->result = Id::fromWord(it.word(2));
-    word = 3;
+    word = 1;
     this->constituents = MultiParam<Id>(it, word);
   }
-  OpCompositeConstructContinuedINTEL(IdResultType resultType, IdResult result, const rdcarray<Id> &constituents = {})
+  OpCompositeConstructContinuedINTEL(const rdcarray<Id> &constituents = {})
       : op(Op::CompositeConstructContinuedINTEL)
       , wordCount(MinWordSize + MultiWordCount(constituents))
   {
-    this->resultType = resultType;
-    this->result = result;
     this->constituents = constituents;
   }
   operator Operation() const
   {
     rdcarray<uint32_t> words;
-    words.push_back(resultType.value());
-    words.push_back(result.value());
     for(size_t i=0; i < constituents.size(); i++)
     {
       words.push_back(constituents[i].value());
@@ -18414,11 +22737,9 @@ struct OpCompositeConstructContinuedINTEL
   }
 
   static constexpr Op OpCode = Op::CompositeConstructContinuedINTEL;
-  static constexpr uint16_t MinWordSize = 3U;
+  static constexpr uint16_t MinWordSize = 1U;
   Op op;
   uint16_t wordCount;
-  IdResultType resultType;
-  IdResult result;
   rdcarray<Id> constituents;
 };
 
@@ -18470,14 +22791,14 @@ struct OpConvertBF16ToFINTEL
   Id bFloat16Value;
 };
 
-struct OpControlBarrierArriveINTEL
+struct OpControlBarrierArriveEXT
 {
-  OpControlBarrierArriveINTEL(const ConstIter &it)
+  OpControlBarrierArriveEXT(const ConstIter &it)
   {
     memcpy(this, it.words(), sizeof(*this));
   }
-  OpControlBarrierArriveINTEL(IdScope execution, IdScope memory, IdMemorySemantics semantics)
-      : op(Op::ControlBarrierArriveINTEL)
+  OpControlBarrierArriveEXT(IdScope execution, IdScope memory, IdMemorySemantics semantics)
+      : op(Op::ControlBarrierArriveEXT)
       , wordCount(FixedWordSize)
   {
     this->execution = execution;
@@ -18485,7 +22806,7 @@ struct OpControlBarrierArriveINTEL
     this->semantics = semantics;
   }
 
-  static constexpr Op OpCode = Op::ControlBarrierArriveINTEL;
+  static constexpr Op OpCode = Op::ControlBarrierArriveEXT;
   static constexpr uint16_t FixedWordSize = 4U;
   Op op;
   uint16_t wordCount;
@@ -18494,14 +22815,14 @@ struct OpControlBarrierArriveINTEL
   IdMemorySemantics semantics;
 };
 
-struct OpControlBarrierWaitINTEL
+struct OpControlBarrierWaitEXT
 {
-  OpControlBarrierWaitINTEL(const ConstIter &it)
+  OpControlBarrierWaitEXT(const ConstIter &it)
   {
     memcpy(this, it.words(), sizeof(*this));
   }
-  OpControlBarrierWaitINTEL(IdScope execution, IdScope memory, IdMemorySemantics semantics)
-      : op(Op::ControlBarrierWaitINTEL)
+  OpControlBarrierWaitEXT(IdScope execution, IdScope memory, IdMemorySemantics semantics)
+      : op(Op::ControlBarrierWaitEXT)
       , wordCount(FixedWordSize)
   {
     this->execution = execution;
@@ -18509,13 +22830,728 @@ struct OpControlBarrierWaitINTEL
     this->semantics = semantics;
   }
 
-  static constexpr Op OpCode = Op::ControlBarrierWaitINTEL;
+  static constexpr Op OpCode = Op::ControlBarrierWaitEXT;
   static constexpr uint16_t FixedWordSize = 4U;
   Op op;
   uint16_t wordCount;
   IdScope execution;
   IdScope memory;
   IdMemorySemantics semantics;
+};
+
+struct OpArithmeticFenceEXT
+{
+  OpArithmeticFenceEXT(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpArithmeticFenceEXT(IdResultType resultType, IdResult result, Id target)
+      : op(Op::ArithmeticFenceEXT)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->target = target;
+  }
+
+  static constexpr Op OpCode = Op::ArithmeticFenceEXT;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id target;
+};
+
+struct OpSubgroupBlockPrefetchINTEL
+{
+  OpSubgroupBlockPrefetchINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->ptr = Id::fromWord(it.word(1));
+    this->numBytes = Id::fromWord(it.word(2));
+    word = 3;
+    this->memoryAccess = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+  }
+  OpSubgroupBlockPrefetchINTEL(Id ptr, Id numBytes, MemoryAccessAndParamDatas memoryAccess = MemoryAccess::None)
+      : op(Op::SubgroupBlockPrefetchINTEL)
+      , wordCount(MinWordSize + ExtraWordCount(memoryAccess))
+  {
+    this->ptr = ptr;
+    this->numBytes = numBytes;
+    this->memoryAccess = memoryAccess;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(ptr.value());
+    words.push_back(numBytes.value());
+    EncodeParam(words, memoryAccess);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::SubgroupBlockPrefetchINTEL;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id ptr;
+  Id numBytes;
+  MemoryAccessAndParamDatas memoryAccess;
+};
+
+struct OpSubgroup2DBlockLoadINTEL
+{
+  OpSubgroup2DBlockLoadINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpSubgroup2DBlockLoadINTEL(Id elementSize, Id blockWidth, Id blockHeight, Id blockCount, Id srcBasePointer, Id memoryWidth, Id memoryHeight, Id memoryPitch, Id coordinate, Id dstPointer)
+      : op(Op::Subgroup2DBlockLoadINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->elementSize = elementSize;
+    this->blockWidth = blockWidth;
+    this->blockHeight = blockHeight;
+    this->blockCount = blockCount;
+    this->srcBasePointer = srcBasePointer;
+    this->memoryWidth = memoryWidth;
+    this->memoryHeight = memoryHeight;
+    this->memoryPitch = memoryPitch;
+    this->coordinate = coordinate;
+    this->dstPointer = dstPointer;
+  }
+
+  static constexpr Op OpCode = Op::Subgroup2DBlockLoadINTEL;
+  static constexpr uint16_t FixedWordSize = 11U;
+  Op op;
+  uint16_t wordCount;
+  Id elementSize;
+  Id blockWidth;
+  Id blockHeight;
+  Id blockCount;
+  Id srcBasePointer;
+  Id memoryWidth;
+  Id memoryHeight;
+  Id memoryPitch;
+  Id coordinate;
+  Id dstPointer;
+};
+
+struct OpSubgroup2DBlockLoadTransformINTEL
+{
+  OpSubgroup2DBlockLoadTransformINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpSubgroup2DBlockLoadTransformINTEL(Id elementSize, Id blockWidth, Id blockHeight, Id blockCount, Id srcBasePointer, Id memoryWidth, Id memoryHeight, Id memoryPitch, Id coordinate, Id dstPointer)
+      : op(Op::Subgroup2DBlockLoadTransformINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->elementSize = elementSize;
+    this->blockWidth = blockWidth;
+    this->blockHeight = blockHeight;
+    this->blockCount = blockCount;
+    this->srcBasePointer = srcBasePointer;
+    this->memoryWidth = memoryWidth;
+    this->memoryHeight = memoryHeight;
+    this->memoryPitch = memoryPitch;
+    this->coordinate = coordinate;
+    this->dstPointer = dstPointer;
+  }
+
+  static constexpr Op OpCode = Op::Subgroup2DBlockLoadTransformINTEL;
+  static constexpr uint16_t FixedWordSize = 11U;
+  Op op;
+  uint16_t wordCount;
+  Id elementSize;
+  Id blockWidth;
+  Id blockHeight;
+  Id blockCount;
+  Id srcBasePointer;
+  Id memoryWidth;
+  Id memoryHeight;
+  Id memoryPitch;
+  Id coordinate;
+  Id dstPointer;
+};
+
+struct OpSubgroup2DBlockLoadTransposeINTEL
+{
+  OpSubgroup2DBlockLoadTransposeINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpSubgroup2DBlockLoadTransposeINTEL(Id elementSize, Id blockWidth, Id blockHeight, Id blockCount, Id srcBasePointer, Id memoryWidth, Id memoryHeight, Id memoryPitch, Id coordinate, Id dstPointer)
+      : op(Op::Subgroup2DBlockLoadTransposeINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->elementSize = elementSize;
+    this->blockWidth = blockWidth;
+    this->blockHeight = blockHeight;
+    this->blockCount = blockCount;
+    this->srcBasePointer = srcBasePointer;
+    this->memoryWidth = memoryWidth;
+    this->memoryHeight = memoryHeight;
+    this->memoryPitch = memoryPitch;
+    this->coordinate = coordinate;
+    this->dstPointer = dstPointer;
+  }
+
+  static constexpr Op OpCode = Op::Subgroup2DBlockLoadTransposeINTEL;
+  static constexpr uint16_t FixedWordSize = 11U;
+  Op op;
+  uint16_t wordCount;
+  Id elementSize;
+  Id blockWidth;
+  Id blockHeight;
+  Id blockCount;
+  Id srcBasePointer;
+  Id memoryWidth;
+  Id memoryHeight;
+  Id memoryPitch;
+  Id coordinate;
+  Id dstPointer;
+};
+
+struct OpSubgroup2DBlockPrefetchINTEL
+{
+  OpSubgroup2DBlockPrefetchINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpSubgroup2DBlockPrefetchINTEL(Id elementSize, Id blockWidth, Id blockHeight, Id blockCount, Id srcBasePointer, Id memoryWidth, Id memoryHeight, Id memoryPitch, Id coordinate)
+      : op(Op::Subgroup2DBlockPrefetchINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->elementSize = elementSize;
+    this->blockWidth = blockWidth;
+    this->blockHeight = blockHeight;
+    this->blockCount = blockCount;
+    this->srcBasePointer = srcBasePointer;
+    this->memoryWidth = memoryWidth;
+    this->memoryHeight = memoryHeight;
+    this->memoryPitch = memoryPitch;
+    this->coordinate = coordinate;
+  }
+
+  static constexpr Op OpCode = Op::Subgroup2DBlockPrefetchINTEL;
+  static constexpr uint16_t FixedWordSize = 10U;
+  Op op;
+  uint16_t wordCount;
+  Id elementSize;
+  Id blockWidth;
+  Id blockHeight;
+  Id blockCount;
+  Id srcBasePointer;
+  Id memoryWidth;
+  Id memoryHeight;
+  Id memoryPitch;
+  Id coordinate;
+};
+
+struct OpSubgroup2DBlockStoreINTEL
+{
+  OpSubgroup2DBlockStoreINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpSubgroup2DBlockStoreINTEL(Id elementSize, Id blockWidth, Id blockHeight, Id blockCount, Id srcPointer, Id dstBasePointer, Id memoryWidth, Id memoryHeight, Id memoryPitch, Id coordinate)
+      : op(Op::Subgroup2DBlockStoreINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->elementSize = elementSize;
+    this->blockWidth = blockWidth;
+    this->blockHeight = blockHeight;
+    this->blockCount = blockCount;
+    this->srcPointer = srcPointer;
+    this->dstBasePointer = dstBasePointer;
+    this->memoryWidth = memoryWidth;
+    this->memoryHeight = memoryHeight;
+    this->memoryPitch = memoryPitch;
+    this->coordinate = coordinate;
+  }
+
+  static constexpr Op OpCode = Op::Subgroup2DBlockStoreINTEL;
+  static constexpr uint16_t FixedWordSize = 11U;
+  Op op;
+  uint16_t wordCount;
+  Id elementSize;
+  Id blockWidth;
+  Id blockHeight;
+  Id blockCount;
+  Id srcPointer;
+  Id dstBasePointer;
+  Id memoryWidth;
+  Id memoryHeight;
+  Id memoryPitch;
+  Id coordinate;
+};
+
+struct OpSubgroupMatrixMultiplyAccumulateINTEL
+{
+  OpSubgroupMatrixMultiplyAccumulateINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->kDim = Id::fromWord(it.word(3));
+    this->matrixA = Id::fromWord(it.word(4));
+    this->matrixB = Id::fromWord(it.word(5));
+    this->matrixC = Id::fromWord(it.word(6));
+    this->matrixMultiplyAccumulateOperands = (it.size() > 7) ? (MatrixMultiplyAccumulateOperands)it.word(7) : MatrixMultiplyAccumulateOperands::None;
+  }
+  OpSubgroupMatrixMultiplyAccumulateINTEL(IdResultType resultType, IdResult result, Id kDim, Id matrixA, Id matrixB, Id matrixC, MatrixMultiplyAccumulateOperands matrixMultiplyAccumulateOperands = MatrixMultiplyAccumulateOperands::None)
+      : op(Op::SubgroupMatrixMultiplyAccumulateINTEL)
+      , wordCount(MinWordSize + OptionalWordCount(matrixMultiplyAccumulateOperands))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->kDim = kDim;
+    this->matrixA = matrixA;
+    this->matrixB = matrixB;
+    this->matrixC = matrixC;
+    this->matrixMultiplyAccumulateOperands = matrixMultiplyAccumulateOperands;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(kDim.value());
+    words.push_back(matrixA.value());
+    words.push_back(matrixB.value());
+    words.push_back(matrixC.value());
+    if(matrixMultiplyAccumulateOperands != MatrixMultiplyAccumulateOperands::None) words.push_back((uint32_t)matrixMultiplyAccumulateOperands);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::SubgroupMatrixMultiplyAccumulateINTEL;
+  static constexpr uint16_t MinWordSize = 7U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id kDim;
+  Id matrixA;
+  Id matrixB;
+  Id matrixC;
+  MatrixMultiplyAccumulateOperands matrixMultiplyAccumulateOperands;
+
+  bool HasMatrixMultiplyAccumulateOperands() const { return wordCount > 7; }
+};
+
+struct OpBitwiseFunctionINTEL
+{
+  OpBitwiseFunctionINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpBitwiseFunctionINTEL(IdResultType resultType, IdResult result, Id a, Id b, Id c, Id lUTIndex)
+      : op(Op::BitwiseFunctionINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->a = a;
+    this->b = b;
+    this->c = c;
+    this->lUTIndex = lUTIndex;
+  }
+
+  static constexpr Op OpCode = Op::BitwiseFunctionINTEL;
+  static constexpr uint16_t FixedWordSize = 7U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id a;
+  Id b;
+  Id c;
+  Id lUTIndex;
+};
+
+struct OpUntypedVariableLengthArrayINTEL
+{
+  OpUntypedVariableLengthArrayINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpUntypedVariableLengthArrayINTEL(IdResultType resultType, IdResult result, Id elementType, Id length)
+      : op(Op::UntypedVariableLengthArrayINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->elementType = elementType;
+    this->length = length;
+  }
+
+  static constexpr Op OpCode = Op::UntypedVariableLengthArrayINTEL;
+  static constexpr uint16_t FixedWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id elementType;
+  Id length;
+};
+
+struct OpConditionalExtensionINTEL
+{
+  OpConditionalExtensionINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->condition = Id::fromWord(it.word(1));
+    word = 2;
+    this->name = DecodeParam<rdcstr>(it, word);
+  }
+  OpConditionalExtensionINTEL(Id condition, rdcstr name)
+      : op(Op::ConditionalExtensionINTEL)
+      , wordCount(MinWordSize + ExtraWordCount(name))
+  {
+    this->condition = condition;
+    this->name = name;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(condition.value());
+    EncodeParam(words, name);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::ConditionalExtensionINTEL;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id condition;
+  rdcstr name;
+};
+
+struct OpConditionalEntryPointINTEL
+{
+  OpConditionalEntryPointINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->condition = Id::fromWord(it.word(1));
+    this->executionModel = (ExecutionModel)it.word(2);
+    this->entryPoint = Id::fromWord(it.word(3));
+    word = 4;
+    this->name = DecodeParam<rdcstr>(it, word);
+    this->iface = MultiParam<Id>(it, word);
+  }
+  OpConditionalEntryPointINTEL(Id condition, ExecutionModel executionModel, Id entryPoint, rdcstr name, const rdcarray<Id> &iface = {})
+      : op(Op::ConditionalEntryPointINTEL)
+      , wordCount(MinWordSize + ExtraWordCount(name) + MultiWordCount(iface))
+  {
+    this->condition = condition;
+    this->executionModel = executionModel;
+    this->entryPoint = entryPoint;
+    this->name = name;
+    this->iface = iface;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(condition.value());
+    words.push_back((uint32_t)executionModel);
+    words.push_back(entryPoint.value());
+    EncodeParam(words, name);
+    for(size_t i=0; i < iface.size(); i++)
+    {
+      words.push_back(iface[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::ConditionalEntryPointINTEL;
+  static constexpr uint16_t MinWordSize = 5U;
+  Op op;
+  uint16_t wordCount;
+  Id condition;
+  ExecutionModel executionModel;
+  Id entryPoint;
+  rdcstr name;
+  rdcarray<Id> iface;
+};
+
+struct OpConditionalCapabilityINTEL
+{
+  OpConditionalCapabilityINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpConditionalCapabilityINTEL(Id condition, Capability capability)
+      : op(Op::ConditionalCapabilityINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->condition = condition;
+    this->capability = capability;
+  }
+
+  static constexpr Op OpCode = Op::ConditionalCapabilityINTEL;
+  static constexpr uint16_t FixedWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  Id condition;
+  Capability capability;
+};
+
+struct OpSpecConstantTargetINTEL
+{
+  OpSpecConstantTargetINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->target = (uint32_t)it.word(3);
+    word = 4;
+    this->features = MultiParam<uint32_t>(it, word);
+  }
+  OpSpecConstantTargetINTEL(IdResultType resultType, IdResult result, uint32_t target, const rdcarray<uint32_t> &features = {})
+      : op(Op::SpecConstantTargetINTEL)
+      , wordCount(MinWordSize + MultiWordCount(features))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->target = target;
+    this->features = features;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back((uint32_t)target);
+    for(size_t i=0; i < features.size(); i++)
+    {
+      words.push_back((uint32_t)features[i]);
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::SpecConstantTargetINTEL;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  uint32_t target;
+  rdcarray<uint32_t> features;
+};
+
+struct OpSpecConstantArchitectureINTEL
+{
+  OpSpecConstantArchitectureINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpSpecConstantArchitectureINTEL(IdResultType resultType, IdResult result, uint32_t category, uint32_t family, uint32_t opcode, uint32_t architecture)
+      : op(Op::SpecConstantArchitectureINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->category = category;
+    this->family = family;
+    this->opcode = opcode;
+    this->architecture = architecture;
+  }
+
+  static constexpr Op OpCode = Op::SpecConstantArchitectureINTEL;
+  static constexpr uint16_t FixedWordSize = 7U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  uint32_t category;
+  uint32_t family;
+  uint32_t opcode;
+  uint32_t architecture;
+};
+
+struct OpSpecConstantCapabilitiesINTEL
+{
+  OpSpecConstantCapabilitiesINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    word = 3;
+    this->capabilities = MultiParam<Capability>(it, word);
+  }
+  OpSpecConstantCapabilitiesINTEL(IdResultType resultType, IdResult result, const rdcarray<Capability> &capabilities = {})
+      : op(Op::SpecConstantCapabilitiesINTEL)
+      , wordCount(MinWordSize + MultiWordCount(capabilities))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->capabilities = capabilities;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    for(size_t i=0; i < capabilities.size(); i++)
+    {
+      words.push_back((uint32_t)capabilities[i]);
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::SpecConstantCapabilitiesINTEL;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  rdcarray<Capability> capabilities;
+};
+
+struct OpConditionalCopyObjectINTEL
+{
+  OpConditionalCopyObjectINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    word = 3;
+    this->conditional_arguments = MultiParam<Id>(it, word);
+  }
+  OpConditionalCopyObjectINTEL(IdResultType resultType, IdResult result, const rdcarray<Id> &conditional_arguments = {})
+      : op(Op::ConditionalCopyObjectINTEL)
+      , wordCount(MinWordSize + MultiWordCount(conditional_arguments))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->conditional_arguments = conditional_arguments;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    for(size_t i=0; i < conditional_arguments.size(); i++)
+    {
+      words.push_back(conditional_arguments[i].value());
+    }
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::ConditionalCopyObjectINTEL;
+  static constexpr uint16_t MinWordSize = 3U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  rdcarray<Id> conditional_arguments;
+};
+
+struct OpPredicatedLoadINTEL
+{
+  OpPredicatedLoadINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->resultType = Id::fromWord(it.word(1));
+    this->result = Id::fromWord(it.word(2));
+    this->pointer = Id::fromWord(it.word(3));
+    this->predicate = Id::fromWord(it.word(4));
+    this->defaultValue = Id::fromWord(it.word(5));
+    word = 6;
+    this->memoryAccess = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+  }
+  OpPredicatedLoadINTEL(IdResultType resultType, IdResult result, Id pointer, Id predicate, Id defaultValue, MemoryAccessAndParamDatas memoryAccess = MemoryAccess::None)
+      : op(Op::PredicatedLoadINTEL)
+      , wordCount(MinWordSize + ExtraWordCount(memoryAccess))
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->pointer = pointer;
+    this->predicate = predicate;
+    this->defaultValue = defaultValue;
+    this->memoryAccess = memoryAccess;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(resultType.value());
+    words.push_back(result.value());
+    words.push_back(pointer.value());
+    words.push_back(predicate.value());
+    words.push_back(defaultValue.value());
+    EncodeParam(words, memoryAccess);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::PredicatedLoadINTEL;
+  static constexpr uint16_t MinWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id pointer;
+  Id predicate;
+  Id defaultValue;
+  MemoryAccessAndParamDatas memoryAccess;
+};
+
+struct OpPredicatedStoreINTEL
+{
+  OpPredicatedStoreINTEL(const ConstIter &it)
+  {
+    uint32_t word = 0;(void)word;
+    this->op = OpCode;
+    this->wordCount = (uint16_t)it.size();
+    this->pointer = Id::fromWord(it.word(1));
+    this->object = Id::fromWord(it.word(2));
+    this->predicate = Id::fromWord(it.word(3));
+    word = 4;
+    this->memoryAccess = DecodeParam<MemoryAccessAndParamDatas>(it, word);
+  }
+  OpPredicatedStoreINTEL(Id pointer, Id object, Id predicate, MemoryAccessAndParamDatas memoryAccess = MemoryAccess::None)
+      : op(Op::PredicatedStoreINTEL)
+      , wordCount(MinWordSize + ExtraWordCount(memoryAccess))
+  {
+    this->pointer = pointer;
+    this->object = object;
+    this->predicate = predicate;
+    this->memoryAccess = memoryAccess;
+  }
+  operator Operation() const
+  {
+    rdcarray<uint32_t> words;
+    words.push_back(pointer.value());
+    words.push_back(object.value());
+    words.push_back(predicate.value());
+    EncodeParam(words, memoryAccess);
+    return Operation(OpCode, words);
+  }
+
+  static constexpr Op OpCode = Op::PredicatedStoreINTEL;
+  static constexpr uint16_t MinWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  Id pointer;
+  Id object;
+  Id predicate;
+  MemoryAccessAndParamDatas memoryAccess;
 };
 
 struct OpGroupIMulKHR
@@ -18742,6 +23778,30 @@ struct OpGroupLogicalXorKHR
   Id x;
 };
 
+struct OpRoundFToTF32INTEL
+{
+  OpRoundFToTF32INTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpRoundFToTF32INTEL(IdResultType resultType, IdResult result, Id floatValue)
+      : op(Op::RoundFToTF32INTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->floatValue = floatValue;
+  }
+
+  static constexpr Op OpCode = Op::RoundFToTF32INTEL;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id floatValue;
+};
+
 struct OpMaskedGatherINTEL
 {
   OpMaskedGatherINTEL(const ConstIter &it)
@@ -18798,6 +23858,162 @@ struct OpMaskedScatterINTEL
   Id mask;
 };
 
+struct OpConvertHandleToImageINTEL
+{
+  OpConvertHandleToImageINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpConvertHandleToImageINTEL(IdResultType resultType, IdResult result, Id operand)
+      : op(Op::ConvertHandleToImageINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->operand = operand;
+  }
+
+  static constexpr Op OpCode = Op::ConvertHandleToImageINTEL;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id operand;
+};
+
+struct OpConvertHandleToSamplerINTEL
+{
+  OpConvertHandleToSamplerINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpConvertHandleToSamplerINTEL(IdResultType resultType, IdResult result, Id operand)
+      : op(Op::ConvertHandleToSamplerINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->operand = operand;
+  }
+
+  static constexpr Op OpCode = Op::ConvertHandleToSamplerINTEL;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id operand;
+};
+
+struct OpConvertHandleToSampledImageINTEL
+{
+  OpConvertHandleToSampledImageINTEL(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpConvertHandleToSampledImageINTEL(IdResultType resultType, IdResult result, Id operand)
+      : op(Op::ConvertHandleToSampledImageINTEL)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->operand = operand;
+  }
+
+  static constexpr Op OpCode = Op::ConvertHandleToSampledImageINTEL;
+  static constexpr uint16_t FixedWordSize = 4U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id operand;
+};
+
+struct OpFDot2MixAcc32VALVE
+{
+  OpFDot2MixAcc32VALVE(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpFDot2MixAcc32VALVE(IdResultType resultType, IdResult result, Id vector1, Id vector2, Id accumulator)
+      : op(Op::FDot2MixAcc32VALVE)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->vector1 = vector1;
+    this->vector2 = vector2;
+    this->accumulator = accumulator;
+  }
+
+  static constexpr Op OpCode = Op::FDot2MixAcc32VALVE;
+  static constexpr uint16_t FixedWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id vector1;
+  Id vector2;
+  Id accumulator;
+};
+
+struct OpFDot2MixAcc16VALVE
+{
+  OpFDot2MixAcc16VALVE(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpFDot2MixAcc16VALVE(IdResultType resultType, IdResult result, Id vector1, Id vector2, Id accumulator)
+      : op(Op::FDot2MixAcc16VALVE)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->vector1 = vector1;
+    this->vector2 = vector2;
+    this->accumulator = accumulator;
+  }
+
+  static constexpr Op OpCode = Op::FDot2MixAcc16VALVE;
+  static constexpr uint16_t FixedWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id vector1;
+  Id vector2;
+  Id accumulator;
+};
+
+struct OpFDot4MixAcc32VALVE
+{
+  OpFDot4MixAcc32VALVE(const ConstIter &it)
+  {
+    memcpy(this, it.words(), sizeof(*this));
+  }
+  OpFDot4MixAcc32VALVE(IdResultType resultType, IdResult result, Id vector1, Id vector2, Id accumulator)
+      : op(Op::FDot4MixAcc32VALVE)
+      , wordCount(FixedWordSize)
+  {
+    this->resultType = resultType;
+    this->result = result;
+    this->vector1 = vector1;
+    this->vector2 = vector2;
+    this->accumulator = accumulator;
+  }
+
+  static constexpr Op OpCode = Op::FDot4MixAcc32VALVE;
+  static constexpr uint16_t FixedWordSize = 6U;
+  Op op;
+  uint16_t wordCount;
+  IdResultType resultType;
+  IdResult result;
+  Id vector1;
+  Id vector2;
+  Id accumulator;
+};
+
 template<typename T>
 inline rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const T &el)
 {
@@ -18814,11 +24030,20 @@ template<>
 rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const PairIdRefIdRef &el);
 
 template<>
-rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::ImageOperandsAndParamDatas &el);template<>
-rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::LoopControlAndParamDatas &el);template<>
-rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::MemoryAccessAndParamDatas &el);template<>
-rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::ExecutionModeAndParamData &el);template<>
+rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::ImageOperandsAndParamDatas &el);
+template<>
+rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::LoopControlAndParamDatas &el);
+template<>
+rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::MemoryAccessAndParamDatas &el);
+template<>
+rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::ExecutionModeAndParamData &el);
+template<>
 rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::DecorationAndParamData &el);
+template<>
+rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::TensorAddressingOperandsAndParamDatas &el);
+template<>
+rdcstr ParamToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcspv::TensorOperandsAndParamDatas &el);
+
 
 template<typename U>
 inline rdcstr ParamsToStr(const std::function<rdcstr(rdcspv::Id)> &idName, const rdcarray<U> &ids)

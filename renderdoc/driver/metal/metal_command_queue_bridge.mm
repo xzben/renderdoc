@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022-2024 Baldur Karlsson
+ * Copyright (c) 2022-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -107,5 +107,31 @@
   return [self.real insertDebugCaptureBoundary];
 }
 #pragma clang diagnostic pop
+
+- (void)addResidencySet:(id<MTLResidencySet>)residencySet API_AVAILABLE(macos(15.0), ios(18.0))
+{
+  METAL_NOT_HOOKED();
+  [self.real addResidencySet:residencySet];
+}
+
+- (void)addResidencySets:(const id<MTLResidencySet> _Nonnull[_Nonnull])residencySets
+                   count:(NSUInteger)count API_AVAILABLE(macos(15.0), ios(18.0))
+{
+  METAL_NOT_HOOKED();
+  [self.real addResidencySets:residencySets count:count];
+}
+
+- (void)removeResidencySet:(id<MTLResidencySet>)residencySet API_AVAILABLE(macos(15.0), ios(18.0))
+{
+  METAL_NOT_HOOKED();
+  [self.real removeResidencySet:residencySet];
+}
+
+- (void)removeResidencySets:(const id<MTLResidencySet> _Nonnull[_Nonnull])residencySets
+                      count:(NSUInteger)count API_AVAILABLE(macos(15.0), ios(18.0))
+{
+  METAL_NOT_HOOKED();
+  [self.real removeResidencySets:residencySets count:count];
+}
 
 @end

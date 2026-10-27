@@ -1,4 +1,8 @@
-cmake_minimum_required(VERSION 2.8.12)
+if (NOT CMAKE_VERSION VERSION_LESS "4.0")
+  cmake_minimum_required(VERSION 3.5)
+else()
+  cmake_minimum_required(VERSION 2.8.12)
+endif()
 
 if(APPLE)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../bin")
@@ -101,6 +105,7 @@ set(VULKAN_SRC
         vk/vk_test.cpp
         vk/vk_test.h
         vk/vk_adv_cbuffer_zoo.cpp
+        vk/vk_annotations.cpp
         vk/vk_blend.cpp
         vk/vk_buffer_truncation.cpp
         vk/vk_cbuffer_zoo.cpp
@@ -108,17 +113,21 @@ set(VULKAN_SRC
         vk/vk_counters.cpp
         vk/vk_custom_border_color.cpp
         vk/vk_dedicated_allocation.cpp
+        vk/vk_descriptor_buffer.cpp
         vk/vk_descriptor_index.cpp
         vk/vk_descriptor_reuse.cpp
         vk/vk_descriptor_variable_count.cpp
+        vk/vk_descriptor_buffer_analyse.cpp
         vk/vk_discard_rects.cpp
         vk/vk_discard_zoo.cpp
         vk/vk_draw_zoo.cpp
         vk/vk_dynamic_rendering.cpp
         vk/vk_empty_capture.cpp
         vk/vk_ext_buffer_address.cpp
+        vk/vk_custom_resolve.cpp
         vk/vk_extended_dyn_state.cpp
         vk/vk_graphics_pipeline.cpp
+        vk/vk_groupshared.cpp
         vk/vk_image_layouts.cpp
         vk/vk_imageless_framebuffer.cpp
         vk/vk_indirect.cpp
@@ -131,6 +140,7 @@ set(VULKAN_SRC
         vk/vk_load_store_none.cpp
         vk/vk_mem_bench.cpp
         vk/vk_mesh_zoo.cpp
+        vk/vk_mesh_shader.cpp
         vk/vk_misaligned_dirty.cpp
         vk/vk_multi_entry.cpp
         vk/vk_multi_present.cpp
@@ -141,8 +151,10 @@ set(VULKAN_SRC
         vk/vk_pixel_history.cpp
         vk/vk_postponed.cpp
         vk/vk_query_pool.cpp
+        vk/vk_ray_query.cpp
         vk/vk_read_before_overwrite.cpp
         vk/vk_resource_lifetimes.cpp
+        vk/vk_resource_usage.cpp
         vk/vk_robustness2.cpp
         vk/vk_sample_locations.cpp
         vk/vk_secondary_cmdbuf.cpp
@@ -154,6 +166,8 @@ set(VULKAN_SRC
         vk/vk_simple_triangle.cpp
         vk/vk_spec_constants.cpp
         vk/vk_spirv_13_shaders.cpp
+        vk/vk_stripped_shaders.cpp
+        vk/vk_subgroup_zoo.cpp
         vk/vk_structured_buffer_nested.cpp
         vk/vk_sync2.cpp
         vk/vk_texture_zoo.cpp
@@ -161,12 +175,15 @@ set(VULKAN_SRC
         vk/vk_validation_use.cpp
         vk/vk_vertex_attr_zoo.cpp
         vk/vk_video_textures.cpp
-        vk/vk_vs_max_desc_set.cpp)
+        vk/vk_vs_max_desc_set.cpp
+        vk/vk_vrs.cpp
+        vk/vk_workgroup_zoo.cpp)
 
 set(OPENGL_SRC
         3rdparty/glad/glad.c
         gl/gl_test.cpp
         gl/gl_test.h
+        gl/gl_annotations.cpp
         gl/gl_buffer_resizing.cpp
         gl/gl_buffer_spam.cpp
         gl/gl_buffer_truncation.cpp
@@ -301,7 +318,7 @@ if(APPLE)
     find_library(QUARTZCORE_LIBRARY QuartzCore)
     find_library(METAL_LIBRARY Metal)
     target_compile_definitions(demos PRIVATE
-        -DVK_USE_PLATFORM_MACOS_MVK=1)
+        -DVK_USE_PLATFORM_METAL_EXT=1)
     set(LIBS ${COCOA_LIBRARY} ${QUARTZCORE_LIBRARY} ${METAL_LIBRARY})
 elseif(BUILD_ANDROID)
     target_compile_definitions(demos PRIVATE -DVK_USE_PLATFORM_ANDROID_KHR=1)
@@ -340,6 +357,11 @@ if(ANDROID)
 
     if(${Java_VERSION} VERSION_LESS 1.8)
         message(FATAL_ERROR "Building Android requires the 'java' program in your PATH to be at least Java 8 (1.8)")
+    elseif(${Java_VERSION} VERSION_LESS 20.0)
+        set(JAVA_TARGET "1.7")
+    else()
+        message(WARNING "Building with JDK ${Java_VERSION} may cause broken Android binaries, it is recommended to build with JDK 17 or earlier")
+        set(JAVA_TARGET "8")
     endif()
     message(STATUS "Using Java of version ${Java_VERSION}")
 
@@ -455,7 +477,7 @@ if(ANDROID)
     add_custom_command(OUTPUT ${APK_FILE} APPEND
                        COMMAND ${CMAKE_COMMAND} -E remove ${APK_FILE} # Don't package any existing artifact into the new one
                        COMMAND ${BUILD_TOOLS}/aapt package -f -m -S res -J src -M AndroidManifest.xml -I ${ANDROID_JAR}
-                       COMMAND ${JAVA_BIN}/javac -d ./obj -source 1.7 -target 1.7 -bootclasspath ${RT_JAR} -classpath "${CLASS_PATH}" -sourcepath src src/renderdoc/org/demos/*.java
+		       COMMAND ${JAVA_BIN}/javac -d ./obj -source ${JAVA_TARGET} -target ${JAVA_TARGET} -bootclasspath ${RT_JAR} -classpath "${CLASS_PATH}" -sourcepath src src/renderdoc/org/demos/*.java
                        COMMAND ${DEX_COMMAND}
                        COMMAND ${BUILD_TOOLS}/aapt package -f -M AndroidManifest.xml --version-code ${APK_VERSION_CODE} --version-name ${APK_VERSION_NAME} -S res -I ${ANDROID_JAR} -F demos-unaligned.apk bin libs
                        COMMAND ${BUILD_TOOLS}/zipalign -f 4 demos-unaligned.apk demos.apk

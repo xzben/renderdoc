@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -41,6 +41,7 @@
 
 #define uint uint32_t
 #define uvec4 Vec4u
+#define ivec3 Vec3i
 
 #if !defined(VULKAN) && !defined(OPENGL)
 #error Must define VULKAN or OPENGL before including glsl_ubos.h
@@ -219,6 +220,10 @@ float2 RD_SelectedRange()
 
 const char GLSL_CUSTOM_PREFIX[] =
     R"EOPREFIX(
+#ifdef GL_ES
+precision highp float;
+#endif
+
 #define RD_FLOAT_1D_ARRAY_BINDING 6
 #define RD_FLOAT_1D_BINDING 6 // all textures treated as arrays, add macro aliases
 
@@ -372,6 +377,10 @@ vec2 RD_SelectedRange()
 
 const char GLSL_CUSTOM_PREFIX[] =
     R"EOPREFIX(
+#ifdef GL_ES
+precision highp float;
+#endif
+
 #define RD_FLOAT_1D_BINDING 1
 #define RD_FLOAT_2D_BINDING 2
 #define RD_FLOAT_3D_BINDING 3

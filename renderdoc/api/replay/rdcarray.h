@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -429,7 +429,7 @@ public:
       // destruct it before inserting.
 
       // first pass, move construct elements in place
-      const size_t moveCount = count < oldSize ? count : oldSize;
+      const size_t moveCount = count < oldSize - offs ? count : oldSize - offs;
       for(size_t i = 0; i < moveCount; i++)
       {
         new(elems + oldSize + count - 1 - i) T(std::move(elems[oldSize - 1 - i]));
@@ -453,7 +453,7 @@ public:
       for(size_t i = 0; i < count; i++)
       {
         // if this was one used previously, destruct it
-        if(i < oldSize)
+        if(offs + i < oldSize)
           ItemDestroyHelper<T>::destroyRange(elems + offs + i, 1);
 
         // then copy construct the new value
@@ -568,8 +568,8 @@ public:
   inline void append(rdcarray<T> &&in)
   {
     reserve(size() + in.size());
-    for(size_t i = 0; i < in.size(); i++)
-      push_back(std::move(in[i]));
+    ItemCopyHelper<T>::moveRange(data() + size(), in.data(), in.size());
+    setUsedCount(usedCount + in.size());
     // don't have to clear here, since moved object can be left in any indeterminate but valid state
     // (an all the members are in that state, while the array is fully valid), but this gives fewer
     // surprises.
@@ -900,6 +900,11 @@ public:
   size_t size() const { return N; }
   size_t byteSize() const { return N * sizeof(T); }
   int32_t count() const { return (int32_t)N; }
+  void clear()
+  {
+    for(size_t i = 0; i < N; i++)
+      elems[i] = T();
+  }
   // find the first occurrence of an element
   int32_t indexOf(const T &el, size_t first = 0, size_t last = ~0U) const
   {

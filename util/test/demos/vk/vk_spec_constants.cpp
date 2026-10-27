@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2019-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -93,7 +93,7 @@ void main()
 
     {
       std::vector<uint32_t> spirv = ::CompileShaderToSpv(
-          pixel, SPIRVTarget::vulkan, ShaderLang::glsl, ShaderStage::frag, "main", {});
+          demoName, pixel, SPIRVTarget::vulkan, ShaderLang::glsl, ShaderStage::frag, "main", {});
 
       if(spirv.empty())
         return 4;

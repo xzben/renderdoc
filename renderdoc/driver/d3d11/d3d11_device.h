@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -82,7 +82,7 @@ struct D3D11InitParams
   uint32_t VendorUAV = ~0U;
 
   // check if a frame capture section version is supported
-  static const uint64_t CurrentVersion = 0x13;
+  static const uint64_t CurrentVersion = 0x14;
   static bool IsSupportedVersion(uint64_t ver);
 };
 
@@ -721,6 +721,11 @@ public:
   void StartFrameCapture(DeviceOwnedWindow devWnd);
   bool EndFrameCapture(DeviceOwnedWindow devWnd);
   bool DiscardFrameCapture(DeviceOwnedWindow devWnd);
+  uint32_t SetObjectAnnotation(void *object, const char *key, RENDERDOC_AnnotationType valueType,
+                               uint32_t valueVectorWidth, const RENDERDOC_AnnotationValue *value);
+  uint32_t SetCommandAnnotation(void *queueOrCommandBuffer, const char *key,
+                                RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
+                                const RENDERDOC_AnnotationValue *value);
 
   ID3DUserDefinedAnnotation *GetAnnotations() { return m_RealAnnotations; }
   ID3D11InfoQueue *GetInfoQueue() { return m_pInfoQueue; }
@@ -767,7 +772,7 @@ public:
                               const D3D11InitialContents *initial);
 
   void Create_InitialState(ResourceId id, ID3D11DeviceChild *live, bool hasData);
-  void Apply_InitialState(ID3D11DeviceChild *live, const D3D11InitialContents &initial);
+  void Apply_InitialState(ID3D11DeviceChild *live, D3D11InitialContents &initial);
 
   void SetStructuredExport(uint64_t sectionVersion)
   {

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -173,24 +173,6 @@ float RENDERDOC_CC GetCaptureOptionF32(RENDERDOC_CaptureOption opt)
 
   RDCLOG("Unrecognised capture option '%d'", opt);
   return -FLT_MAX;
-}
-
-CaptureOptions::CaptureOptions()
-{
-  // since we're reading from all bytes even padding etc, memset to 0
-  RDCEraseEl(*this);
-  allowVSync = true;
-  allowFullscreen = true;
-  apiValidation = false;
-  captureCallstacks = false;
-  captureCallstacksOnlyActions = false;
-  delayForDebugger = 0;
-  verifyBufferAccess = false;
-  hookIntoChildren = false;
-  refAllResources = false;
-  captureAllCmdLists = false;
-  debugOutputMute = true;
-  softMemoryLimit = 0;
 }
 
 #if ENABLED(ENABLE_UNIT_TESTS)

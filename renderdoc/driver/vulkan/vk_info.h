@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,7 +36,7 @@ VulkanDynamicStateIndex ConvertDynamicState(VkDynamicState state);
 
 struct DescSetLayout
 {
-  void Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info,
+  void Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info, ResourceId id,
             const VkDescriptorSetLayoutCreateInfo *pCreateInfo);
 
   void CreateBindingsArray(BindingStorage &bindingStorage, uint32_t variableAllocSize) const;
@@ -114,10 +114,14 @@ struct DescSetLayout
     {
       if(variableSize)
         return varDescriptorSize;
+      if(layoutDescType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
+        return 1;
       return descriptorCount;
     }
   };
   rdcarray<Binding> bindings;
+
+  ResourceId resourceId;
 
   // parallel array to bindings, with a bitmask of mutable types
   rdcarray<uint64_t> mutableBitmasks;
@@ -138,6 +142,9 @@ struct DescSetLayout
   bool isCompatible(const DescSetLayout &other) const;
 };
 
+uint32_t GetDescriptorSizeOfBind(VulkanResourceManager *resourceMan,
+                                 const rdcarray<DescSetLayout::Binding> &bindings,
+                                 const rdcarray<uint64_t> &mutableBitmasks, uint32_t fixedBindNumber);
 bool IsValid(bool allowNULLDescriptors, const VkWriteDescriptorSet &write, uint32_t arrayElement);
 bool CreateDescriptorWritesForSlotData(WrappedVulkan *vk, rdcarray<VkWriteDescriptorSet> &writes,
                                        VkDescriptorBufferInfo *&writeScratch,
@@ -222,12 +229,14 @@ struct VulkanCreationInfo
     ShaderReflection *refl;
     SPIRVPatchData patchData;
     std::map<size_t, uint32_t> instructionLines;
+    rdcarray<SpecConstant> specConstantData;
 
-    void Init(VulkanResourceManager *resourceMan, ResourceId id, const rdcspv::Reflector &spv,
+    void Init(VulkanResourceManager *resourceMan, const VulkanCreationInfo &info, ResourceId id,
               const rdcstr &entry, VkShaderStageFlagBits stage,
               const rdcarray<SpecConstant> &specInfo);
 
     void PopulateDisassembly(const rdcspv::Reflector &spirv);
+    void Reload(VulkanResourceManager *resourceMan, const VulkanCreationInfo &info, ResourceId id);
   };
 
   struct ShaderEntry
@@ -235,17 +244,27 @@ struct VulkanCreationInfo
     ResourceId module;
     ShaderStage stage = ShaderStage::Count;
     rdcstr entryPoint;
-    ShaderReflection *refl = NULL;
-    SPIRVPatchData *patchData = NULL;
+    const ShaderReflection *refl = NULL;
+    const SPIRVPatchData *patchData = NULL;
+
+    VkPipelineShaderStageCreateFlags flags;
 
     rdcarray<SpecConstant> specialization;
 
     // VkPipelineShaderStageRequiredSubgroupSizeCreateInfo
     uint32_t requiredSubgroupSize = 0;
 
-    void ProcessStaticDescriptorAccess(ResourceId pushStorage, ResourceId specStorage,
-                                       rdcarray<DescriptorAccess> &staticDescriptorAccess,
-                                       rdcarray<const DescSetLayout *> setLayoutInfos) const;
+    // VkPipelineRobustnessCreateInfo
+    VkPipelineRobustnessBufferBehavior storageBufferRobustness;
+    VkPipelineRobustnessBufferBehavior uniformBufferRobustness;
+    VkPipelineRobustnessImageBehavior imageRobustness;
+
+    bool HasRobustness() const
+    {
+      return storageBufferRobustness != VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DEVICE_DEFAULT ||
+             uniformBufferRobustness != VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DEVICE_DEFAULT ||
+             imageRobustness != VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DEVICE_DEFAULT;
+    }
   };
 
   struct Pipeline
@@ -264,6 +283,10 @@ struct VulkanCreationInfo
     rdcarray<ResourceId> parentLibraries;
 
     ResourceId compLayout;
+
+    // the pipeline's own specified layout, independent of vertLayout/fragLayout below when linking
+    // graphics pipeline libraries
+    ResourceId ownLayout;
 
     // these will be the same in some cases, but can be different if the application is using
     // INDEPENDENT_SETS_BIT_KHR
@@ -288,12 +311,28 @@ struct VulkanCreationInfo
     VkFormat depthFormat;
     VkFormat stencilFormat;
 
+    // VkCustomResolveCreateInfoEXT
+    bool hasCustomResCreateInfo = false;
+    struct CustomResInfo
+    {
+      bool customResolve;
+      rdcarray<VkFormat> colorFormats;
+      VkFormat depthFormat;
+      VkFormat stencilFormat;
+    } customResCreateInfo;
+
+    // VkRenderingAttachmentLocationInfo and VkRenderingInputAttachmentIndexInfo
+    DynamicRenderingLocalRead dynamicRenderingLocalRead;
+
     // a variant of the pipeline that uses subpass 0, used for when we are replaying in isolation.
     // See loadRPs in the RenderPass info
     VkPipeline subpass0pipe;
 
     // VkGraphicsPipelineCreateInfo
-    VkPipelineCreateFlags flags;
+    uint64_t flags;
+
+    // VkPipelineCreateFlags2CreateInfo
+    bool useCreateFlags2;
 
     // VkPipelineShaderStageCreateInfo
     ShaderEntry shaders[NumShaderStages];
@@ -311,7 +350,7 @@ struct VulkanCreationInfo
       uint32_t bytestride;
       bool perInstance;
 
-      // VkVertexInputBindingDivisorDescriptionEXT
+      // VkVertexInputBindingDivisorDescription
       uint32_t instanceDivisor;
     };
     rdcarray<VertBinding> vertexBindings;
@@ -337,6 +376,7 @@ struct VulkanCreationInfo
 
     // VkPipelineViewportStateCreateInfo
     uint32_t viewportCount;
+    uint32_t scissorCount;
     rdcarray<VkViewport> viewports;
     rdcarray<VkRect2D> scissors;
 
@@ -362,11 +402,15 @@ struct VulkanCreationInfo
     VkConservativeRasterizationModeEXT conservativeRasterizationMode;
     float extraPrimitiveOverestimationSize;
 
-    // VkPipelineRasterizationLineStateCreateInfoKHR
-    VkLineRasterizationModeKHR lineRasterMode;
+    // VkPipelineRasterizationLineStateCreateInfo
+    VkLineRasterizationMode lineRasterMode;
     bool stippleEnabled;
     uint32_t stippleFactor;
     uint16_t stipplePattern;
+
+    // VkDepthBiasRepresentationInfoEXT
+    VkDepthBiasRepresentationEXT depthBiasRepresentation;
+    VkBool32 depthBiasExact;
 
     // VkPipelineMultisampleStateCreateInfo
     VkSampleCountFlagBits rasterizationSamples;
@@ -431,6 +475,12 @@ struct VulkanCreationInfo
 
     // VkPipelineRasterizationProvokingVertexStateCreateInfoEXT
     VkProvokingVertexModeEXT provokingVertex;
+
+    // VkPipelineRobustnessCreateInfo
+    VkPipelineRobustnessBufferBehavior vertexInputRobustness;
+
+    // VkPipelineFragmentDensityMapLayeredCreateInfoVALVE
+    uint32_t maxFragmentDensityMapLayers;
   };
   std::unordered_map<ResourceId, Pipeline> m_Pipeline;
 
@@ -453,6 +503,11 @@ struct VulkanCreationInfo
     // this is the total size of the 'virtualised' specialisation data, where all constants are stored
     // 64-bit aligned and with an offset equal to their ID. In other words this is big enough for the max ID
     uint32_t virtualSpecialisationByteSize = 0;
+
+    // VkCustomResolveCreateInfoEXT
+    bool hasCustomResCreateInfo = false;
+    // For Shader Objects only "customResolve" is used
+    bool customResolve;
 
     rdcarray<DescriptorAccess> staticDescriptorAccess;
   };
@@ -521,6 +576,7 @@ struct VulkanCreationInfo
 
       bool feedbackLoop;
       bool tileOnlyMSAAEnable;
+      bool customResolve;
     };
     rdcarray<Subpass> subpasses;
 
@@ -565,6 +621,8 @@ struct VulkanCreationInfo
 
     VkBuffer wholeMemBuf;
 
+    VkDeviceAddress opaqueAddr;
+
     enum MemoryBinding
     {
       None = 0x0,
@@ -590,15 +648,19 @@ struct VulkanCreationInfo
     void Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info,
               const VkBufferCreateInfo *pCreateInfo, VkMemoryRequirements origMrq);
 
-    VkBufferUsageFlags usage;
+    uint64_t usage;
     uint64_t size;
     uint64_t gpuAddress;
     bool external;
 
     VkMemoryRequirements mrq;
+
+    ResourceId boundMemory;
+    uint64_t boundMemoryOffset;
+
+    ResourceId inlineDescriptorId;
   };
   std::unordered_map<ResourceId, Buffer> m_Buffer;
-  rdcsortedflatmap<uint64_t, ResourceId> m_BufferAddresses;
 
   struct BufferView
   {
@@ -628,7 +690,22 @@ struct VulkanCreationInfo
     bool cube;
     TextureCategory creationFlags;
 
+    VkDeviceAddress address;
     VkMemoryRequirements mrq;
+
+    rdcarray<rdcpair<bytebuf, ResourceId>> viewDescriptors;
+
+    ResourceId getViewFromDescriptor(const byte *descriptorBytes, size_t descriptorSize)
+    {
+      for(auto it = viewDescriptors.begin(); it != viewDescriptors.end(); ++it)
+      {
+        if(it->first.size() == descriptorSize &&
+           memcmp(it->first.data(), descriptorBytes, descriptorSize) == 0)
+          return it->second;
+      }
+
+      return ResourceId();
+    }
   };
   std::unordered_map<ResourceId, Image> m_Image;
 
@@ -696,6 +773,11 @@ struct VulkanCreationInfo
     VkImageSubresourceRange range;
     VkComponentMapping componentMapping;
 
+    uint32_t storageSliceOffset;
+    uint32_t storageSliceCount;
+
+    bool isDepthImage;
+
     // VkImageViewMinLodCreateInfoEXT
     float minLOD;
   };
@@ -706,7 +788,8 @@ struct VulkanCreationInfo
     void Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info,
               const VkShaderModuleCreateInfo *pCreateInfo);
 
-    void Reinit();
+    bool Reinit();
+    void Reload(VulkanResourceManager *resourceMan, const VulkanCreationInfo &info, ResourceId id);
 
     ShaderModuleReflection &GetReflection(ShaderStage stage, const rdcstr &entry, ResourceId pipe)
     {
@@ -726,6 +809,12 @@ struct VulkanCreationInfo
     rdcspv::Reflector spirv;
 
     rdcstr unstrippedPath;
+
+    // indicate if we've ever found a debug blob, so that if we fail to on a second retry we don't
+    // overwrite the loading log from the successful load with anything but a successful load
+    bool debugBlobEverFound = false;
+
+    rdcstr debugInfoLoadingLog;
 
     std::map<ShaderModuleReflectionKey, ShaderModuleReflection> m_Reflections;
     // in graphics pipeline library the linked pipeline may reference a different pipeline where the
@@ -765,11 +854,14 @@ struct VulkanCreationInfo
   {
     void Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info,
               const VkAccelerationStructureCreateInfoKHR *pCreateInfo);
+    void Init(VulkanResourceManager *resourceMan, WrappedVulkan *vk, VulkanCreationInfo &info,
+              const VkAccelerationStructureCreateInfo2KHR *pCreateInfo);
 
     ResourceId buffer;
     uint64_t offset;
     uint64_t size;
     VkAccelerationStructureTypeKHR type;
+    VkDeviceAddress address;
   };
   std::unordered_map<ResourceId, AccelerationStructure> m_AccelerationStructure;
 
@@ -782,7 +874,11 @@ struct VulkanCreationInfo
   std::unordered_map<ResourceId, uint32_t> m_Queue;
 
   // the fake ID of the 'command buffer' descriptor store for push constants
-  ResourceId pushConstantDescriptorStorage;
+  static ResourceId pushConstantDescriptorStorage;
+  // fake IDs for each set/buffer
+  static rdcarray<ResourceId> descriptorSetStorage;
+  static rdcarray<ResourceId> descriptorBufferStorage;
+  static rdcarray<ResourceId> inlineBufferStorage;
 
   void erase(ResourceId id)
   {
@@ -808,4 +904,11 @@ struct VulkanCreationInfo
     m_DescUpdateTemplate.erase(id);
     m_Queue.erase(id);
   }
+  const PipelineLayout &GetPipelineLayoutInfo(ResourceId rp) const;
+  const DescSetLayout &GetDescSetLayout(ResourceId dsl) const;
+  const Buffer &GetBufferInfo(ResourceId buf) const;
+  const BufferView &GetBufferViewInfo(ResourceId bufView) const;
+  const Image &GetImageInfo(ResourceId img) const;
+  const ImageView &GetImageViewInfo(ResourceId imgView) const;
+  const Sampler &GetSamplerInfo(ResourceId samp) const;
 };

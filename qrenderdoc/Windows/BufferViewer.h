@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -28,12 +28,14 @@
 #include <QMutex>
 #include "Code/Interface/QRDInterface.h"
 #include "Code/QRDUtils.h"
+#include "Windows/Dialogs/ProjectionGuessDialog.h"
 
 namespace Ui
 {
 class BufferViewer;
 }
 
+class ComputeDebugSelector;
 class RDSpinBox64;
 class QItemSelection;
 class QMenu;
@@ -145,10 +147,13 @@ private slots:
   void on_axisMappingButton_clicked();
   void on_setFormat_toggled(bool checked);
   void on_resetMeshFilterButton_clicked();
+  void on_camParameters_clicked();
+  void on_guessButton_clicked();
 
   // manual slots
   void render_mouseMove(QMouseEvent *e);
   void render_clicked(QMouseEvent *e);
+  void render_unclicked(QMouseEvent *e);
 
   void render_mouseWheel(QWheelEvent *e);
   void render_keyPress(QKeyEvent *e);
@@ -157,19 +162,22 @@ private slots:
 
   void data_selected(const QItemSelection &selected, const QItemSelection &deselected);
   void data_scrolled(int scroll);
-  void camGuess_changed(double value);
 
   void processFormat(const QString &format);
 
   void updateExportActionNames();
   void exportData(const BufferExport &params);
   void debugVertex();
+  void debugMeshThread();
+  void meshDebugSelector_beginDebug(const rdcfixedarray<uint32_t, 3> &group,
+                                    const rdcfixedarray<uint32_t, 3> &thread);
   void fixedVars_contextMenu(const QPoint &pos);
 
 private:
   bool eventFilter(QObject *watched, QEvent *event) override;
   Ui::BufferViewer *ui;
   ICaptureContext &m_Ctx;
+  ComputeDebugSelector *m_MeshDebugSelector;
 
   IReplayOutput *m_Output;
 
@@ -177,6 +185,7 @@ private:
 
   void configureDrawRange();
 
+  void UI_UpdateGuessParameters();
   void RT_UpdateAndDisplay(IReplayController *r);
 
   QPushButton *MakePreviousPageButton();
@@ -248,6 +257,8 @@ private:
   ArcballWrapper *m_Arcball = NULL;
   FlycamWrapper *m_Flycam = NULL;
 
+  ProjectionGuessParameters m_ProjGuess;
+
   bool m_MeshView;
 
   // for ease of reading, these stages are named as in, out1, and out2. Note however that this does
@@ -282,7 +293,7 @@ private:
 
   PopulateBufferData *m_Scrolls = NULL;
 
-  QPoint m_Scroll[4];
+  QPoint m_Scroll[(int)MeshDataStage::Count];
 
   int m_Sequence = 0;
 
@@ -323,6 +334,7 @@ private:
   QAction *m_ExportCSV = NULL;
   QAction *m_ExportBytes = NULL;
   QAction *m_DebugVert = NULL;
+  QAction *m_DebugMeshThread = NULL;
   QAction *m_FilterMesh = NULL;
   QAction *m_RemoveFilter = NULL;
   QAction *m_GotoTask = NULL;
@@ -356,7 +368,7 @@ private:
   void UI_ConfigureMeshPipeFormats();
 
   void UpdateCurrentMeshConfig();
-  void EnableCameraGuessControls();
+  void UpdateStageDataControls();
 
   void CalcColumnWidth(int maxNumRows = 1);
   void ApplyRowAndColumnDims(int numColumns, RDTableView *view, int dataColWidth);

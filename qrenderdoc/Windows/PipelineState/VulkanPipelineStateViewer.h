@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -112,10 +112,11 @@ private:
   void addConstantBlockRow(const ConstantBlock *cblock, const UsedDescriptor &used,
                            uint32_t dynamicOffset, RDTreeWidget *ubos);
 
-  void setShaderState(const VKPipe::Pipeline &pipe, const VKPipe::Shader &stage, RDLabel *shader,
-                      RDLabel *pipeLayout, RDTreeWidget *descSets);
-  void clearShaderState(RDLabel *shader, RDLabel *pipeLayout, RDTreeWidget *resources,
-                        RDTreeWidget *cbuffers, RDTreeWidget *descSets);
+  void setShaderState(const VKPipe::Pipeline &pipe, const VKPipe::Shader &stage, RDLabel *pipeline,
+                      RDLabel *shader, RDLabel *shaderDebug, RDLabel *pipeLayout,
+                      RDTreeWidget *descSets);
+  void clearShaderState(RDLabel *pipeline, RDLabel *shader, RDLabel *shaderDebug, RDLabel *pipeLayout,
+                        RDTreeWidget *resources, RDTreeWidget *cbuffers, RDTreeWidget *descSets);
   void setState();
   void clearState();
 
@@ -136,7 +137,8 @@ private:
                       const QString &hiddenCombinedSampler, bool includeSampleLocations = false,
                       bool includeOffsets = false);
 
-  bool setViewDetails(RDTreeWidgetItem *node, const Descriptor &descriptor, BufferDescription *buf);
+  bool setViewDetails(RDTreeWidgetItem *node, const Descriptor &descriptor, BufferDescription *buf,
+                      uint32_t dynamicOffset);
 
   bool showNode(bool usedSlot, bool filledSlot);
 

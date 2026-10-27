@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -162,7 +162,7 @@ struct EventBrowserPersistentStorage : public CustomPersistentStorage
   QList<QPair<QString, QString>> SavedFilters;
 };
 
-static EventBrowserPersistentStorage persistantStorage("EventBrowser");
+static EventBrowserPersistentStorage persistentStorage("EventBrowser");
 
 enum
 {
@@ -170,6 +170,7 @@ enum
   COL_EID,
   COL_ACTION,
   COL_DURATION,
+  COL_ANNOTATION,
   COL_COUNT,
 };
 
@@ -224,7 +225,7 @@ struct EventItemModel : public QAbstractItemModel
                          .arg(paramcol.blue(), 2, 16, QLatin1Char('0'));
   }
 
-  void ResetModel()
+  void ResetModel(bool closing)
   {
     emit beginResetModel();
     emit endResetModel();
@@ -237,7 +238,7 @@ struct EventItemModel : public QAbstractItemModel
     m_Chunks.clear();
     m_Times.clear();
 
-    if(!m_Ctx.CurRootActions().empty())
+    if(!closing && !m_Ctx.CurRootActions().empty())
       m_Nodes[0] = CreateActionNode(NULL);
 
     m_CurrentEID = createIndex(0, 0, TagCaptureStart);
@@ -249,7 +250,8 @@ struct EventItemModel : public QAbstractItemModel
     m_FindString.clear();
     m_FindEIDSearch = false;
 
-    RefreshCache();
+    if(!closing)
+      RefreshCache();
   }
 
   void RefreshCache()
@@ -298,6 +300,15 @@ struct EventItemModel : public QAbstractItemModel
 
     m_RenameCacheID = m_Ctx.ResourceNameCacheID();
   }
+
+  void SetAnnotationPath(const rdcstr &keyPath)
+  {
+    m_AnnotationPath = keyPath;
+    emit headerDataChanged(Qt::Horizontal, COL_ANNOTATION, COL_ANNOTATION);
+
+    m_View->viewport()->update();
+  }
+  rdcstr GetAnnotationPath() { return m_AnnotationPath; }
 
   bool HasTimes() { return !m_Times.empty(); }
   void SetTimes(const rdcarray<CounterResult> &times)
@@ -720,6 +731,9 @@ struct EventItemModel : public QAbstractItemModel
         case COL_EID: return lit("EID");
         case COL_ACTION: return lit("Action #");
         case COL_DURATION: return tr("Duration (%1)").arg(UnitSuffix(m_TimeUnit));
+        case COL_ANNOTATION:
+          return m_AnnotationPath.empty() ? tr("Annotation")
+                                          : tr("Annotation (%1)").arg(m_AnnotationPath);
         default: break;
       }
     }
@@ -746,6 +760,9 @@ struct EventItemModel : public QAbstractItemModel
     if(index.column() == COL_DURATION && role == Qt::TextAlignmentRole)
       return int(Qt::AlignRight | Qt::AlignVCenter);
 
+    if(index.column() == COL_ANNOTATION && role == Qt::ToolTipRole)
+      return m_AnnotationPath.empty() ? lit("-") : QString(m_AnnotationPath);
+
     if(index.internalId() == TagRoot)
     {
       if(role == Qt::DisplayRole && index.column() == COL_NAME)
@@ -762,6 +779,9 @@ struct EventItemModel : public QAbstractItemModel
 
       if(index.column() == COL_DURATION && role == Qt::DisplayRole)
         return FormatDuration(0);
+
+      if(index.column() == COL_ANNOTATION && role == Qt::DisplayRole)
+        return QString();
     }
     else if(index.internalId() == TagCaptureStart)
     {
@@ -781,6 +801,9 @@ struct EventItemModel : public QAbstractItemModel
 
       if(index.column() == COL_DURATION && role == Qt::DisplayRole)
         return FormatDuration(~0U);
+
+      if(index.column() == COL_ANNOTATION && role == Qt::DisplayRole)
+        return QString();
     }
     else
     {
@@ -814,6 +837,34 @@ struct EventItemModel : public QAbstractItemModel
 
       if(index.column() == COL_DURATION && role == Qt::DisplayRole)
         return FormatDuration(eid);
+
+      if(index.column() == COL_ANNOTATION && role == Qt::DisplayRole)
+      {
+        const ActionDescription *action = m_Actions[eid];
+
+        auto eidit =
+            std::lower_bound(action->events.begin(), action->events.end(), eid,
+                             [](const APIEvent &e, uint32_t eid) { return e.eventId < eid; });
+
+        if(!m_AnnotationPath.empty() && eidit != action->events.end() && eidit->eventId == eid)
+        {
+          const APIEvent &e = *eidit;
+
+          const SDObject *annot =
+              e.annotations ? e.annotations->FindChildByKeyPath(m_AnnotationPath) : NULL;
+
+          if(annot)
+          {
+            if(annot->type.basetype == SDBasic::Chunk || annot->type.basetype == SDBasic::Struct ||
+               annot->type.basetype == SDBasic::Array)
+              return lit("{...}");
+
+            return SDObject2Variant(annot, false);
+          }
+        }
+
+        return QString();
+      }
 
       if(role == Qt::DisplayRole)
       {
@@ -907,6 +958,7 @@ private:
   static const quintptr TagRoot = quintptr(UINTPTR_MAX);
   static const quintptr TagCaptureStart = quintptr(0);
 
+  rdcstr m_AnnotationPath;
   rdcarray<double> m_Times;
   TimeUnit m_TimeUnit = TimeUnit::Count;
 
@@ -1450,6 +1502,7 @@ public:
       MAKE_BUILTIN_FILTER(dispatch);
       MAKE_BUILTIN_FILTER(childOf);
       MAKE_BUILTIN_FILTER(parent);
+      MAKE_BUILTIN_FILTER(annot);
 
       /*
       m_BuiltinFilters[lit("event")].completer = [this](ICaptureContext *ctx, QString name,
@@ -1503,7 +1556,7 @@ public:
     rdcarray<rdcstr> ret;
 
     if(cb)
-      ret = m_BuiltinFilters[filter].completer(&m_Ctx, filter, params);
+      ret = cb(&m_Ctx, filter, params);
 
     QStringList qret;
     for(const rdcstr &s : ret)
@@ -1635,11 +1688,11 @@ private:
     QString text;
   };
 
-  static QList<Token> tokenise(QString parameters)
+  static QList<Token> tokenise(QString parameters, QString extraChars = QString())
   {
     QList<Token> ret;
 
-    const QString operatorChars = lit("<>=:&");
+    const QString operatorChars = lit("<>=:&") + extraChars;
 
     int p = 0;
     while(p < parameters.size())
@@ -1829,6 +1882,300 @@ searched for as a case-insensitive substring.
         return RichResourceTextFormat(*ctx, SDObject2Variant(o, false))
             .contains(paramValue, Qt::CaseInsensitive);
       }
+    };
+  }
+
+  QString filterDescription_annot() const
+  {
+    return tr(R"EOD(
+<h3>$annot</h3>
+
+<br />
+<table>
+<tr><td><code>$annot(annotation condition)</code><br />
+<code>$annot(annotation condition)</code></td><td> - passes if a given annotation condition is true.</td></tr>
+</table>
+
+<p>
+This filter queries the annotations of an event to either exist or match simple conditions. A
+condition may be omitted, but an annotation must be specified. If no condition is given then
+the filter passes if that annotation is exists</code>.
+</p>
+
+<p>
+If the annotation contains spaces, it should be surrounded with double quotes, e.g. "foo bar.sub.key"
+</p>
+
+<p>
+For numeric annotations you can compare with the normal comparison operators. For string annotations you
+can check exact equality with ==, use the keyword 'contains' to check for a case-insensitive substring
+match, or =~ to match with a regex.
+</p>
+
+<p>
+Numeric properties will always fail to match the filter when used with a string comparison operator,
+and vice-versa.
+</p>
+)EOD",
+              "EventFilterModel");
+  }
+
+  IEventBrowser::EventFilterCallback filterFunction_annot(QString name, QString parameters,
+                                                          ParseTrace &trace)
+  {
+    parameters = parameters.trimmed();
+
+    rdcstr keyPath;
+
+    if(parameters[0] == QLatin1Char('"'))
+    {
+      int i = 1;
+      while(i < parameters.size() && parameters[i] != QLatin1Char('"'))
+      {
+        if(parameters[i] == QLatin1Char('\\') && parameters[i] == QLatin1Char('"'))
+        {
+          keyPath += parameters[i + 1];
+          i++;
+        }
+        i++;
+      }
+
+      if(i >= parameters.size())
+      {
+        trace.setError(tr("Invalid quoted annotation, no closing quote found", "EventFilterModel"));
+        return NULL;
+      }
+
+      keyPath = parameters.mid(0, i);
+
+      i++;
+
+      parameters = parameters.mid(i).trimmed();
+    }
+    else
+    {
+      int i = rdcstr(parameters).find_first_of(" <>=~!");
+      if(i < 0)
+      {
+        keyPath = parameters;
+        parameters.clear();
+      }
+      keyPath = parameters.mid(0, i);
+      parameters = parameters.mid(i).trimmed();
+    }
+
+    QList<Token> tokens = tokenise(parameters, lit("~!"));
+
+    std::function<bool(const SDObject *)> comparer;
+
+    // no parameters, just return if the annotation exists
+    if(tokens.isEmpty())
+    {
+    }
+    else
+    {
+      if(tokens.size() == 1)
+      {
+        trace.setError(tr("Invalid annotation expression, expected an operator and value",
+                          "EventFilterModel"));
+        return NULL;
+      }
+
+      QString op = tokens[0].text;
+      QString param = parameters.mid(tokens[1].position);
+
+      static const QStringList numericOperators = {
+          lit("="), lit("=="), lit("!="), lit("<"), lit(">"), lit("<="), lit(">="),
+      };
+
+      // any numeric value that can be compared to a number
+      if(numericOperators.contains(op))
+      {
+        int operatorIdx = numericOperators.indexOf(op);
+
+        // need to be a bit polymorphic here as we don't know what we'll be comparing against so we
+        // don't know the type. We at least upcast to the biggest type to reduce variations
+        int64_t s64 = param.toLongLong();
+        uint64_t u64 = param.toULongLong();
+        double d = param.toDouble();
+
+        comparer = [operatorIdx, d, u64, s64, param](const SDObject *obj) {
+          switch(obj->type.basetype)
+          {
+            case SDBasic::Chunk:
+            case SDBasic::Resource:
+            case SDBasic::GPUAddress:
+            case SDBasic::Struct:
+            case SDBasic::Array:
+            case SDBasic::Null:
+            case SDBasic::Buffer:
+              return false;
+              // ambiguity with string operators here, could be an equality check on strings
+            case SDBasic::String:
+              if(operatorIdx <= 1)
+                return QString(obj->data.str) == param;
+              return false;
+            case SDBasic::Boolean:
+            case SDBasic::Enum:
+            case SDBasic::UnsignedInteger:
+            case SDBasic::Character:
+            {
+              switch(operatorIdx)
+              {
+                case 0:
+                case 1: return obj->data.basic.u == u64;
+                case 2: return obj->data.basic.u != u64;
+                case 3: return obj->data.basic.u < u64;
+                case 4: return obj->data.basic.u > u64;
+                case 5: return obj->data.basic.u <= u64;
+                case 6: return obj->data.basic.u >= u64;
+                default: return false;
+              }
+            }
+            case SDBasic::SignedInteger:
+            {
+              switch(operatorIdx)
+              {
+                case 0:
+                case 1: return obj->data.basic.i == s64;
+                case 2: return obj->data.basic.i != s64;
+                case 3: return obj->data.basic.i < s64;
+                case 4: return obj->data.basic.i > s64;
+                case 5: return obj->data.basic.i <= s64;
+                case 6: return obj->data.basic.i >= s64;
+                default: return false;
+              }
+            }
+            case SDBasic::Float:
+            {
+              switch(operatorIdx)
+              {
+                case 0:
+                case 1: return obj->data.basic.d == d;
+                case 2: return obj->data.basic.d != d;
+                case 3: return obj->data.basic.d < d;
+                case 4: return obj->data.basic.d > d;
+                case 5: return obj->data.basic.d <= d;
+                case 6: return obj->data.basic.d >= d;
+                default: return false;
+              }
+            }
+          }
+
+          return false;
+        };
+      }
+      else if(op == lit("contains") || op == lit("=~"))
+      {
+        bool contains = op == lit("contains");
+
+        QRegularExpression regex;
+        if(!contains)
+        {
+          int end = 0;
+
+          if(param.size() < 2 || param[0] != QLatin1Char('/'))
+          {
+            trace.setError(tr("Parameter to =~ should be /regex/", "EventFilterModel"));
+            return NULL;
+          }
+
+          for(int i = 1; i < param.size(); i++)
+          {
+            if(param[i] == QLatin1Char('\\'))
+            {
+              i++;
+              continue;
+            }
+
+            if(param[i] == QLatin1Char('/'))
+            {
+              end = i;
+              break;
+            }
+          }
+
+          if(end == 0)
+          {
+            trace.setError(tr("Unterminated regex", "EventFilterModel"));
+            return NULL;
+          }
+
+          QString opts = param.right(param.size() - end - 1);
+
+          QRegularExpression::PatternOptions reOpts = QRegularExpression::NoPatternOption;
+
+          for(QChar c : opts)
+          {
+            switch(c.toLatin1())
+            {
+              case 'i': reOpts |= QRegularExpression::CaseInsensitiveOption; break;
+              case 'x': reOpts |= QRegularExpression::ExtendedPatternSyntaxOption; break;
+              case 'u': reOpts |= QRegularExpression::UseUnicodePropertiesOption; break;
+              default:
+                trace.setError(tr("Unexpected option '%1' after regex", "EventFilterModel").arg(c));
+                return NULL;
+            }
+          }
+
+          regex = QRegularExpression(param.mid(1, end - 1));
+
+          if(!regex.isValid())
+          {
+            trace.setError(tr("Invalid regex", "EventFilterModel"));
+            return NULL;
+          }
+        }
+
+        param = param.toLower();
+
+        comparer = [contains, param, regex](const SDObject *obj) {
+          if(obj->type.basetype == SDBasic::String)
+          {
+            if(contains)
+            {
+              QString str = obj->data.str;
+              str = str.toLower();
+              return str.contains(param);
+            }
+            else
+            {
+              QRegularExpressionMatch match = regex.match(QString(obj->data.str));
+              return match.isValid() && match.hasMatch();
+            }
+          }
+
+          return false;
+        };
+      }
+      else
+      {
+        trace.setError(tr("Unrecognised annotation condition", "EventFilterModel"));
+        return NULL;
+      }
+    }
+
+    return [keyPath, comparer](ICaptureContext *, const rdcstr &, const rdcstr &, uint32_t eventId,
+                               const SDChunk *, const ActionDescription *action, const rdcstr &) {
+      if(action)
+      {
+        for(const APIEvent &e : action->events)
+        {
+          if(e.eventId == eventId)
+          {
+            const SDObject *annot = e.annotations ? e.annotations->FindChildByKeyPath(keyPath) : NULL;
+
+            if(annot == NULL)
+              return false;
+
+            if(comparer)
+              return comparer(annot);
+            else
+              return annot != NULL;
+          }
+        }
+      }
+      return false;
     };
   }
 
@@ -2998,7 +3345,7 @@ ParseTrace EventFilterModel::ParseExpressionToFilters(QString expr, rdcarray<Eve
 
           subexpr.matchType = matchType;
           subexpr.function = true;
-          subexpr.name = lit("$any$");
+          subexpr.name = lit("$subexp$");
           subexpr.params = params;
 
           subexpr.position = trace.position;
@@ -3449,6 +3796,7 @@ EventBrowser::EventBrowser(ICaptureContext &ctx, QWidget *parent)
   ui->events->header()->setSectionResizeMode(COL_EID, QHeaderView::Interactive);
   ui->events->header()->setSectionResizeMode(COL_ACTION, QHeaderView::Interactive);
   ui->events->header()->setSectionResizeMode(COL_DURATION, QHeaderView::Interactive);
+  ui->events->header()->setSectionResizeMode(COL_ANNOTATION, QHeaderView::Interactive);
 
   ui->events->header()->setMinimumSectionSize(40);
 
@@ -3466,9 +3814,11 @@ EventBrowser::EventBrowser(ICaptureContext &ctx, QWidget *parent)
   ui->events->header()->resizeSection(COL_ACTION, 60);
   ui->events->header()->resizeSection(COL_NAME, 200);
   ui->events->header()->resizeSection(COL_DURATION, 80);
+  ui->events->header()->resizeSection(COL_ANNOTATION, 100);
 
   ui->events->header()->hideSection(COL_ACTION);
   ui->events->header()->hideSection(COL_DURATION);
+  ui->events->header()->hideSection(COL_ANNOTATION);
 
   ui->events->header()->moveSection(COL_NAME, 2);
 
@@ -3589,7 +3939,7 @@ EventBrowser::EventBrowser(ICaptureContext &ctx, QWidget *parent)
   ui->filterExpression->enableCompletion();
   ui->filterExpression->setAcceptRichText(false);
 
-  ui->filterExpression->setText(persistantStorage.CurrentFilter);
+  ui->filterExpression->setText(persistentStorage.CurrentFilter);
 
   m_SavedCompleter = new QCompleter(this);
   m_SavedCompleter->setWidget(ui->filterExpression);
@@ -3602,9 +3952,9 @@ EventBrowser::EventBrowser(ICaptureContext &ctx, QWidget *parent)
   QObject::connect(m_SavedCompleter, OverloadedSlot<const QModelIndex &>::of(&QCompleter::activated),
                    [this](const QModelIndex &idx) {
                      int i = idx.row();
-                     if(i >= 0 && i < persistantStorage.SavedFilters.count())
+                     if(i >= 0 && i < persistentStorage.SavedFilters.count())
                      {
-                       m_CurrentFilterText->setPlainText(persistantStorage.SavedFilters[i].second);
+                       m_CurrentFilterText->setPlainText(persistentStorage.SavedFilters[i].second);
 
                        QTextCursor c = m_CurrentFilterText->textCursor();
                        c.movePosition(QTextCursor::EndOfLine);
@@ -3671,6 +4021,36 @@ EventBrowser::~EventBrowser()
   delete ui;
 }
 
+rdcstr EventBrowser::GetHighlightedAnnotation()
+{
+  return m_Model->GetAnnotationPath();
+}
+
+void EventBrowser::SetDurationColumnVisible(bool show)
+{
+  if(show)
+    ui->events->header()->showSection(COL_DURATION);
+  else
+    ui->events->header()->hideSection(COL_DURATION);
+}
+
+void EventBrowser::SetAnnotationColumnVisible(bool show)
+{
+  if(show)
+    ui->events->header()->showSection(COL_ANNOTATION);
+  else
+    ui->events->header()->hideSection(COL_ANNOTATION);
+}
+
+void EventBrowser::SetHighlightedAnnotation(const rdcstr &annotationPath)
+{
+  m_Model->SetAnnotationPath(annotationPath);
+
+  // automatically show the annotation column if it's hidden
+  if(!annotationPath.isEmpty() && ui->events->header()->isSectionHidden(COL_ANNOTATION))
+    SetAnnotationColumnVisible(true);
+}
+
 void EventBrowser::OnCaptureLoaded()
 {
   ui->events->setIgnoreBackgroundColors(!m_Ctx.Config().EventBrowser_ColorEventRow);
@@ -3679,7 +4059,7 @@ void EventBrowser::OnCaptureLoaded()
   // older Qt versions lose all the sections when a model resets even if the sections don't change.
   // Manually save/restore them
   QVariant p = persistData();
-  m_Model->ResetModel();
+  m_Model->ResetModel(false);
   setPersistData(p);
 
   // expand the root frame node
@@ -3722,7 +4102,7 @@ void EventBrowser::OnCaptureClosed()
   // older Qt versions lose all the sections when a model resets even if the sections don't change.
   // Manually save/restore them
   QVariant p = persistData();
-  m_Model->ResetModel();
+  m_Model->ResetModel(true);
   setPersistData(p);
 
   ui->find->setEnabled(false);
@@ -3800,8 +4180,8 @@ void EventBrowser::events_currentChanged(const QModelIndex &current, const QMode
   if(action && action->IsFakeMarker())
     action = &action->children.back();
 
-  ui->stepPrev->setEnabled(action && action->previous);
-  ui->stepNext->setEnabled(action && action->next);
+  ui->stepPrev->setEnabled(action && action->previousAction);
+  ui->stepNext->setEnabled(action && action->nextAction);
 
   // special case for the first action in the frame
   if(selectedEID == 0)
@@ -3986,7 +4366,7 @@ void EventBrowser::CreateFilterDialog()
     saveName.setPlaceholderText(tr("Name of filter"));
 
     RDListWidget filters;
-    for(const QPair<QString, QString> &f : persistantStorage.SavedFilters)
+    for(const QPair<QString, QString> &f : persistentStorage.SavedFilters)
       filters.addItem(f.first);
 
     QPushButton saveButton;
@@ -4028,9 +4408,9 @@ void EventBrowser::CreateFilterDialog()
                      [&saveButton](QListWidgetItem *) { saveButton.click(); });
 
     QObject::connect(&saveName, &RDLineEdit::textChanged, [&saveName, &filters]() {
-      for(int i = 0; i < persistantStorage.SavedFilters.count(); i++)
+      for(int i = 0; i < persistentStorage.SavedFilters.count(); i++)
       {
-        if(saveName.text().trimmed().toLower() == persistantStorage.SavedFilters[i].first.toLower())
+        if(saveName.text().trimmed().toLower() == persistentStorage.SavedFilters[i].first.toLower())
         {
           if(filters.currentRow() != i)
             filters.setCurrentRow(i);
@@ -4042,19 +4422,19 @@ void EventBrowser::CreateFilterDialog()
     });
 
     QObject::connect(&filters, &QListWidget::currentRowChanged, [&saveName](int row) {
-      if(row >= 0 && row < persistantStorage.SavedFilters.count())
-        saveName.setText(persistantStorage.SavedFilters[row].first);
+      if(row >= 0 && row < persistentStorage.SavedFilters.count())
+        saveName.setText(persistentStorage.SavedFilters[row].first);
     });
 
     QObject::connect(&saveButton, &QPushButton::clicked, [this, dialog, &saveName, &filters]() {
       QString n = saveName.text().trimmed();
       QString f = m_FilterSettings.Filter->toPlainText();
 
-      for(int i = 0; i < persistantStorage.SavedFilters.count(); i++)
+      for(int i = 0; i < persistentStorage.SavedFilters.count(); i++)
       {
-        if(n.toLower() == persistantStorage.SavedFilters[i].first.toLower())
+        if(n.toLower() == persistentStorage.SavedFilters[i].first.toLower())
         {
-          if(persistantStorage.SavedFilters[i].second.trimmed() == f.trimmed())
+          if(persistentStorage.SavedFilters[i].second.trimmed() == f.trimmed())
           {
             dialog->accept();
             return;
@@ -4063,8 +4443,8 @@ void EventBrowser::CreateFilterDialog()
           QMessageBox::StandardButton res = RDDialog::question(
               dialog, tr("Delete filter?"),
               tr("Are you sure you want to overwrite the %1 filter? From:\n\n%2\n\nTo:\n\n%3")
-                  .arg(persistantStorage.SavedFilters[i].first)
-                  .arg(persistantStorage.SavedFilters[i].second)
+                  .arg(persistentStorage.SavedFilters[i].first)
+                  .arg(persistentStorage.SavedFilters[i].second)
                   .arg(f),
               QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
 
@@ -4072,12 +4452,12 @@ void EventBrowser::CreateFilterDialog()
             return;
 
           delete filters.takeItem(i);
-          persistantStorage.SavedFilters.erase(persistantStorage.SavedFilters.begin() + i);
+          persistentStorage.SavedFilters.erase(persistentStorage.SavedFilters.begin() + i);
           break;
         }
       }
 
-      persistantStorage.SavedFilters.insert(0, {n, f});
+      persistentStorage.SavedFilters.insert(0, {n, f});
 
       dialog->accept();
     });
@@ -4087,21 +4467,21 @@ void EventBrowser::CreateFilterDialog()
       if(!item)
         return;
 
-      for(int i = 0; i < persistantStorage.SavedFilters.count(); i++)
+      for(int i = 0; i < persistentStorage.SavedFilters.count(); i++)
       {
-        if(item->text().trimmed().toLower() == persistantStorage.SavedFilters[i].first.toLower())
+        if(item->text().trimmed().toLower() == persistentStorage.SavedFilters[i].first.toLower())
         {
           QMessageBox::StandardButton res =
               RDDialog::question(dialog, tr("Delete filter?"),
                                  tr("Are you sure you want to delete the %1 filter?\n\n%2")
-                                     .arg(persistantStorage.SavedFilters[i].first)
-                                     .arg(persistantStorage.SavedFilters[i].second),
+                                     .arg(persistentStorage.SavedFilters[i].first)
+                                     .arg(persistentStorage.SavedFilters[i].second),
                                  QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
 
           if(res == QMessageBox::Yes)
           {
             delete filters.takeItem(i);
-            persistantStorage.SavedFilters.erase(persistantStorage.SavedFilters.begin() + i);
+            persistentStorage.SavedFilters.erase(persistentStorage.SavedFilters.begin() + i);
           }
 
           return;
@@ -4156,7 +4536,7 @@ void EventBrowser::CreateFilterDialog()
 
           if(res == QMessageBox::Yes)
           {
-            persistantStorage.SavedFilters = storedFilters.SavedFilters;
+            persistentStorage.SavedFilters = storedFilters.SavedFilters;
           }
         }
         else
@@ -4186,7 +4566,7 @@ void EventBrowser::CreateFilterDialog()
       if(f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
       {
         QVariant v;
-        persistantStorage.save(v);
+        persistentStorage.save(v);
 
         QVariantMap filters = v.toMap();
         SaveToJSON(filters, f, "rdocFilterSet", 1);
@@ -4204,7 +4584,7 @@ void EventBrowser::CreateFilterDialog()
 
   // disable export if there are no filters to export
   QObject::connect(importExportMenu, &QMenu::aboutToShow, [exportAction]() {
-    exportAction->setEnabled(!persistantStorage.SavedFilters.isEmpty());
+    exportAction->setEnabled(!persistentStorage.SavedFilters.isEmpty());
   });
 
   saveFilter->setMenu(importExportMenu);
@@ -4613,7 +4993,7 @@ void EventBrowser::filter_apply()
   ui->events->updateExpansion(m_EventsExpansion, keygen);
 
   QString expression = ui->filterExpression->toPlainText();
-  persistantStorage.CurrentFilter = expression;
+  persistentStorage.CurrentFilter = expression;
 
   rdcarray<EventFilter> filters;
   *m_ParseTrace = m_FilterModel->ParseExpressionToFilters(expression, filters);
@@ -4748,9 +5128,9 @@ void EventBrowser::AddFilterExplanations(RDTreeWidgetItem *root, QVector<FilterE
     {
       explanation += tr("Name matches '%1'").arg(f.name);
     }
-    else if(f.name == lit("$any$"))
+    else if(f.name == lit("$subexp$"))
     {
-      explanation += tr("Any of...");
+      explanation += tr("Match against...");
     }
     else
     {
@@ -4845,7 +5225,7 @@ void EventBrowser::ShowSavedFilterCompleter(RDTextEdit *filter)
 {
   QStringList strs;
 
-  for(QPair<QString, QString> &f : persistantStorage.SavedFilters)
+  for(QPair<QString, QString> &f : persistentStorage.SavedFilters)
     strs << f.first + lit(": ") + f.second;
 
   m_SavedCompletionModel->setStringList(strs);
@@ -4963,10 +5343,17 @@ void EventBrowser::on_stepNext_clicked()
   if(!m_Ctx.IsCaptureLoaded() || !ui->stepNext->isEnabled())
     return;
 
-  const ActionDescription *action = m_Ctx.CurAction();
+  QModelIndex idx = ui->events->currentIndex();
+  uint32_t selectedEID = GetSelectedEID(idx);
+  const ActionDescription *action = m_Ctx.GetAction(selectedEID);
 
   if(action)
-    action = action->next;
+  {
+    if(!action->children.empty())
+      action = &action->children[0];
+    else if(action->nextAction)
+      action = action->nextAction;
+  }
 
   // special case for the first 'virtual' action at EID 0
   if(m_Ctx.CurEvent() == 0)
@@ -4980,8 +5367,10 @@ void EventBrowser::on_stepNext_clicked()
 
     // if it failed, possibly the next action is filtered out. Step along the list until we find one
     // which isn't
-    action = action->next;
+    action = action->nextAction;
   }
+  // special case for the first 'virtual' action at EID 0
+  SelectEvent(0);
 }
 
 void EventBrowser::on_stepPrev_clicked()
@@ -4989,10 +5378,17 @@ void EventBrowser::on_stepPrev_clicked()
   if(!m_Ctx.IsCaptureLoaded() || !ui->stepPrev->isEnabled())
     return;
 
-  const ActionDescription *action = m_Ctx.CurAction();
+  QModelIndex idx = ui->events->currentIndex();
+  uint32_t selectedEID = GetSelectedEID(idx);
+  const ActionDescription *action = m_Ctx.GetAction(selectedEID);
 
   if(action)
-    action = action->previous;
+  {
+    if(!action->children.empty())
+      action = action->children[0].previousAction;
+    else if(action->previousAction)
+      action = action->previousAction;
+  }
 
   while(action)
   {
@@ -5002,7 +5398,7 @@ void EventBrowser::on_stepPrev_clicked()
 
     // if it failed, possibly the previous action is filtered out. Step along the list until we find
     // one which isn't
-    action = action->previous;
+    action = action->previousAction;
   }
 
   // special case for the first 'virtual' action at EID 0

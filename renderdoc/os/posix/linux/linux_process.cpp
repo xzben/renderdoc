@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2016-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -236,6 +236,24 @@ static uint64_t get_nanotime()
 #define BREAK_INST_BYTES_SIZE 4
 #define BREAK_INST_INST_PTR_ADJUST 4
 
+#elif defined(__loongarch64)
+#define INST_PTR_REG csr_era
+// break instruction
+// ref: loongarch reference manual vol.1 chapter 2.2.10.2 & appendix b
+#define BREAK_INST 0x002a0000ULL
+#define BREAK_INST_BYTES_SIZE 4
+#define BREAK_INST_INST_PTR_ADJUST 4
+
+#elif defined(__powerpc64__)
+
+#define user_regs_struct pt_regs
+#define INST_PTR_REG nip
+
+// trap instruction on ppc64
+#define BREAK_INST 0x7fe00008ULL
+#define BREAK_INST_BYTES_SIZE 4
+#define BREAK_INST_INST_PTR_ADJUST 0
+
 #else
 
 #define BREAK_INST 0xccULL
@@ -402,7 +420,13 @@ bool StopChildAtMain(pid_t childPid, bool *exitWithNoExec)
     char line[512] = {0};
     if(fgets(line, 511, maps))
     {
-      if(strstr(line, "r-xp"))
+      char *sp = strchr(line, ' ');
+      if(sp == NULL)
+        continue;
+
+      sp++;
+
+      if(!strncmp(sp, "r-xp", 4))
       {
         RDCCOMPILE_ASSERT(sizeof(long) == sizeof(void *), "Expected long to be pointer sized");
         int pathOffset = 0;

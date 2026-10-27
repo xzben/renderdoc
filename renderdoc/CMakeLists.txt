@@ -42,14 +42,6 @@ elseif(APPLE)
         find_library(METAL_LIBRARY Metal)
         list(APPEND RDOC_LIBRARIES PRIVATE ${METAL_LIBRARY})
     endif()
-elseif(ENABLE_GGP)
-    find_package(PkgConfig REQUIRED)
-    find_package(Threads REQUIRED)
-
-    list(APPEND RDOC_LIBRARIES
-        PRIVATE -lm
-        PRIVATE -ldl
-        PRIVATE -lrt)
 elseif(UNIX)
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
@@ -139,6 +131,8 @@ set(sources
     common/globalconfig.h
     common/result.h
     common/shader_cache.h
+    common/jobsystem.cpp
+    common/tex_data.h
     common/threading.h
     common/timing.h
     common/wrapped_pool.h
@@ -147,11 +141,14 @@ set(sources
     core/image_viewer.cpp
     core/core.h
     core/crash_handler.h
+    core/gpu_address_range_tracker.cpp
+    core/gpu_address_range_tracker.h
     core/target_control.cpp
     core/remote_server.cpp
     core/remote_server.h
     core/settings.cpp
     core/settings.h
+    core/rdcbytetrie.h
     core/replay_proxy.cpp
     core/replay_proxy.h
     core/intervals.h
@@ -202,6 +199,7 @@ set(sources
     replay/replay_output.cpp
     replay/replay_controller.cpp
     replay/replay_controller.h
+    replay/common/var_dispatch_helpers.h
     serialise/serialiser.cpp
     serialise/serialiser.h
     serialise/lz4io.cpp
@@ -217,6 +215,8 @@ set(sources
     serialise/comp_io_tests.cpp
     serialise/serialiser_tests.cpp
     serialise/streamio_tests.cpp
+    shaders/controlflow.cpp
+    shaders/controlflow.h
     strings/grisu2.cpp
     strings/string_utils.cpp
     strings/string_utils.h
@@ -315,23 +315,6 @@ elseif(APPLE)
         os/posix/apple/apple_threading.cpp
         os/posix/apple/apple_hook.cpp
         os/posix/apple/apple_network.cpp
-        os/posix/posix_network.h
-        os/posix/posix_network.cpp
-        os/posix/posix_process.cpp
-        os/posix/posix_stringio.cpp
-        os/posix/posix_threading.cpp
-        os/posix/posix_specific.h)
-elseif(ENABLE_GGP)
-    list(APPEND sources
-        data/embedded_files.h
-        os/posix/ggp/ggp_stringio.cpp
-        os/posix/ggp/ggp_callstack.cpp
-        os/posix/ggp/ggp_process.cpp
-        os/posix/ggp/ggp_threading.cpp
-        os/posix/ggp/ggp_hook.cpp
-        os/posix/ggp/ggp_network.cpp
-        3rdparty/plthook/plthook.h
-        3rdparty/plthook/plthook_elf.c
         os/posix/posix_network.h
         os/posix/posix_network.cpp
         os/posix/posix_process.cpp
@@ -494,6 +477,9 @@ set(data
     data/glsl/vk_depthms2buffer.comp
     data/glsl/vk_buffer2ms.comp
     data/glsl/vk_depthbuf2ms.frag
+    data/glsl/debug_math.comp
+    data/glsl/debug_sample.frag
+    data/hlsl/quadswizzle.hlsl
     data/sourcecodepro.ttf
     driver/vulkan/renderdoc.json)
 
@@ -605,7 +591,7 @@ if(ENABLE_GL OR ENABLE_GLES)
 endif()
 
 # pull in the NVIDIA folder
-if(NOT ANDROID AND NOT APPLE AND (ENABLE_GL OR ENABLE_GLES OR ENABLE_VULKAN))
+if(ENABLE_GL OR ENABLE_GLES OR ENABLE_VULKAN)
     add_subdirectory(driver/ihv/nv)
     list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_nv>)
 endif()
@@ -653,10 +639,6 @@ if(UNIX AND NOT ANDROID AND NOT APPLE)
 
     if(NOT ENABLE_ASAN AND NOT ENABLE_TSAN)
         set(RDOC_LINK_FLAGS "${RDOC_LINK_FLAGS} -Wl,--no-undefined")
-    endif()
-
-    if(ENABLE_GGP)
-        set(RDOC_LINK_FLAGS "${RDOC_LINK_FLAGS} -Wl,--hash-style=gnu -Wl,--build-id=sha1")
     endif()
 
     if(NOT RELEASE_MODE)

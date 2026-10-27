@@ -1,3 +1,6 @@
+from __future__ import annotations
+from typing import Any, Callable, Dict
+
 import rdtest
 import renderdoc as rd
 
@@ -8,57 +11,80 @@ class D3D12_Reflection_Zoo(rdtest.TestCase):
     def check_capture(self):
         action = self.find_action("DXBC")
 
-        self.check(action is not None)
+        assert action is not None
 
-        self.controller.SetFrameEvent(action.next.eventId, False)
+        self.set_event(action.nextAction.eventId, False)
 
-        pipe: rd.PipeState = self.controller.GetPipelineState()
+        pipe = self.controller.GetPipelineState()
 
         stage = rd.ShaderStage.Pixel
 
         # Verify that the DXBC action is first
-        disasm = self.controller.DisassembleShader(pipe.GetGraphicsPipelineObject(), pipe.GetShaderReflection(stage),
-                                                   '')
+        refl = pipe.GetShaderReflection(stage)
+        assert refl is not None
+        disasm = self.controller.DisassembleShader(pipe.GetGraphicsPipelineObject(), refl, '')
 
-        self.check('ps_5_1' in disasm)
+        assert 'ps_5_1' in disasm
 
         self.check_event()
 
         rdtest.log.success("DXBC action is as expected")
 
         # Move to the DXIL action
-        action = self.find_action("DXIL")
+        action = self.find_action("SM6.0")
 
         if action is None:
-            rdtest.log.print("No DXIL action to test")
+            rdtest.log.print("No SM6.0 DXIL action to test")
             return
 
-        self.controller.SetFrameEvent(action.next.eventId, False)
+        self.set_event(action.nextAction.eventId, False)
 
-        pipe: rd.PipeState = self.controller.GetPipelineState()
+        pipe = self.controller.GetPipelineState()
 
-        disasm = self.controller.DisassembleShader(pipe.GetGraphicsPipelineObject(), pipe.GetShaderReflection(stage),
-                                                   '')
+        refl = pipe.GetShaderReflection(stage)
+        assert refl is not None
+        disasm = self.controller.DisassembleShader(pipe.GetGraphicsPipelineObject(), refl, '')
 
-        self.check('SM6.0' in disasm)
+        assert 'SM6.0' in disasm
 
         self.check_event()
 
-        rdtest.log.success("DXIL action is as expected")
+        rdtest.log.success("SM6.0 DXIL action is as expected")
+
+        # Move to the DXIL action
+        action = self.find_action("SM6.7")
+
+        if action is None:
+            rdtest.log.print("No SM6.7 DXIL action to test")
+            return
+
+        self.set_event(action.nextAction.eventId, False)
+
+        pipe = self.controller.GetPipelineState()
+
+        refl = pipe.GetShaderReflection(stage)
+        assert refl is not None
+        disasm = self.controller.DisassembleShader(pipe.GetGraphicsPipelineObject(), refl, '')
+
+        assert 'SM6.7' in disasm
+
+        self.check_event()
+
+        rdtest.log.success("SM6.7 DXIL action is as expected")
 
     def check_event(self):
-        pipe: rd.PipeState = self.controller.GetPipelineState()
+        pipe = self.controller.GetPipelineState()
 
         stage = rd.ShaderStage.Pixel
 
-        refl: rd.ShaderReflection = pipe.GetShaderReflection(stage)
+        refl = pipe.GetShaderReflection(stage)
 
         # Check we have the source and it is unmangled
-        debugInfo: rd.ShaderDebugInfo = refl.debugInfo
+        debugInfo = refl.debugInfo
 
-        self.check(len(debugInfo.files) == 1)
+        assert len(debugInfo.files) == 1
 
-        self.check('Iñtërnâtiônàližætiøn' in debugInfo.files[0].contents)
+        assert 'Iñtërnâtiônàližætiøn' in debugInfo.files[0].contents
 
         def checker(textureType: rd.TextureType,
                     varType: rd.VarType,
@@ -68,7 +94,7 @@ class D3D12_Reflection_Zoo(rdtest.TestCase):
                     *,
                     isTexture: bool = True,
                     regCount: int = 1,
-                    structVarCheck=None):
+                    structVarCheck: Callable[[rd.ShaderConstantType], None] | None=None) -> Dict[str, Any]:
             return {
                 'textureType': textureType,
                 'isTexture': isTexture,
@@ -81,29 +107,130 @@ class D3D12_Reflection_Zoo(rdtest.TestCase):
             }
 
         def buf_struct_check(type: rd.ShaderConstantType):
-            self.check(type.name == 'buf_struct')
-            self.check(len(type.members) == 3)
+            assert type.name == 'buf_struct'
+            assert len(type.members) == 3
 
-            self.check(type.members[0].name == 'a')
-            self.check(type.members[0].type.baseType == rd.VarType.Float)
-            self.check(type.members[0].type.rows == 1)
-            self.check(type.members[0].type.columns == 1)
-            self.check(type.members[0].type.elements == 1)
+            assert type.members[0].name == 'a'
+            assert type.members[0].type.baseType == rd.VarType.Float
+            assert type.members[0].type.rows == 1
+            assert type.members[0].type.columns == 1
+            assert type.members[0].type.elements == 1
+            assert type.members[0].byteOffset == 0
+            assert type.members[0].bitFieldOffset == 0
+            assert type.members[0].bitFieldSize == 0
 
-            self.check(type.members[1].name == 'b')
-            self.check(type.members[1].type.baseType == rd.VarType.Float)
-            self.check(type.members[1].type.rows == 1)
-            self.check(type.members[1].type.columns == 1)
-            self.check(type.members[1].type.elements == 2)
+            assert type.members[1].name == 'b'
+            assert type.members[1].type.baseType == rd.VarType.Float
+            assert type.members[1].type.rows == 1
+            assert type.members[1].type.columns == 1
+            assert type.members[1].type.elements == 2
+            assert type.members[1].byteOffset == 4
+            assert type.members[1].bitFieldOffset == 0
+            assert type.members[1].bitFieldSize == 0
 
-            self.check(type.members[2].name == 'c')
-            self.check(type.members[2].type.name == 'nested')
-            self.check(len(type.members[2].type.members) == 1)
-            self.check(type.members[2].type.members[0].name == 'x')
-            self.check(type.members[2].type.members[0].type.baseType == rd.VarType.Float)
-            self.check(type.members[2].type.members[0].type.rows == 2)
-            self.check(type.members[2].type.members[0].type.columns == 3)
-            self.check(type.members[2].type.members[0].type.RowMajor())
+            assert type.members[2].name == 'c'
+            assert type.members[2].type.name == 'nested'
+            assert type.members[2].byteOffset == 12
+            assert type.members[2].bitFieldOffset == 0
+            assert type.members[2].bitFieldSize == 0
+            assert len(type.members[2].type.members) == 1
+            assert type.members[2].type.members[0].name == 'x'
+            assert type.members[2].type.members[0].type.baseType == rd.VarType.Float
+            assert type.members[2].type.members[0].type.rows == 2
+            assert type.members[2].type.members[0].type.columns == 3
+            assert type.members[2].type.members[0].type.RowMajor()
+            assert type.members[2].type.members[0].byteOffset == 0
+            assert type.members[2].type.members[0].bitFieldOffset == 0
+            assert type.members[2].type.members[0].bitFieldSize == 0
+
+            return
+
+        def sm67_struct_check(type: rd.ShaderConstantType):
+            assert type.name == 'sm67_struct'
+            assert len(type.members) == 17
+
+            # to simplify checks we only look at offsets and bitfield properties,
+            # assuming the base types are the same (except for deliberate int
+            # check_eqs on some bitfields)
+            self.check_eq(type.members[0].name, 'x')
+            self.check_eq(type.members[0].byteOffset, 0)
+
+            self.check_eq(type.members[1].name, 'a')
+            self.check_eq(type.members[1].byteOffset, 4)
+            self.check_eq(type.members[1].bitFieldOffset, 0)
+            self.check_eq(type.members[1].bitFieldSize, 10)
+
+            self.check_eq(type.members[2].name, 'b')
+            self.check_eq(type.members[2].byteOffset, 4)
+            self.check_eq(type.members[2].bitFieldOffset, 10)
+            self.check_eq(type.members[2].bitFieldSize, 10)
+
+            self.check_eq(type.members[3].name, 'c')
+            self.check_eq(type.members[3].byteOffset, 4)
+            self.check_eq(type.members[3].bitFieldOffset, 20)
+            self.check_eq(type.members[3].bitFieldSize, 10)
+
+            self.check_eq(type.members[4].name, 'd')
+            self.check_eq(type.members[4].byteOffset, 4)
+            self.check_eq(type.members[4].bitFieldOffset, 30)
+            self.check_eq(type.members[4].bitFieldSize, 2)
+
+            self.check_eq(type.members[5].name, 'e')
+            self.check_eq(type.members[5].byteOffset, 8)
+
+            self.check_eq(type.members[6].name, 'f')
+            self.check_eq(type.members[6].byteOffset, 20)
+            self.check_eq(type.members[6].bitFieldOffset, 0)
+            self.check_eq(type.members[6].bitFieldSize, 14)
+
+            self.check_eq(type.members[7].name, 'g')
+            self.check_eq(type.members[7].byteOffset, 24)
+
+            self.check_eq(type.members[8].name, 'h')
+            self.check_eq(type.members[8].byteOffset, 36)
+            self.check_eq(type.members[8].bitFieldOffset, 0)
+            self.check_eq(type.members[8].bitFieldSize, 10)
+
+            self.check_eq(type.members[9].name, 'i')
+            self.check_eq(type.members[9].byteOffset, 36)
+            self.check_eq(type.members[9].bitFieldOffset, 10)
+            self.check_eq(type.members[9].bitFieldSize, 10)
+
+            self.check_eq(type.members[10].name, 'j')
+            self.check_eq(type.members[10].byteOffset, 36)
+            self.check_eq(type.members[10].bitFieldOffset, 20)
+            self.check_eq(type.members[10].bitFieldSize, 10)
+
+            self.check_eq(type.members[11].name, 'k')
+            self.check_eq(type.members[11].byteOffset, 40)
+            self.check_eq(type.members[11].bitFieldOffset, 0)
+            self.check_eq(type.members[11].bitFieldSize, 10)
+
+            self.check_eq(type.members[12].name, 'l')
+            self.check_eq(type.members[12].byteOffset, 40)
+            self.check_eq(type.members[12].bitFieldOffset, 10)
+            self.check_eq(type.members[12].bitFieldSize, 10)
+
+            self.check_eq(type.members[13].name, 'm')
+            self.check_eq(type.members[13].byteOffset, 44)
+
+            self.check_eq(type.members[14].name, 'n')
+            self.check_eq(type.members[14].type.baseType, rd.VarType.UInt)
+            self.check_eq(type.members[14].byteOffset, 48)
+            self.check_eq(type.members[14].bitFieldOffset, 0)
+            self.check_eq(type.members[14].bitFieldSize, 5)
+
+            self.check_eq(type.members[15].name, '')
+            self.check_eq(type.members[15].type.baseType, rd.VarType.UInt)
+            self.check_eq(type.members[15].byteOffset, 48)
+            self.check_eq(type.members[15].bitFieldOffset, 5)
+            self.check_eq(type.members[15].bitFieldSize, 5)
+
+            self.check_eq(type.members[16].name, 'o')
+            self.check_eq(type.members[16].type.baseType, rd.VarType.SInt)
+            self.check_eq(type.members[16].byteOffset, 48)
+            self.check_eq(type.members[16].bitFieldOffset, 10)
+            self.check_eq(type.members[16].bitFieldSize, 5)
 
             return
 
@@ -249,57 +376,67 @@ class D3D12_Reflection_Zoo(rdtest.TestCase):
                         structVarCheck=buf_struct_check),
             'rwstrbuf_f2':
                 checker(rd.TextureType.Buffer, rd.VarType.Float, 2, 54, 'float2', isTexture=False),
+            'rwstrbuf67':
+                checker(rd.TextureType.Buffer,
+                        rd.VarType.Unknown,
+                        0,
+                        55,
+                        'sm67_struct',
+                        isTexture=False,
+                        structVarCheck=sm67_struct_check),
         }
 
         # ROVs are optional, if it wasn't found then ignore that
         if '#define ROV 0' in debugInfo.files[0].contents:
             del rw_db['rov']
 
+        # only check SM6.7 structured buffer with bitfields on SM6.7
+        if '#define SM67 1' not in debugInfo.files[0].contents:
+            del rw_db['rwstrbuf67']
+
         access = [(a.type, a.index) for a in self.controller.GetDescriptorAccess()]
 
         for idx, s in enumerate(refl.samplers):
-            self.check(s.fixedBindSetOrSpace == 0)
-            self.check((rd.DescriptorType.Sampler, idx) in access)
-            self.check(s.bindArraySize == 1)
+            assert s.fixedBindSetOrSpace == 0
+            assert (rd.DescriptorType.Sampler, idx) in access
+            assert s.bindArraySize == 1
 
             if s.name == 's1':
-                self.check(s.fixedBindNumber == 5)
+                assert s.fixedBindNumber == 5
             elif s.name == 's2':
-                self.check(s.fixedBindNumber == 8)
+                assert s.fixedBindNumber == 8
             else:
-                raise rdtest.TestFailureException('Unrecognised sampler {}'.format(s.name))
+                raise rdtest.TestFailureException(f'Unrecognised sampler {s.name}')
 
         for res_list, res_db, res_readonly in [(refl.readOnlyResources, ro_db, True),
                                                (refl.readWriteResources, rw_db, False)]:
             for idx, res in enumerate(res_list):
-                res: rd.ShaderResource
+                assert res.isReadOnly == res_readonly
+                assert res.fixedBindSetOrSpace == 0
 
-                self.check(res.isReadOnly == res_readonly)
-                self.check(res.fixedBindSetOrSpace == 0)
-
-                self.check((res.descriptorType, idx) in access, f"{res.name} - ({str(res.descriptorType)}, {idx})")
+                assert (res.descriptorType, idx) in access, f"{res.name} not found - ({res.descriptorType!s}, {idx})"
 
                 if res.name in res_db:
                     check = res_db[res.name]
 
-                    self.check(res.textureType == check['textureType'])
-                    self.check(res.isTexture == check['isTexture'])
+                    assert res.textureType == check['textureType']
+                    assert res.isTexture == check['isTexture']
 
                     if check['structVarCheck']:
                         check['structVarCheck'](res.variableType)
                     else:
-                        self.check(res.variableType.baseType == check['varType'])
-                        self.check(res.variableType.name == check['typeName'])
-                        self.check(res.variableType.columns == check['columns'])
+                        assert res.variableType.baseType == check['varType']
+                        assert res.variableType.name == check['typeName']
+                        assert res.variableType.columns == check['columns']
 
-                    self.check(res.fixedBindNumber == check['register'])
-                    self.check(res.bindArraySize == check['regCount'])
+                    assert res.fixedBindNumber == check['register']
+                    assert res.bindArraySize == check['regCount']
                 else:
-                    raise rdtest.TestFailureException('Unrecognised read-only resource {}'.format(res.name))
+                    raise rdtest.TestFailureException(f"Unrecognised {'read-only' if res_readonly else 'read-write'} resource {res.name}")
 
                 del res_db[res.name]
 
             if len(res_db) != 0:
-                raise rdtest.TestFailureException("Expected resources weren't found: {}".format(res_db.keys()))
+                raise rdtest.TestFailureException(f"Expected resources weren't found: {res_db.keys()}")
 
         rdtest.log.success("Reflected shader source as expected")

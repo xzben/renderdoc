@@ -1,15 +1,29 @@
 set(sources
-    nv_counter_enumerator.cpp
-    nv_counter_enumerator.h
-    nv_gl_counters.h
-    nv_vk_counters.h)
+    nv_aftermath.h
+    nv_aftermath.cpp)
 
-if(ENABLE_GL OR ENABLE_GLES)
-    set(sources_gl nv_gl_counters.cpp)
+# only include counters on normal windows/linux platforms, others just get aftermath stubs
+if(NOT ANDROID AND NOT APPLE)
+    list(APPEND sources
+        nv_counter_enumerator.cpp
+        nv_counter_enumerator.h
+        nv_gl_counters.h
+        nv_vk_counters.h)
+
+    if(ENABLE_GL OR ENABLE_GLES)
+        set(sources_gl nv_gl_counters.cpp)
+    endif()
+
+    if(ENABLE_VULKAN)
+        set(sources_vulkan nv_vk_counters.cpp)
+    endif()
 endif()
 
-if(ENABLE_VULKAN)
-    set(sources_vulkan nv_vk_counters.cpp)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 19.0.999)
+        set_property(SOURCE ${sources} ${sources_gl} ${sources_vulkan}
+            APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-cast-function-type-mismatch")
+    endif()
 endif()
 
 set(include_dirs

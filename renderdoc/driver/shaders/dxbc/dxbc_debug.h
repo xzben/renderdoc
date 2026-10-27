@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -26,8 +26,8 @@
 #pragma once
 
 #include "common/common.h"
+#include "dx_debug.h"
 #include "dxbc_bytecode.h"
-#include "dxbcdxil_debug.h"
 
 namespace DXBC
 {
@@ -48,12 +48,10 @@ enum DXGI_FORMAT;
 
 namespace DXBCDebug
 {
-using namespace DXBCDXILDebug;
-
-typedef DXBCDXILDebug::SampleGatherResourceData SampleGatherResourceData;
-typedef DXBCDXILDebug::SampleGatherSamplerData SampleGatherSamplerData;
-typedef DXBCDXILDebug::BindingSlot BindingSlot;
-typedef DXBCDXILDebug::GatherChannel GatherChannel;
+typedef DXDebug::SampleGatherResourceData SampleGatherResourceData;
+typedef DXDebug::SampleGatherSamplerData SampleGatherSamplerData;
+typedef DXDebug::BindingSlot BindingSlot;
+typedef DXDebug::GatherChannel GatherChannel;
 
 BindingSlot GetBindingSlotForDeclaration(const DXBCBytecode::Program &program,
                                          const DXBCBytecode::Declaration &decl);
@@ -129,65 +127,12 @@ public:
 
   rdcarray<groupsharedMem> groupshared;
 
-  struct SampleEvalCacheKey
-  {
-    int32_t quadIndex = -1;              // index of this thread in the quad
-    int32_t inputRegisterIndex = -1;     // index of the input register
-    int32_t firstComponent = 0;          // the first component in the register
-    int32_t numComponents = 0;           // how many components in the register
-    int32_t sample = -1;                 // -1 for offset-from-centroid lookups
-    int32_t offsetx = 0, offsety = 0;    // integer offset from centroid
-
-    bool operator<(const SampleEvalCacheKey &o) const
-    {
-      if(quadIndex != o.quadIndex)
-        return quadIndex < o.quadIndex;
-
-      if(inputRegisterIndex != o.inputRegisterIndex)
-        return inputRegisterIndex < o.inputRegisterIndex;
-
-      if(firstComponent != o.firstComponent)
-        return firstComponent < o.firstComponent;
-
-      if(numComponents != o.numComponents)
-        return numComponents < o.numComponents;
-
-      if(sample != o.sample)
-        return sample < o.sample;
-
-      if(offsetx != o.offsetx)
-        return offsetx < o.offsetx;
-
-      return offsety < o.offsety;
-    }
-  };
-
   // a bitmask of which registers were fetched into the cache, for quick checking
   uint64_t sampleEvalRegisterMask = 0;
-  std::map<SampleEvalCacheKey, ShaderVariable> sampleEvalCache;
+  std::map<DXDebug::SampleEvalCacheKey, ShaderVariable> sampleEvalCache;
 
   // copied from the parent trace
   rdcarray<ShaderVariable> constantBlocks;
-};
-
-struct PSInputElement
-{
-  PSInputElement(int regster, int element, int numWords, ShaderBuiltin attr, bool inc)
-  {
-    reg = regster;
-    elem = element;
-    numwords = numWords;
-    sysattribute = attr;
-    included = inc;
-  }
-
-  int reg;
-  int elem;
-  ShaderBuiltin sysattribute;
-
-  int numwords;
-
-  bool included;
 };
 
 void FlattenSingleVariable(uint32_t byteOffset, const rdcstr &basename, const ShaderVariable &v,
@@ -197,12 +142,6 @@ void FillViewFmt(DXGI_FORMAT format, GlobalState::ViewFmt &viewFmt);
 
 void LookupSRVFormatFromShaderReflection(const DXBC::Reflection &reflection,
                                          const BindingSlot &slot, GlobalState::ViewFmt &viewFmt);
-
-void GatherPSInputDataForInitialValues(const DXBC::DXBCContainer *dxbc,
-                                       const DXBC::Reflection &prevStageDxbc,
-                                       rdcarray<PSInputElement> &initialValues,
-                                       rdcarray<rdcstr> &floatInputs, rdcarray<rdcstr> &inputVarNames,
-                                       rdcstr &psInputDefinition, int &structureStride);
 
 class DebugAPIWrapper
 {
@@ -252,6 +191,8 @@ public:
     uint32_t isFrontFace;
   } semantics;
 
+  DXBC::ShaderType GetType() { return program->GetShaderType(); }
+
   uint32_t nextInstruction;
   GlobalState &global;
   rdcarray<ShaderVariable> inputs;
@@ -275,9 +216,19 @@ private:
   // file and applying any masking or swizzling
   void SetDst(ShaderDebugState *state, const DXBCBytecode::Operand &dstoper,
               const DXBCBytecode::Operation &op, const ShaderVariable &val);
+  void GetGroupsharedSrc(uint32_t gsmIndex, const uint32_t byteOffset, const uint32_t countBytes,
+                         uint32_t *gsmData) const;
+  void SetGroupsharedDst(ShaderDebugState *state, uint32_t gsmIndex, const uint32_t byteOffset,
+                         ShaderVariable &val);
 
   void MarkResourceAccess(ShaderDebugState *state, DXBCBytecode::OperandType type,
                           const BindingSlot &slot);
+
+  BindingSlot GetBindingSlotFromDeclaration(const DXBCBytecode::Declaration &decl,
+                                            const DXBCBytecode::Operand &oper,
+                                            const DXBCBytecode::Operation &op) const;
+  BindingSlot GetBindingSlotForIdentifier(const DXBCBytecode::Operand &oper,
+                                          const DXBCBytecode::Operation &op) const;
 
   // retrieves the value of the operand, by looking up
   // in the register file and performing any swizzling and
@@ -325,12 +276,12 @@ uint32_t GetLogicalIdentifierForBindingSlot(const DXBCBytecode::Program &program
                                             DXBCBytecode::OperandType declType,
                                             const DXBCDebug::BindingSlot &slot);
 
-void ApplyAllDerivatives(GlobalState &global, rdcarray<ThreadState> &quad, int destIdx,
-                         const rdcarray<PSInputElement> &initialValues, float *data);
-
 void AddCBufferToGlobalState(const DXBCBytecode::Program &program, GlobalState &global,
                              rdcarray<SourceVariableMapping> &sourceVars,
                              const ShaderReflection &refl, const BindingSlot &slot,
                              bytebuf &cbufData);
 
-};    // namespace ShaderDebug
+void GetInterpolationModeForInputParams(const rdcarray<SigParameter> &stageInputSig,
+                                        const DXBCBytecode::Program *program,
+                                        rdcarray<DXBC::InterpolationMode> &interpModes);
+};    // namespace DXBCDebug

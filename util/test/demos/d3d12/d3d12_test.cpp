@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2018-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,6 +30,7 @@
 #include "../3rdparty/md5/md5.h"
 #include "../renderdoc_app.h"
 #include "../win32/win32_window.h"
+#include "3rdparty/fmt/core.h"
 #include "dx/official/dxcapi.h"
 
 typedef HRESULT(WINAPI *PFN_CREATE_DXGI_FACTORY1)(REFIID, void **);
@@ -51,6 +52,7 @@ bool d3d12on7 = false;
 pD3DCompile dyn_D3DCompile = NULL;
 pD3DStripShader dyn_D3DStripShader = NULL;
 pD3DSetBlobPart dyn_D3DSetBlobPart = NULL;
+pD3DGetBlobPart dyn_D3DGetBlobPart = NULL;
 pD3DCreateBlob dyn_CreateBlob = NULL;
 
 PFN_D3D12_CREATE_DEVICE dyn_D3D12CreateDevice = NULL;
@@ -64,6 +66,73 @@ struct DevicePointers
   ID3D12DeviceFactoryPtr factory;
   ID3D12DeviceConfigurationPtr config;
 };
+
+struct DLLFileVersion
+{
+  uint16_t major, minor, build, revision;
+};
+
+struct Capabilities
+{
+  D3D12_FEATURE_DATA_D3D12_OPTIONS opts = {};
+  D3D12_FEATURE_DATA_D3D12_OPTIONS1 opts1 = {};
+  D3D12_FEATURE_DATA_D3D12_OPTIONS2 opts2 = {};
+  D3D12_FEATURE_DATA_D3D12_OPTIONS3 opts3 = {};
+  D3D12_FEATURE_DATA_D3D12_OPTIONS4 opts4 = {};
+  D3D12_FEATURE_DATA_D3D12_OPTIONS5 opts5 = {};
+  D3D12_FEATURE_DATA_D3D12_OPTIONS6 opts6 = {};
+  D3D12_FEATURE_DATA_D3D12_OPTIONS7 opts7 = {};
+  D3D12_FEATURE_DATA_D3D12_OPTIONS19 opts19 = {};
+  D3D_SHADER_MODEL sm = D3D_SHADER_MODEL_5_1;
+} caps;
+
+DLLFileVersion GetDLLFileVersion(HMODULE mod)
+{
+  DLLFileVersion ret = {};
+
+  using PFN_VerQueryValueA = decltype(&VerQueryValueA);
+
+  PFN_VerQueryValueA queryValue = NULL;
+
+  HMODULE version = LoadLibraryA("version.dll");
+  if(version)
+  {
+    queryValue = (PFN_VerQueryValueA)GetProcAddress(version, "VerQueryValueA");
+
+    if(queryValue)
+    {
+      HRSRC verRes = FindResource(mod, MAKEINTRESOURCE(1), RT_VERSION);
+      if(verRes)
+      {
+        DWORD sz = SizeofResource(mod, verRes);
+        HGLOBAL data = LoadResource(mod, verRes);
+
+        if(data && sz > 0)
+        {
+          void *buf = LockResource(data);
+
+          byte *tmpBuf = new byte[sz];
+          memcpy(tmpBuf, buf, sz);
+
+          VS_FIXEDFILEINFO *verInfo = NULL;
+          UINT size = 0;
+          if(queryValue(data, "\\", (void **)&verInfo, &size))
+          {
+            if(size > 0 && verInfo && verInfo->dwSignature == 0xFEEF04BD)
+            {
+              ret = {verInfo->dwFileVersionMS >> 16, verInfo->dwFileVersionMS & 0xffff,
+                     verInfo->dwFileVersionLS >> 16, verInfo->dwFileVersionLS & 0xffff};
+            }
+          }
+
+          delete[] tmpBuf;
+        }
+      }
+    }
+  }
+
+  return ret;
+}
 
 DevicePointers PrepareCreateDeviceFromDLL(const std::string &d3d12path, bool debug, bool gpuValidation)
 {
@@ -134,12 +203,24 @@ DevicePointers PrepareCreateDeviceFromDLL(const std::string &d3d12path, bool deb
 
       if(mod)
       {
-        DWORD *version = (DWORD *)GetProcAddress(mod, "D3D12SDKVersion");
+        DWORD *sdkVersion = (DWORD *)GetProcAddress(mod, "D3D12SDKVersion");
 
-        if(version)
+        DLLFileVersion version = GetDLLFileVersion(mod);
+
+        std::string d3d12CoreVersion;
+
+        if(version.major >= 1)
+          d3d12CoreVersion = fmt::format("{0}.{1}.{2}.{3}", version.major, version.minor,
+                                         version.build, version.revision);
+        else
+          d3d12CoreVersion = fmt::format("1.{0}", *sdkVersion);
+
+        TEST_LOG("Using D3D12Core.dll from %s (version %s)", path.c_str(), d3d12CoreVersion.c_str());
+
+        if(sdkVersion)
         {
-          hr = config1->CreateDeviceFactory(*version, path.c_str(), __uuidof(ID3D12DeviceFactory),
-                                            (void **)&devfactory);
+          hr = config1->CreateDeviceFactory(*sdkVersion, path.c_str(),
+                                            __uuidof(ID3D12DeviceFactory), (void **)&devfactory);
 
           if(FAILED(hr))
             devfactory = NULL;
@@ -206,6 +287,32 @@ void D3D12GraphicsTest::Prepare(int argc, char **argv)
 {
   GraphicsTest::Prepare(argc, argv);
 
+  for(int i = 0; i < argc; i++)
+  {
+    if(!strcmp(argv[i], "--gpuva") || !strcmp(argv[i], "--debug-gpu"))
+    {
+      gpuva = true;
+    }
+    if(i + 1 < argc &&
+       (!strcmp(argv[i], "--d3d12") || !strcmp(argv[i], "--sdk") || !strcmp(argv[i], "--d3d12core")))
+    {
+      d3d12path = argv[i + 1];
+    }
+  }
+
+  if(d3d12path.empty())
+  {
+    d3d12path = GetExecutableName();
+    d3d12path.erase(d3d12path.find_last_of("/\\"));
+    d3d12path += "/D3D12/d3d12core.dll";
+
+    FILE *f = fopen(d3d12path.c_str(), "r");
+    if(!f)
+      d3d12path.clear();
+    else
+      fclose(f);
+  }
+
   static bool prepared = false;
 
   if(!prepared)
@@ -223,7 +330,12 @@ void D3D12GraphicsTest::Prepare(int argc, char **argv)
       d3dcompiler = LoadLibraryA("d3dcompiler_44.dll");
     if(!d3dcompiler)
       d3dcompiler = LoadLibraryA("d3dcompiler_43.dll");
-    dxcompiler = LoadLibraryA("dxcompiler.dll");
+
+    // try loading dxcompiler from a local plugin folder first, since when building we copy the SDK
+    // version next to our exe and that may be old
+    dxcompiler = LoadLibraryA("D3D12/dxcompiler.dll");
+    if(!dxcompiler)
+      dxcompiler = LoadLibraryA("dxcompiler.dll");
 
     if(!d3d12)
     {
@@ -271,6 +383,7 @@ void D3D12GraphicsTest::Prepare(int argc, char **argv)
       dyn_D3DCompile = (pD3DCompile)GetProcAddress(d3dcompiler, "D3DCompile");
       dyn_D3DStripShader = (pD3DStripShader)GetProcAddress(d3dcompiler, "D3DStripShader");
       dyn_D3DSetBlobPart = (pD3DSetBlobPart)GetProcAddress(d3dcompiler, "D3DSetBlobPart");
+      dyn_D3DGetBlobPart = (pD3DGetBlobPart)GetProcAddress(d3dcompiler, "D3DGetBlobPart");
       dyn_CreateBlob = (pD3DCreateBlob)GetProcAddress(d3dcompiler, "D3DCreateBlob");
     }
 
@@ -283,6 +396,42 @@ void D3D12GraphicsTest::Prepare(int argc, char **argv)
       dyn_serializeRootSigOld =
           (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)GetProcAddress(d3d12, "D3D12SerializeRootSignature");
     }
+
+    if(d3d12 && dxgi && factory && dyn_D3D12CreateDevice)
+    {
+      devFactory = PrepareCreateDeviceFromDLL(d3d12path, debugDevice, gpuva).factory;
+
+      ID3D12DevicePtr tmpdev = CreateDevice(adapters, minFeatureLevel);
+
+      devFactory = NULL;
+
+      if(tmpdev)
+      {
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &caps.opts, sizeof(caps.opts));
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &caps.opts1, sizeof(caps.opts1));
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS2, &caps.opts2, sizeof(caps.opts2));
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &caps.opts3, sizeof(caps.opts3));
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &caps.opts4, sizeof(caps.opts4));
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &caps.opts5, sizeof(caps.opts5));
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &caps.opts6, sizeof(caps.opts6));
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &caps.opts7, sizeof(caps.opts7));
+        tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS19, &caps.opts19, sizeof(caps.opts19));
+        D3D12_FEATURE_DATA_SHADER_MODEL oShaderModel = {};
+        oShaderModel.HighestShaderModel = D3D_SHADER_MODEL_6_7;
+        while(oShaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_0)
+        {
+          HRESULT hr = tmpdev->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &oShaderModel,
+                                                   sizeof(oShaderModel));
+          if(SUCCEEDED(hr))
+          {
+            caps.sm = oShaderModel.HighestShaderModel;
+            break;
+          }
+
+          oShaderModel.HighestShaderModel = D3D_SHADER_MODEL(oShaderModel.HighestShaderModel - 1);
+        }
+      }
+    }
   }
 
   if(!d3d12)
@@ -294,7 +443,7 @@ void D3D12GraphicsTest::Prepare(int argc, char **argv)
   else if(!factory)
     Avail = "Couldn't create DXGI factory";
   else if(!dyn_D3D12CreateDevice || !dyn_D3DCompile || !dyn_D3DStripShader || !dyn_D3DSetBlobPart ||
-          !dyn_CreateBlob)
+          !dyn_D3DGetBlobPart || !dyn_CreateBlob)
     Avail = "Missing required entry point";
   else if(!dyn_serializeRootSig && !dyn_serializeRootSigOld)
     Avail = "Missing required root signature serialize entry point";
@@ -302,60 +451,18 @@ void D3D12GraphicsTest::Prepare(int argc, char **argv)
   m_12On7 = d3d12on7;
 
   m_DXILSupport = (dxcompiler != NULL);
-
-  for(int i = 0; i < argc; i++)
-  {
-    if(!strcmp(argv[i], "--gpuva") || !strcmp(argv[i], "--debug-gpu"))
-    {
-      gpuva = true;
-    }
-    if(i + 1 < argc &&
-       (!strcmp(argv[i], "--d3d12") || !strcmp(argv[i], "--sdk") || !strcmp(argv[i], "--d3d12core")))
-    {
-      d3d12path = argv[i + 1];
-    }
-  }
-
-  if(d3d12path.empty())
-  {
-    d3d12path = GetCWD() + "/D3D12/d3d12core.dll";
-    FILE *f = fopen(d3d12path.c_str(), "r");
-    if(!f)
-      d3d12path.clear();
-    else
-      fclose(f);
-  }
+  m_HighestShaderModel = caps.sm;
+  opts = caps.opts;
+  opts1 = caps.opts1;
+  opts2 = caps.opts2;
+  opts3 = caps.opts3;
+  opts4 = caps.opts4;
+  opts5 = caps.opts5;
+  opts6 = caps.opts6;
+  opts7 = caps.opts7;
+  opts19 = caps.opts19;
 
   m_Factory = factory;
-
-  if(Avail.empty())
-  {
-    devFactory = PrepareCreateDeviceFromDLL(d3d12path, debugDevice, gpuva).factory;
-
-    ID3D12DevicePtr tmpdev = CreateDevice(adapters, minFeatureLevel);
-
-    devFactory = NULL;
-
-    if(tmpdev)
-    {
-      tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &opts, sizeof(opts));
-      tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &opts1, sizeof(opts1));
-      tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS2, &opts2, sizeof(opts2));
-      tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &opts3, sizeof(opts3));
-      tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &opts4, sizeof(opts4));
-      tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &opts5, sizeof(opts5));
-      tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &opts6, sizeof(opts6));
-      tmpdev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &opts7, sizeof(opts7));
-      D3D12_FEATURE_DATA_SHADER_MODEL oShaderModel = {};
-      oShaderModel.HighestShaderModel = D3D_SHADER_MODEL_6_6;
-      HRESULT hr = tmpdev->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &oShaderModel,
-                                               sizeof(oShaderModel));
-      if(SUCCEEDED(hr))
-      {
-        m_HighestShaderModel = oShaderModel.HighestShaderModel;
-      }
-    }
-  }
 }
 
 bool D3D12GraphicsTest::Init()
@@ -374,6 +481,8 @@ bool D3D12GraphicsTest::Init()
   devFactory = devPtrs.factory;
   devConfig = devPtrs.config;
   d3d12Debug = devPtrs.debug;
+
+  m_SingletonDevice = (devFactory == NULL);
 
   dev = CreateDevice(adapters, minFeatureLevel);
   if(!dev)
@@ -490,7 +599,7 @@ void D3D12GraphicsTest::PostDeviceCreate()
 
     m_RTV->SetName(L"RTV heap");
 
-    desc.NumDescriptors = 16;
+    desc.NumDescriptors = 128;
     desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 
     CHECK_HR(dev->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap), (void **)&m_DSV));
@@ -499,14 +608,14 @@ void D3D12GraphicsTest::PostDeviceCreate()
 
     desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
-    desc.NumDescriptors = 8;
+    desc.NumDescriptors = 128;
     desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
 
     CHECK_HR(dev->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap), (void **)&m_Sampler));
 
     m_Sampler->SetName(L"Sampler heap");
 
-    desc.NumDescriptors = 1030;
+    desc.NumDescriptors = 8192;
     desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 
     CHECK_HR(dev->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap), (void **)&m_CBVUAVSRV));
@@ -812,7 +921,7 @@ void D3D12GraphicsTest::Present()
     m_GPUSyncCounter++;
     queue->Signal(m_GPUSyncFence, m_GPUSyncCounter);
 
-    pendingCommandBuffers.push_back(std::make_pair(cmd, m_GPUSyncFence));
+    pendingCommandBuffers.push_back(std::make_pair(cmd, m_GPUSyncCounter));
   }
 
   for(auto it = pendingCommandBuffers.begin(); it != pendingCommandBuffers.end();)
@@ -1231,6 +1340,13 @@ void D3D12GraphicsTest::ResourceBarrier(ID3D12ResourcePtr res, D3D12_RESOURCE_ST
   Submit({cmd});
 }
 
+void D3D12GraphicsTest::ResourceBarrier(ID3D12GraphicsCommandListPtr cmd)
+{
+  D3D12_RESOURCE_BARRIER barrier = {};
+  barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+  cmd->ResourceBarrier(1, &barrier);
+}
+
 void D3D12GraphicsTest::IASetVertexBuffer(ID3D12GraphicsCommandListPtr cmd, ID3D12ResourcePtr vb,
                                           UINT stride, UINT offset)
 {
@@ -1318,14 +1434,19 @@ void D3D12GraphicsTest::OMSetRenderTargets(ID3D12GraphicsCommandListPtr cmd,
 
 COM_SMARTPTR(IDxcLibrary);
 COM_SMARTPTR(IDxcCompiler);
+COM_SMARTPTR(IDxcCompiler2);
 COM_SMARTPTR(IDxcBlobEncoding);
 COM_SMARTPTR(IDxcOperationResult);
 COM_SMARTPTR(IDxcBlob);
 
 ID3DBlobPtr D3D12GraphicsTest::Compile(std::string src, std::string entry, std::string profile,
-                                       bool skipoptimise)
+                                       uint32_t compileOptions)
 {
   ID3DBlobPtr blob = NULL;
+  const bool skipoptimise = ((compileOptions & CompileOptionFlags::SkipOptimise) != 0);
+  const bool enable16BitTypes = ((compileOptions & CompileOptionFlags::Enable16BitTypes) != 0);
+  const bool separateDebug = ((compileOptions & CompileOptionFlags::SeparateDebug) != 0);
+  const bool manualDebugName = ((compileOptions & CompileOptionFlags::ManualDebugName) != 0);
 
   if(profile[3] >= '6')
   {
@@ -1379,6 +1500,30 @@ ID3DBlobPtr D3D12GraphicsTest::Compile(std::string src, std::string entry, std::
       argStorage.push_back(L"-O1");
     }
     argStorage.push_back(L"-Zi");
+    if(enable16BitTypes)
+      argStorage.push_back(L"-enable-16bit-types");
+
+    DLLFileVersion version = GetDLLFileVersion(dxcompiler);
+
+    // if the version is new enough we can tell it to not load dxil.dll. Have to do this absolutely
+    // ridiculous dll version dance because if we pass this option on a dxc too early it will fail
+    // to compile.
+    //
+    // as extra fun, some versions are 1.7.x or 1.8.x and some are 10.0.y from SDKs. These versions
+    // are not comparable! ha ha ha.
+    if(version.major != 10 && version.major == 1 && version.minor == 8 && version.build >= 2403)
+    {
+      // for extremely stupid reasons, this option was _removed_ in newer versions which breaks
+      // compilation for absolutely no discernable benefit
+      if(version.build < 2505)
+        argStorage.push_back(L"-select-validator internal");
+    }
+
+    // use source for debug name so we can have just a comment and get different debug info if we want
+    if(!manualDebugName)
+      argStorage.push_back(L"-Zss");
+
+    // Must be the final option
     argStorage.push_back(L"-Qembed_debug");
 
     for(size_t i = 0; i < argStorage.size(); i++)
@@ -1389,8 +1534,57 @@ ID3DBlobPtr D3D12GraphicsTest::Compile(std::string src, std::string entry, std::
       args[1].push_back(argStorage[i].c_str());
 
     IDxcOperationResultPtr result;
-    HRESULT hrStatus;
-    for(size_t i = 0; i < numAttempts; ++i)
+    HRESULT hrStatus = E_NOINTERFACE;
+
+    std::string debugBlobPath;
+
+    if(separateDebug)
+    {
+      IDxcCompiler2Ptr compiler2 = compiler;
+
+      if(compiler2)
+      {
+        result = NULL;
+        hrStatus = E_NOINTERFACE;
+
+        IDxcBlobPtr debugBlob = NULL;
+        LPWSTR debugBlobWideName = NULL;
+
+        // use the non-Qembed_debug version
+        hr = compiler2->CompileWithDebug(sourceBlob, UTF82Wide(entry).c_str(),
+                                         UTF82Wide(entry).c_str(), UTF82Wide(profile).c_str(),
+                                         args[1].data(), (UINT)args[1].size(), NULL, 0, NULL,
+                                         &result, &debugBlobWideName, &debugBlob);
+
+        std::string debugBlobName;
+        if(debugBlobWideName)
+        {
+          debugBlobName = Wide2UTF8(debugBlobWideName);
+          CoTaskMemFree(debugBlobWideName);
+        }
+
+        if(manualDebugName)
+        {
+          debugBlobName = "shader_" + profile.substr(0, 2) + ".dbg";
+        }
+
+        if(debugBlob)
+        {
+          debugBlobPath = tmpPath + "/" + debugBlobName;
+
+          WriteBlob(debugBlobPath, debugBlob->GetBufferPointer(), debugBlob->GetBufferSize(), false);
+        }
+
+        if(result)
+          result->GetStatus(&hrStatus);
+      }
+      else
+      {
+        TEST_WARN("Can't compile with separate debug info without IDxcCompiler2");
+      }
+    }
+
+    for(size_t i = 0; FAILED(hrStatus) && i < numAttempts; ++i)
     {
       result = NULL;
       hrStatus = E_NOINTERFACE;
@@ -1427,7 +1621,8 @@ ID3DBlobPtr D3D12GraphicsTest::Compile(std::string src, std::string entry, std::
         hr = result->GetErrorBuffer(&dxcErrors);
         if(SUCCEEDED(hr) && dxcErrors)
         {
-          TEST_ERROR("Failed to compile DXC shader: %s", dxcErrors->GetBufferPointer());
+          TEST_ERROR("Failed to compile DXC shader: %.*s", (int)dxcErrors->GetBufferSize(),
+                     (char *)dxcErrors->GetBufferPointer());
         }
         else
         {
@@ -1438,6 +1633,26 @@ ID3DBlobPtr D3D12GraphicsTest::Compile(std::string src, std::string entry, std::
       {
         TEST_ERROR("No compilation result found from DXC compile: %x", hr);
       }
+    }
+
+    if(manualDebugName)
+    {
+      std::string nameBlob = debugBlobPath;
+      // pad the blob to multiple of 4
+      nameBlob.resize((debugBlobPath.size() + 0x3) & ~0x3);
+
+      nameBlob.insert(0, 4, '\0');
+      nameBlob[2] += debugBlobPath.size() & 0xff;
+
+      if(debugBlobPath.size() > 255)
+        TEST_ERROR("tmp path is too long!");
+
+      ID3DBlobPtr newBlob;
+
+      hr = dyn_D3DSetBlobPart(blob->GetBufferPointer(), blob->GetBufferSize(), D3D_BLOB_DEBUG_NAME,
+                              0, nameBlob.c_str(), nameBlob.size(), &newBlob);
+
+      blob = newBlob;
     }
   }
   else
@@ -1450,14 +1665,15 @@ ID3DBlobPtr D3D12GraphicsTest::Compile(std::string src, std::string entry, std::
     if(skipoptimise)
       flags |= D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_OPTIMIZATION_LEVEL0;
     else
-      flags |= D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL0;
+      flags |= D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL1;
 
     HRESULT hr = dyn_D3DCompile(src.c_str(), src.length(), "", NULL, NULL, entry.c_str(),
                                 profile.c_str(), flags, 0, &blob, &error);
 
     if(FAILED(hr))
     {
-      TEST_ERROR("Failed to compile shader, error %x / %s", hr,
+      int numChars = error ? (int)error->GetBufferSize() : 1024;
+      TEST_ERROR("Failed to compile shader, error %x / %.*s", hr, numChars,
                  error ? (char *)error->GetBufferPointer() : "Unknown");
       return NULL;
     }
@@ -1467,6 +1683,11 @@ ID3DBlobPtr D3D12GraphicsTest::Compile(std::string src, std::string entry, std::
 }
 
 void D3D12GraphicsTest::WriteBlob(std::string name, ID3DBlobPtr blob, bool compress)
+{
+  WriteBlob(name, blob->GetBufferPointer(), blob->GetBufferSize(), compress);
+}
+
+void D3D12GraphicsTest::WriteBlob(std::string name, void *data, size_t size, bool compress)
 {
   FILE *f = NULL;
   fopen_s(&f, name.c_str(), "wb");
@@ -1479,11 +1700,10 @@ void D3D12GraphicsTest::WriteBlob(std::string name, ID3DBlobPtr blob, bool compr
 
   if(compress)
   {
-    int uncompSize = (int)blob->GetBufferSize();
+    int uncompSize = (int)size;
     char *compBuf = new char[uncompSize];
 
-    int compressedSize = LZ4_compress_default((const char *)blob->GetBufferPointer(), compBuf,
-                                              uncompSize, uncompSize);
+    int compressedSize = LZ4_compress_default((const char *)data, compBuf, uncompSize, uncompSize);
 
     fwrite(compBuf, 1, compressedSize, f);
 
@@ -1491,7 +1711,7 @@ void D3D12GraphicsTest::WriteBlob(std::string name, ID3DBlobPtr blob, bool compr
   }
   else
   {
-    fwrite(blob->GetBufferPointer(), 1, blob->GetBufferSize(), f);
+    fwrite(data, 1, size, f);
   }
 
   fclose(f);

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2024 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -62,6 +62,12 @@ public:
   ~VulkanDebugManager();
 
   void GetBufferData(ResourceId buff, uint64_t offset, uint64_t len, bytebuf &ret);
+  void GetBufferData(VkBuffer unwrappedBuf, uint64_t bufsize, uint64_t readOffset, uint64_t readLen,
+                     bytebuf &ret);
+  void GetBufferData(GPUBuffer &buf, uint64_t readOffset, uint64_t readLen, bytebuf &ret)
+  {
+    GetBufferData(buf.UnwrappedBuffer(), buf.TotalSize(), readOffset, readLen, ret);
+  }
 
   void CopyTex2DMSToBuffer(VkCommandBuffer cmd, VkBuffer destBuffer, VkImage srcMS,
                            VkExtent3D extent, uint32_t baseSlice, uint32_t numSlices,
@@ -73,11 +79,19 @@ public:
   void FillWithDiscardPattern(VkCommandBuffer cmd, DiscardType type, VkImage image,
                               VkImageLayout curLayout, VkImageSubresourceRange discardRange,
                               VkRect2D discardRect);
+  void FillWithDiscardPatternOnHost(VkDevice device, DiscardType type, VkImage image,
+                                    VkImageLayout curLayout, VkImageSubresourceRange discardRange,
+                                    VkRect2D discardRect);
 
-  void InitReadbackBuffer(VkDeviceSize sz);
-  byte *GetReadbackPtr() { return m_ReadbackPtr; }
-  VkBuffer GetReadbackBuffer() { return m_ReadbackWindow.buf; }
-  VkDeviceMemory GetReadbackMemory() { return m_ReadbackWindow.mem; }
+  struct ReadbackWindow
+  {
+    VkBuffer unwrappedBuffer;
+    VkDeviceMemory unwrappedMemory;
+    byte *ptr;
+  };
+
+  ReadbackWindow LockReadbackBuffer(VkDeviceSize sz);
+  void UnlockReadbackBuffer();
   VkPipelineCache GetPipelineCache() { return m_PipelineCache; }
   VkPipeline GetCustomPipeline() { return m_Custom.TexPipeline; }
   VkPipeline GetDummyPipeline() { return m_DummyPipeline; }
@@ -108,9 +122,11 @@ public:
   VkImageLayout GetImageLayout(ResourceId image, VkImageAspectFlagBits aspect, uint32_t mip,
                                uint32_t slice);
 
+  const VulkanCreationInfo::Buffer &GetBufferInfo(ResourceId img) const;
   const VulkanCreationInfo::Image &GetImageInfo(ResourceId img) const;
   const VulkanCreationInfo::ImageView &GetImageViewInfo(ResourceId imgView) const;
   const VulkanCreationInfo::Pipeline &GetPipelineInfo(ResourceId pipe) const;
+  const VulkanCreationInfo::ShaderObject &GetShaderObjectInfo(ResourceId shader) const;
   const VulkanCreationInfo::ShaderModule &GetShaderInfo(ResourceId shader) const;
   const VulkanCreationInfo::Framebuffer &GetFramebufferInfo(ResourceId fb) const;
   const VulkanCreationInfo::RenderPass &GetRenderPassInfo(ResourceId rp) const;
@@ -120,10 +136,10 @@ public:
   const WrappedVulkan::DescriptorSetInfo &GetDescSetInfo(ResourceId ds) const;
 
 private:
-  void CheckVkResult(VkResult vkr) { return m_pDriver->CheckVkResult(vkr); }
   // GetBufferData
   GPUBuffer m_ReadbackWindow;
   byte *m_ReadbackPtr = NULL;
+  Threading::CriticalSection m_ReadbackLock;
 
   // CacheMeshDisplayPipelines
   std::map<uint64_t, VKMeshDisplayPipelines> m_CachedMeshPipelines;
@@ -142,11 +158,11 @@ private:
   VkPipeline m_DepthMS2BufferPipe = VK_NULL_HANDLE;
 
   // MSAA dummy images
-  VkDeviceMemory m_DummyMemory = VK_NULL_HANDLE;
-  VkImage m_DummyDepthImage = {VK_NULL_HANDLE};
-  VkImageView m_DummyDepthView = {VK_NULL_HANDLE};
-  VkImage m_DummyStencilImage = {VK_NULL_HANDLE};
-  VkImageView m_DummyStencilView = {VK_NULL_HANDLE};
+  VkDeviceMemory m_UnwrappedDummyMemory = VK_NULL_HANDLE;
+  VkImage m_UnwrappedDummyDepthImage = {VK_NULL_HANDLE};
+  VkImageView m_UnwrappedDummyDepthView = {VK_NULL_HANDLE};
+  VkImage m_UnwrappedDummyStencilImage = {VK_NULL_HANDLE};
+  VkImageView m_UnwrappedDummyStencilView = {VK_NULL_HANDLE};
 
   // dummy pipeline
   VkPipelineLayout m_DummyPipelineLayout = VK_NULL_HANDLE;

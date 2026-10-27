@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021-2024 Baldur Karlsson
+ * Copyright (c) 2021-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -540,7 +540,7 @@ ret.zw += tex.Load(ret.xyz).yz;
       {
         bytebuf bytecode = dxbccompile(make_source(snippet), profile);
 
-        DXBC::DXBCContainer container(bytecode, rdcstr(), GraphicsAPI::D3D11, ~0U, ~0U);
+        DXBC::DXBCContainer container(bytecode);
 
         bytebuf edited;
         {
@@ -578,7 +578,7 @@ ret.zw += tex.Load(ret.xyz).yz;
       {
         bytebuf bytecode = dxbccompile(make_source(snippets[i]), profile);
 
-        DXBC::DXBCContainer container(bytecode, rdcstr(), GraphicsAPI::D3D11, ~0U, ~0U);
+        DXBC::DXBCContainer container(bytecode);
 
         rdcstr disasm_before = container.GetDXBCByteCode()->GetDisassembly();
         uint32_t temp_index = 123456;
@@ -590,7 +590,7 @@ ret.zw += tex.Load(ret.xyz).yz;
           temp_index = editor.AddTemp();
         }
 
-        DXBC::DXBCContainer container2(edited, rdcstr(), GraphicsAPI::D3D11, ~0U, ~0U);
+        DXBC::DXBCContainer container2(edited);
 
         rdcstr disasm_after = container2.GetDXBCByteCode()->GetDisassembly();
 
@@ -615,7 +615,7 @@ ret.zw += tex.Load(ret.xyz).yz;
     {
       bytebuf bytecode = dxbccompile(make_source(""), profile);
 
-      DXBC::DXBCContainer container(bytecode, rdcstr(), GraphicsAPI::D3D11, ~0U, ~0U);
+      DXBC::DXBCContainer container(bytecode);
 
       rdcstr disasm_before = container.GetDXBCByteCode()->GetDisassembly();
       uint32_t t = 123456;
@@ -655,7 +655,7 @@ ret.zw += tex.Load(ret.xyz).yz;
                                         op.operands[1].comps[2], op.operands[1].comps[3]);
       }
 
-      DXBC::DXBCContainer container2(edited, rdcstr(), GraphicsAPI::D3D11, ~0U, ~0U);
+      DXBC::DXBCContainer container2(edited);
 
       rdcstr disasm_after = container2.GetDXBCByteCode()->GetDisassembly();
 
@@ -685,7 +685,7 @@ ret += tex2.Load(uvm);
 )"),
                                      profile);
 
-      DXBC::DXBCContainer container(bytecode, rdcstr(), GraphicsAPI::D3D11, ~0U, ~0U);
+      DXBC::DXBCContainer container(bytecode);
 
       rdcstr disasm_before = container.GetDXBCByteCode()->GetDisassembly();
 
@@ -728,7 +728,7 @@ ret += tex2.Load(uvm);
         }
       }
 
-      DXBC::DXBCContainer container2(edited, rdcstr(), GraphicsAPI::D3D11, ~0U, ~0U);
+      DXBC::DXBCContainer container2(edited);
 
       rdcstr disasm_after = container2.GetDXBCByteCode()->GetDisassembly();
 

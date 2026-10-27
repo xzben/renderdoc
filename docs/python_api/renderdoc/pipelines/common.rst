@@ -1,7 +1,10 @@
-Common Pipeline State Abstraction
-=================================
+API Reference: Common Pipeline State Abstraction
+================================================
 
-.. contents::
+This is the API reference for the functions, classes, and enums in the ``renderdoc`` module which represents the underlying interface that the UI is built on top of. For more high-level information and instructions on using the python API, see :doc:`../../index`.
+
+.. contents:: Sections
+   :local:
 
 .. currentmodule:: renderdoc
 
@@ -86,6 +89,9 @@ Rasterizer
 .. autoclass:: renderdoc.CullMode
   :members:
 
+.. autoclass:: renderdoc.DepthBiasMode
+  :members:
+
 .. autoclass:: renderdoc.FillMode
   :members:
 
@@ -98,9 +104,15 @@ Rasterizer
 .. autoclass:: renderdoc.ShadingRateCombiner
   :members:
 
+.. autoclass:: renderdoc.RasterState
+  :members:
 
-Stencil
--------
+
+Depth and Stencil
+-----------------
+
+.. autoclass:: renderdoc.DepthTestState
+  :members:
 
 .. autoclass:: renderdoc.StencilFace
   :members:
@@ -152,6 +164,3 @@ Shader Messages
 
 .. autoclass:: renderdoc.ShaderComputeMessageLocation
   :members:
-
-
-* qrenderdoc.ShaderMessageViewer

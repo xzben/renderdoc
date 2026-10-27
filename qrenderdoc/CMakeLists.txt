@@ -11,6 +11,7 @@ endif()
 
 set(QMAKE_QT5_COMMAND ${QT_QMAKE_EXECUTABLE} CACHE STRING "Command to run to invoke Qt5's qmake. Normally this is qmake, possibly with qtchooser, but might be qmake-qt5")
 set(RENDERDOC_SWIG_PACKAGE https://github.com/baldurk/swig/archive/renderdoc-modified-7.zip CACHE STRING "The location where RenderDoc's swig fork source can be found. By default points to the URL on github but can be pointed to a local file.")
+set(RENDERDOC_PCRE_PACKAGE https://sourceforge.net/projects/pcre/files/pcre/8.45/pcre-8.45.tar.gz CACHE STRING "The location where the pcre library package can be found. By default points to the URL on sourceforge but can be pointed to a local file.")
 
 # Only check qt version if we're building qrenderdoc
 if(ENABLE_QRENDERDOC)
@@ -111,17 +112,23 @@ else()
 endif()
 
 include(ExternalProject)
+include(CheckIncludeFile)
 
 # Need bison for swig
 find_package(BISON)
 
-set(SWIG_CONFIGURE_CC ${CMAKE_C_COMPILER})
-set(SWIG_CONFIGURE_CXX ${CMAKE_CXX_COMPILER})
-
-# macOS 10.14+ ships broken compilers, need to disable CC/CXX inheritance
 if(APPLE)
-    set(SWIG_CONFIGURE_CC "")
-    set(SWIG_CONFIGURE_CXX "")
+    # macOS 10.14+ ships broken compilers, need to disable CC/CXX inheritance
+    # If SWIG configuration fails, try configuring CMake with these vars set to clang and clang++ respectively
+    if (NOT DEFINED SWIG_CONFIGURE_CC)
+        set(SWIG_CONFIGURE_CC "")
+    endif()
+    if (NOT DEFINED SWIG_CONFIGURE_CXX)
+        set(SWIG_CONFIGURE_CXX "")
+    endif()
+else()
+    set(SWIG_CONFIGURE_CC ${CMAKE_C_COMPILER})
+    set(SWIG_CONFIGURE_CXX ${CMAKE_CXX_COMPILER})
 endif()
 
 set( GENERATOR_MAKE "$(MAKE)" )
@@ -152,13 +159,38 @@ if(NOT ${CMAKE_VERSION} VERSION_LESS "3.24")
     cmake_policy(SET CMP0135 NEW)
 endif()
 
+CHECK_INCLUDE_FILE(pcre.h PCRE_HEADER)
+
+set(PCRE_PREFIX_PATH "")
+
+if(PCRE_HEADER)
+    message(STATUS "pcre library is found, using it as-is")
+
+    add_custom_target(local_pcre)
+else()
+    message(STATUS "pcre header is not found! building pcre locally")
+    
+    # fetch pcre if missing
+    ExternalProject_Add(local_pcre
+        # using an URL to a zip directly so we don't clone the history etc
+        URL ${RENDERDOC_PCRE_PACKAGE}
+        BUILD_IN_SOURCE 1
+        CONFIGURE_COMMAND ${SET_SYSTEM_PATH_COMMAND} autoreconf -f -v > /dev/null 2>&1
+        COMMAND CC=${SWIG_CONFIGURE_CC} CXX=${SWIG_CONFIGURE_CXX} CFLAGS=-fPIC CXXFLAGS=-fPIC ${SET_SYSTEM_PATH_COMMAND} ./configure --prefix=${CMAKE_BINARY_DIR} --disable-shared > /dev/null
+        BUILD_COMMAND ${GENERATOR_MAKE} ${GENERATOR_MAKE_PARAMS} > /dev/null 2>&1
+        INSTALL_COMMAND ${GENERATOR_MAKE} install > /dev/null 2>&1)
+
+    set(PCRE_PREFIX_PATH "--with-pcre-prefix=${CMAKE_BINARY_DIR}")
+endif()
+
 # Compile our custom SWIG that will do scoped/strong enum classes
 ExternalProject_Add(custom_swig
     # using an URL to a zip directly so we don't clone the history etc
     URL ${RENDERDOC_SWIG_PACKAGE}
+    DEPENDS local_pcre
     BUILD_IN_SOURCE 1
     CONFIGURE_COMMAND ${SET_SYSTEM_PATH_COMMAND} ./autogen.sh > /dev/null 2>&1
-    COMMAND CC=${SWIG_CONFIGURE_CC} CXX=${SWIG_CONFIGURE_CXX} CFLAGS=-fPIC CXXFLAGS=-fPIC ${SET_SYSTEM_PATH_COMMAND} ./configure --with-pcre=yes --prefix=${CMAKE_BINARY_DIR} > /dev/null
+    COMMAND CC=${SWIG_CONFIGURE_CC} CXX=${SWIG_CONFIGURE_CXX} CFLAGS=-fPIC CXXFLAGS=-fPIC ${SET_SYSTEM_PATH_COMMAND} ./configure --with-pcre=yes ${PCRE_PREFIX_PATH} --prefix=${CMAKE_BINARY_DIR} > /dev/null
     BUILD_COMMAND ${GENERATOR_MAKE} ${GENERATOR_MAKE_PARAMS} > /dev/null 2>&1
     INSTALL_COMMAND ${GENERATOR_MAKE} install > /dev/null 2>&1)
 
@@ -213,19 +245,31 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     file(APPEND
         ${CMAKE_BINARY_DIR}/qrenderdoc/qrenderdoc_cmake.pri
         "QMAKE_CXXFLAGS+=-Wno-unknown-warning -Wno-cast-function-type -Wno-stringop-truncation\n")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 14.0)
+        file(APPEND
+            ${CMAKE_BINARY_DIR}/qrenderdoc/qrenderdoc_cmake.pri
+            "QMAKE_CXXFLAGS += -Wno-template-id-cdtor\n")
+    endif()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     file(APPEND
         ${CMAKE_BINARY_DIR}/qrenderdoc/qrenderdoc_cmake.pri
         "QMAKE_CXXFLAGS+=-Wno-shadow -Wno-shorten-64-to-32\n")
+
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 3.9)
+        file(APPEND
+            ${CMAKE_BINARY_DIR}/qrenderdoc/qrenderdoc_cmake.pri
+            "QMAKE_CXXFLAGS+=-Wno-comma\n")
+    endif()
+
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 19)
+        file(APPEND
+            ${CMAKE_BINARY_DIR}/qrenderdoc/qrenderdoc_cmake.pri
+            "QMAKE_CXXFLAGS+=-Wno-cast-function-type\n")
+    endif()
 endif()
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 3.9)
-    file(APPEND
-        ${CMAKE_BINARY_DIR}/qrenderdoc/qrenderdoc_cmake.pri
-        "QMAKE_CXXFLAGS+=-Wno-comma\n")
-endif()
 
 if(ENABLE_UNSUPPORTED_EXPERIMENTAL_POSSIBLY_BROKEN_WAYLAND)
     message(WARNING "!!!! Using the Wayland Qt platform in qrenderdoc is NOT SUPPORTED !!!!")
@@ -350,13 +394,13 @@ if(APPLE AND CMAKE_GENERATOR STREQUAL "Xcode")
     list(APPEND QRD_XCODE_SOURCES ${WINDOWS_FILES})
 
     file(GLOB_RECURSE THIRDPARTY_FILES 
-        3rdParty/toolwindowmanager/*.h
-        3rdParty/toolwindowmanager/*.cpp
-        3rdParty/flowlayout/*.h
-        3rdParty/flowlayout/*.cpp
-        3rdParty/scintilla/*.h
-        3rdParty/scintilla/*.cxx
-        3rdParty/scintilla/*.cpp)
+        3rdparty/toolwindowmanager/*.h
+        3rdparty/toolwindowmanager/*.cpp
+        3rdparty/flowlayout/*.h
+        3rdparty/flowlayout/*.cpp
+        3rdparty/scintilla/*.h
+        3rdparty/scintilla/*.cxx
+        3rdparty/scintilla/*.cpp)
     list(SORT THIRDPARTY_FILES COMPARE FILE_BASENAME)
     list(APPEND QRD_XCODE_SOURCES ${THIRDPARTY_FILES})
 

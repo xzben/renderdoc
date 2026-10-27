@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022-2024 Baldur Karlsson
+ * Copyright (c) 2022-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,7 +38,7 @@ public:
 
   bool Init(WrappedID3D12Device &device);
 
-  rdcarray<GPUCounter> EnumerateCounters() const;
+  rdcarray<GPUCounter> EnumerateCounters(WrappedID3D12Device &device) const;
   bool HasCounter(GPUCounter counterID) const;
   CounterDescription DescribeCounter(GPUCounter counterID) const;
   rdcarray<CounterResult> FetchCounters(const rdcarray<GPUCounter> &counters,

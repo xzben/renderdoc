@@ -127,9 +127,6 @@
     <Filter Include="3rdparty\miniz">
       <UniqueIdentifier>{5994c355-880b-45b9-b17a-2e9e1fc2044a}</UniqueIdentifier>
     </Filter>
-    <Filter Include="OS\Posix\GGP">
-      <UniqueIdentifier>{b76c42f4-d523-4417-a474-56d278d35a36}</UniqueIdentifier>
-    </Filter>
     <Filter Include="3rdparty\compressonator">
       <UniqueIdentifier>{3d212b9b-bf42-40db-84a3-b94e064fd281}</UniqueIdentifier>
     </Filter>
@@ -141,6 +138,12 @@
     </Filter>
     <Filter Include="3rdparty\md5">
       <UniqueIdentifier>{fcbf71ce-3767-435c-9aa2-e1327b9016f4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Replay\Common">
+      <UniqueIdentifier>{02773850-117a-47d9-b238-d5d4b96468b3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{d8130624-7075-486d-91fc-b5ab8cd2b811}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -564,6 +567,21 @@
     <ClInclude Include="common\result.h">
       <Filter>Common</Filter>
     </ClInclude>
+    <ClInclude Include="core\gpu_address_range_tracker.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="replay\common\var_dispatch_helpers.h">
+      <Filter>Replay\Common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\tex_data.h">
+      <Filter>Common\File Formats</Filter>
+    </ClInclude>
+    <ClInclude Include="shaders\controlflow.h">
+      <Filter>Shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="core\rdcbytetrie.h">
+      <Filter>Core</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="maths\camera.cpp">
@@ -914,24 +932,6 @@
     <ClCompile Include="core\intervals_tests.cpp">
       <Filter>Core</Filter>
     </ClCompile>
-    <ClCompile Include="os\posix\ggp\ggp_callstack.cpp">
-      <Filter>OS\Posix\GGP</Filter>
-    </ClCompile>
-    <ClCompile Include="os\posix\ggp\ggp_hook.cpp">
-      <Filter>OS\Posix\GGP</Filter>
-    </ClCompile>
-    <ClCompile Include="os\posix\ggp\ggp_network.cpp">
-      <Filter>OS\Posix\GGP</Filter>
-    </ClCompile>
-    <ClCompile Include="os\posix\ggp\ggp_process.cpp">
-      <Filter>OS\Posix\GGP</Filter>
-    </ClCompile>
-    <ClCompile Include="os\posix\ggp\ggp_stringio.cpp">
-      <Filter>OS\Posix\GGP</Filter>
-    </ClCompile>
-    <ClCompile Include="os\posix\ggp\ggp_threading.cpp">
-      <Filter>OS\Posix\GGP</Filter>
-    </ClCompile>
     <ClCompile Include="core\bit_flag_iterator_tests.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -976,6 +976,18 @@
     </ClCompile>
     <ClCompile Include="replay\dummy_driver.cpp">
       <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="core\gpu_address_range_tracker.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="common\jobsystem.cpp">
+      <Filter>Common</Filter>
+    </ClCompile>
+    <ClCompile Include="common\jobsystem_tests.cpp">
+      <Filter>Common</Filter>
+    </ClCompile>
+    <ClCompile Include="shaders\controlflow.cpp">
+      <Filter>Shaders</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -1141,6 +1153,15 @@
     </None>
     <None Include="data\hlsl\raytracing.hlsl">
       <Filter>Resources\hlsl</Filter>
+    </None>
+    <None Include="data\hlsl\quadswizzle.hlsl">
+      <Filter>Resources\hlsl</Filter>
+    </None>
+    <None Include="data\glsl\debug_math.comp">
+      <Filter>Resources\glsl</Filter>
+    </None>
+    <None Include="data\glsl\debug_sample.frag">
+      <Filter>Resources\glsl</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
